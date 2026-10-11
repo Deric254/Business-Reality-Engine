@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+@theme {
+  /* Base surfaces — Business Reality Engine control room palette */
+  --color-ink: #14181f;
+  --color-panel: #1c222c;
+  --color-panel-raised: #232a36;
+  --color-border: #2c3542;
+
+  /* Severity — the product's actual visual language (Section 23), not decoration */
+  --color-critical: #e5484d;
+  --color-high: #f0883e;
+  --color-medium: #e8c547;
+  --color-info: #5b9bd5;
+  --color-opportunity: #4caf7d;
+
+  /* Text */
+  --color-ink-text: #e8eaed;
+  --color-ink-muted: #8b93a1;
+  --color-ink-faint: #5a6270;
+
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+}
+
+body {
+  background: var(--color-ink);
+  color: var(--color-ink-text);
+  font-family: var(--font-sans);
+}
+
+/* Tabular figures for KPI numbers — instrument-panel treatment */
+.kpi-figure {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Visible keyboard focus (skill's quality floor) */
+:focus-visible {
+  outline: 2px solid var(--color-info);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

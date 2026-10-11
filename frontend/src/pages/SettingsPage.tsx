@@ -1,0 +1,204 @@
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
+import { api, settingsApi, ApiError, type Channel, type Metric, type Tenant } from "../api/client";
+
+const SEVERITIES = ["critical", "high", "medium", "informational"];
+
+function errText(e: unknown) {
+  return e instanceof ApiError ? e.message : "Something went wrong. Try again.";
+}
+
+export function SettingsPage() {
+  const [tenant, setTenant] = useState<Tenant | null>(null);
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [metrics, setMetrics] = useState<Metric[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [secret, setSecret] = useState<string | null>(null);
+
+  const [chType, setChType] = useState("email");
+  const [chTarget, setChTarget] = useState("");
+  const [chSeverity, setChSeverity] = useState("high");
+  const [mEntity, setMEntity] = useState("sale");
+  const [mField, setMField] = useState("amount");
+  const [mDays, setMDays] = useState(7);
+  const [mThreshold, setMThreshold] = useState(10);
+  const [mDirection, setMDirection] = useState<"drop" | "rise">("drop");
+  const [mLimit, setMLimit] = useState("");
+
+  const load = useCallback(async (t: Tenant) => {
+    try {
+      const [c, m] = await Promise.all([settingsApi.listChannels(t.id), settingsApi.listMetrics(t.id)]);
+      setChannels(c);
+      setMetrics(m);
+    } catch (e) {
+      setError(errText(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    api.listTenants().then((ts) => {
+      if (ts[0]) {
+        setTenant(ts[0]);
+        load(ts[0]);
+      }
+    }).catch((e) => setError(errText(e)));
+  }, [load]);
+
+  async function run(action: () => Promise<unknown>, done?: string) {
+    if (!tenant) return;
+    setError(null);
+    setNotice(null);
+    try {
+      await action();
+      if (done) setNotice(done);
+      await load(tenant);
+    } catch (e) {
+      setError(errText(e));
+    }
+  }
+
+  async function addChannel(e: FormEvent) {
+    e.preventDefault();
+    if (!tenant) return;
+    await run(async () => {
+      const created = await settingsApi.createChannel(tenant.id, { channel_type: chType, target: chTarget.trim(), min_severity: chSeverity });
+      setChTarget("");
+      setSecret(created.signing_secret ?? null);
+    }, "Channel added.");
+  }
+
+  async function test(c: Channel) {
+    if (!tenant) return;
+    setError(null);
+    setNotice(null);
+    try {
+      const r = await settingsApi.testChannel(tenant.id, c.id);
+      if (r.ok) setNotice(`Test sent to ${c.target}.`);
+      else setError(`Test failed: ${r.error ?? "unknown error"}`);
+    } catch (e) {
+      setError(errText(e));
+    }
+  }
+
+  const field = "bg-ink border border-border rounded-sm px-2 py-1.5 text-sm text-ink-text";
+  const btn = "text-xs border border-border rounded-sm px-2 py-1 text-ink-muted hover:text-ink-text";
+
+  return (
+    <div className="min-h-screen">
+      <header className="flex items-center justify-between px-6 py-4 border-b border-border">
+        <Link to="/" className="text-sm text-ink-muted hover:text-ink-text">← Back to alerts</Link>
+        <span className="text-sm font-semibold">{tenant?.name ?? ""} settings</span>
+      </header>
+      <main className="max-w-3xl mx-auto px-4 py-8 space-y-10">
+        {error && <p role="alert" className="text-sm text-critical">{error}</p>}
+        {notice && <p role="status" className="text-sm text-opportunity">{notice}</p>}
+
+        <section aria-labelledby="ch">
+          <h2 id="ch" className="text-base font-semibold mb-1">Where alerts are sent</h2>
+          <p className="text-sm text-ink-muted mb-4">Each channel receives alerts at or above its severity. Only owners can change channels.</p>
+          {secret && (
+            <div className="mb-4 p-3 bg-panel border border-border rounded-sm text-sm">
+              <p className="mb-1">Signing secret for the new webhook. Copy it now; it is shown only once.</p>
+              <code className="kpi-figure break-all select-all">{secret}</code>
+              <button className={`${btn} ml-3`} onClick={() => setSecret(null)}>Done</button>
+            </div>
+          )}
+          {channels.length === 0 ? (
+            <p className="text-sm text-ink-muted mb-4">No channels yet. Alerts only appear in this dashboard until you add one.</p>
+          ) : (
+            <ul className="divide-y divide-border border border-border rounded-sm mb-4">
+              {channels.map((c) => (
+                <li key={c.id} className="flex flex-wrap items-center gap-3 px-3 py-2 text-sm">
+                  <span className="text-ink-muted w-16">{c.channel_type}</span>
+                  <span className="flex-1 break-all">{c.target}</span>
+                  <select
+                    aria-label={`Minimum severity for ${c.target}`} value={c.min_severity} className={field}
+                    onChange={(e) => run(() => settingsApi.updateChannel(tenant!.id, c.id, { min_severity: e.target.value }))}
+                  >
+                    {SEVERITIES.map((s) => <option key={s} value={s}>{s}+</option>)}
+                  </select>
+                  <label className="flex items-center gap-1 text-ink-muted">
+                    <input type="checkbox" checked={c.enabled} onChange={(e) => run(() => settingsApi.updateChannel(tenant!.id, c.id, { enabled: e.target.checked }))} />
+                    On
+                  </label>
+                  <button className={btn} onClick={() => test(c)}>Send test</button>
+                  <button className={btn} onClick={() => run(() => settingsApi.deleteChannel(tenant!.id, c.id), "Channel removed.")}>Remove</button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <form onSubmit={addChannel} className="flex flex-wrap items-end gap-3">
+            <label className="text-sm text-ink-muted">Type
+              <select className={`${field} block mt-1`} value={chType} onChange={(e) => setChType(e.target.value)}>
+                <option value="email">Email</option>
+                <option value="webhook">Webhook</option>
+              </select>
+            </label>
+            <label className="text-sm text-ink-muted flex-1 min-w-48">{chType === "email" ? "Email address" : "Webhook URL (https)"}
+              <input required className={`${field} block mt-1 w-full`} value={chTarget} onChange={(e) => setChTarget(e.target.value)}
+                type={chType === "email" ? "email" : "url"} />
+            </label>
+            <label className="text-sm text-ink-muted">Send at
+              <select className={`${field} block mt-1`} value={chSeverity} onChange={(e) => setChSeverity(e.target.value)}>
+                {SEVERITIES.map((s) => <option key={s} value={s}>{s} and above</option>)}
+              </select>
+            </label>
+            <button type="submit" className="bg-info text-ink font-medium rounded-sm px-3 py-1.5 text-sm">Add channel</button>
+          </form>
+        </section>
+
+        <section aria-labelledby="mt">
+          <h2 id="mt" className="text-base font-semibold mb-1">What is watched</h2>
+          <p className="text-sm text-ink-muted mb-4">An alert is raised when the latest period moves the bad way against the average of the previous four by more than the threshold. Trends, unusual days, and silent data sources are also watched for every metric. Once you add a metric, only the metrics listed here are watched.</p>
+          {metrics.length === 0 ? (
+            <p className="text-sm text-ink-muted mb-4">Nothing configured, so sales and expenses are watched weekly with a 10% threshold.</p>
+          ) : (
+            <ul className="divide-y divide-border border border-border rounded-sm mb-4">
+              {metrics.map((m) => (
+                <li key={m.id} className="flex flex-wrap items-center gap-3 px-3 py-2 text-sm">
+                  <span className="flex-1">{m.entity} {m.field}, every {m.period_days} days, alert on a {Number(m.threshold_pct)}% {m.direction === "rise" ? "increase" : "drop"}{m.absolute_threshold != null ? `, or a total ${m.direction === "rise" ? "above" : "below"} ${Number(m.absolute_threshold).toLocaleString()}` : ""}</span>
+                  <label className="flex items-center gap-1 text-ink-muted">
+                    <input type="checkbox" checked={m.enabled} onChange={(e) => run(() => settingsApi.updateMetric(tenant!.id, m.id, { enabled: e.target.checked }))} />
+                    On
+                  </label>
+                  <button className={btn} onClick={() => run(() => settingsApi.deleteMetric(tenant!.id, m.id), "Metric removed.")}>Remove</button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <form
+            onSubmit={(e) => { e.preventDefault(); run(() => settingsApi.createMetric(tenant!.id, { entity: mEntity.trim().toLowerCase(), field: mField, period_days: mDays, threshold_pct: mThreshold, direction: mDirection, absolute_threshold: mLimit.trim() === "" ? null : Number(mLimit) }), "Metric added."); }}
+            className="flex flex-wrap items-end gap-3"
+          >
+            <label className="text-sm text-ink-muted">Record type
+              <input required pattern="[a-z][a-z0-9_]{0,39}" className={`${field} block mt-1 w-28`} value={mEntity} onChange={(e) => setMEntity(e.target.value)} />
+            </label>
+            <label className="text-sm text-ink-muted">Measure
+              <select className={`${field} block mt-1`} value={mField} onChange={(e) => setMField(e.target.value)}>
+                <option value="amount">Amount</option>
+                <option value="quantity">Quantity</option>
+              </select>
+            </label>
+            <label className="text-sm text-ink-muted">Period (days)
+              <input type="number" min={1} max={90} required className={`${field} block mt-1 w-24`} value={mDays} onChange={(e) => setMDays(Number(e.target.value))} />
+            </label>
+            <label className="text-sm text-ink-muted">Bad when it
+              <select className={`${field} block mt-1`} value={mDirection} onChange={(e) => setMDirection(e.target.value as "drop" | "rise")}>
+                <option value="drop">Falls (sales, income)</option>
+                <option value="rise">Rises (expenses, costs)</option>
+              </select>
+            </label>
+            <label className="text-sm text-ink-muted">Change threshold (%)
+              <input type="number" min={1} max={100} required className={`${field} block mt-1 w-24`} value={mThreshold} onChange={(e) => setMThreshold(Number(e.target.value))} />
+            </label>
+            <label className="text-sm text-ink-muted">Fixed limit (optional)
+              <input type="number" min={0} step="any" className={`${field} block mt-1 w-32`} value={mLimit} onChange={(e) => setMLimit(e.target.value)} />
+            </label>
+            <button type="submit" className="bg-info text-ink font-medium rounded-sm px-3 py-1.5 text-sm">Add metric</button>
+          </form>
+        </section>
+      </main>
+    </div>
+  );
+}

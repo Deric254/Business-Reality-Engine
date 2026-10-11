@@ -1,0 +1,71 @@
+# Production-shaped stack: Postgres, Redis, one-shot migrations, API, web.
+# NOTE: compose config validates; images were NOT built (registry blocked in the authoring sandbox).
+# Usage:  cp .env.example .env  (fill every secret)  &&  docker compose up -d --build
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bre}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-business_reality}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bre} -d ${POSTGRES_DB:-business_reality}"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment: &api_env
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bre}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-business_reality}
+      REDIS_URL: redis://redis:6379/0
+      ENV: production
+      API_KEY: ${API_KEY:?set API_KEY in .env}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:?set ADMIN_API_KEY in .env}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env}
+      CONNECTOR_ENCRYPTION_KEY: ${CONNECTOR_ENCRYPTION_KEY:?set CONNECTOR_ENCRYPTION_KEY in .env}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      TRUSTED_PROXY_HOPS: "1"
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      LLM_MODEL: ${LLM_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-4}
+    depends_on:
+      db: {condition: service_healthy}
+
+  api:
+    build: .
+    restart: unless-stopped
+    environment: *api_env
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health/').status==200 else 1)"]
+      interval: 15s
+      retries: 5
+
+  web:
+    build: ./frontend
+    restart: unless-stopped
+    ports: ["8080:80"]   # put a TLS-terminating proxy in front for real traffic
+    depends_on: [api]
+
+volumes:
+  pgdata:
+  redisdata:

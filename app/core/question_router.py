@@ -1,0 +1,176 @@
+"""
+Question router (Section 45): maps a plain-language question onto the analytics the system already has.
+
+Deterministic first: keyword rules choose an intent, SQL/forecasting code computes every number,
+and the answer is template-worded. No LLM is needed to answer, and none ever computes a figure
+(Section 46). A question the rules cannot place gets an honest "I can't answer that yet" plus what
+can be asked, never a guess. The profit intent keeps its optional LLM phrasing (business_questions).
+"""
+import re
+from datetime import datetime, timedelta
+from typing import Callable, Optional
+
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from app.core import coverage as coverage_mod
+from app.core.alert_engine import ACTIVE
+from app.core.detection import _sum_metric
+from app.core.forecasting import forecast_next_period
+from app.models.alerts import Alert
+from app.models.core import BusinessEvent, ResolvedEntity
+
+_UNITS = {"day": 1, "week": 7, "month": 30, "quarter": 90, "year": 365}
+SUGGESTIONS = [
+    "Why did profit fall?", "How are sales this month?", "What are my expenses this week?",
+    "Who are my top customers?", "What are my best selling products?", "What will sales be next week?",
+    "What needs my attention?", "Is my data up to date?",
+]
+
+
+def parse_period(question: str, default_days: int = 30) -> tuple[int, str]:
+    """'last 14 days', 'this week', 'last month', 'today', 'yesterday', 'past 2 weeks' -> (days, label)."""
+    q = question.lower()
+    m = re.search(r"(?:last|past|previous)\s+(\d{1,3})\s+(day|week|month|quarter|year)s?", q)
+    if m:
+        days = min(365, int(m.group(1)) * _UNITS[m.group(2)])
+        return max(1, days), f"the last {m.group(1)} {m.group(2)}{'s' if m.group(1) != '1' else ''}"
+    if re.search(r"\b(today|yesterday)\b", q):
+        return 1, "the last day"
+    for unit in ("week", "month", "quarter", "year"):
+        if re.search(rf"\b(this|last|past|previous|per|each|a)\s+{unit}\b|\b{unit}ly\b", q):
+            return _UNITS[unit], f"the last {unit}"
+    return default_days, f"the last {default_days} days"
+
+
+_RULES: list[tuple[str, re.Pattern]] = [
+    ("forecast", re.compile(r"\b(will|forecast|predict|projection|expect|next (week|month|period)|going to be)\b")),
+    ("top_customers", re.compile(r"\b(top|best|biggest|largest|main|key)\b.*\bcustomers?\b|\bcustomers?\b.*\b(top|best|biggest)\b|\bwho (buys|are my)\b.*\bcustomers?\b")),
+    ("top_products", re.compile(r"\b(top|best|biggest|selling|popular)\b.*\b(products?|items?)\b|\b(products?|items?)\b.*\b(top|best|selling)\b|\bbest sellers?\b")),
+    ("top_suppliers", re.compile(r"\b(top|biggest|largest|main)\b.*\bsuppliers?\b|\bsuppliers?\b.*\b(most|top|biggest)\b|\bwho do i (pay|spend)\b")),
+    ("profit", re.compile(r"\b(profit|margin|earnings|net income|bottom line)\b")),
+    ("sales", re.compile(r"\b(sales?|revenue|income|turnover|selling|sold|takings)\b")),
+    ("expenses", re.compile(r"\b(expenses?|costs?|spend(ing)?|spent|outgoings?)\b")),
+    ("attention", re.compile(r"\b(attention|alerts?|problems?|issues?|wrong|worr(y|ied)|urgent|risks?|trouble|should i (do|look))\b")),
+    ("data_health", re.compile(r"\b(data|coverage|connected|connectors?|up to date|stale|sync(ed)?|missing)\b")),
+]
+
+
+def classify(question: str) -> Optional[str]:
+    q = question.lower()
+    for intent, pat in _RULES:
+        if pat.search(q):
+            return intent
+    return None
+
+
+def _money(v: float) -> str:
+    return f"{v:,.0f}" if abs(v) >= 100 else f"{v:,.2f}"
+
+
+def _change(cur: float, prev: float) -> tuple[Optional[float], str]:
+    if not prev:
+        return None, "with no earlier period to compare against"
+    pct = (cur - prev) / abs(prev) * 100
+    return round(pct, 1), f"{'up' if pct >= 0 else 'down'} {abs(pct):.1f}% from {_money(prev)} in the period before"
+
+
+def _metric_answer(db, tenant_id, entity, noun, days, label, now):
+    cur = _sum_metric(db, tenant_id, entity, "amount", now - timedelta(days=days), now)
+    prev = _sum_metric(db, tenant_id, entity, "amount", now - timedelta(days=days * 2), now - timedelta(days=days))
+    if not cur and not prev:
+        return {"answer": f"There is no {noun} data in {label} or the period before it.", "evidence": {"current": 0, "previous": 0}}
+    pct, phrase = _change(cur, prev)
+    return {"answer": f"{noun.capitalize()} over {label} were {_money(cur)}, {phrase}.",
+            "evidence": {"period_days": days, "current": cur, "previous": prev, "change_pct": pct}}
+
+
+def _ranked(db, tenant_id, entity, fk_col, days, now, limit=5):
+    start = now - timedelta(days=days)
+    rows = (
+        db.query(ResolvedEntity.canonical_name, func.sum(BusinessEvent.amount), func.count(BusinessEvent.id))
+        .join(ResolvedEntity, ResolvedEntity.id == fk_col)
+        .filter(BusinessEvent.tenant_id == tenant_id, ResolvedEntity.tenant_id == tenant_id,
+                BusinessEvent.entity == entity, BusinessEvent.timestamp >= start, BusinessEvent.timestamp < now,
+                BusinessEvent.validation_status == "validated", BusinessEvent.amount.isnot(None))
+        .group_by(ResolvedEntity.id, ResolvedEntity.canonical_name)
+        .order_by(func.sum(BusinessEvent.amount).desc()).limit(limit).all()
+    )
+    total = _sum_metric(db, tenant_id, entity, "amount", start, now)
+    return [{"name": n, "amount": float(a), "events": int(c), "share_pct": round(float(a) / total * 100, 1) if total else None}
+            for n, a, c in rows], total
+
+
+def _ranking_answer(kind, entity, fk, verb):
+    def handler(db, tenant_id, q, days, label, now):
+        items, total = _ranked(db, tenant_id, entity, getattr(BusinessEvent, fk), days, now)
+        if not items:
+            return {"answer": f"No {kind} with recorded {verb} in {label}. Records need to be linked to a named {kind[:-1]} first.",
+                    "evidence": {"items": [], "total": total}}
+        lines = ", ".join(f"{i['name']} ({_money(i['amount'])}" + (f", {i['share_pct']}%" if i['share_pct'] is not None else "") + ")" for i in items)
+        return {"answer": f"Top {kind} by {verb} over {label}: {lines}.", "evidence": {"period_days": days, "items": items, "total": total}}
+    return handler
+
+
+def _forecast(db, tenant_id, q, days, label, now):
+    entity, noun = ("expense", "expenses") if re.search(r"\b(expenses?|costs?|spend)", q) else ("sale", "sales")
+    period = 30 if re.search(r"month", q) else 7
+    t = forecast_next_period(db, tenant_id, entity, "amount", period, 6, now)
+    vals = t.historical_values
+    if sum(1 for v in vals if v > 0) < 3:
+        return {"answer": f"There is not enough {noun} history yet (needs at least 3 of the last 6 {period}-day periods) to project the next one.",
+                "evidence": {"values": vals}}
+    unit = "month" if period == 30 else "week"
+    return {"answer": (f"If the recent trend continues, {noun} next {unit} will be about {_money(t.forecast_next)} "
+                       f"(trend {t.direction}; last {unit} was {_money(vals[-1])}). This is a straight-line projection of the last 6 {unit}s, not a promise."),
+            "evidence": {"period_days": period, "values": vals, "forecast_next": t.forecast_next, "slope": t.slope, "direction": t.direction}}
+
+
+def _attention(db, tenant_id, q, days, label, now):
+    alerts = (db.query(Alert).filter(Alert.tenant_id == tenant_id, Alert.state.in_(ACTIVE))
+              .order_by(Alert.priority_rank.desc().nullslast(), Alert.created_at.desc()).limit(5).all())
+    if not alerts:
+        return {"answer": "Nothing needs attention right now: there are no open alerts.", "evidence": {"alerts": []}}
+    total = db.query(func.count(Alert.id)).filter(Alert.tenant_id == tenant_id, Alert.state.in_(ACTIVE)).scalar()
+    items = [{"id": a.id, "severity": a.severity.value, "title": a.title, "escalated": bool((a.evidence or {}).get("escalated_at"))} for a in alerts]
+    lines = "; ".join(f"{i['title']} ({i['severity']}{', escalated' if i['escalated'] else ''})" for i in items)
+    return {"answer": f"{total} open alert{'s' if total != 1 else ''}. Most important first: {lines}.", "evidence": {"open": total, "alerts": items}}
+
+
+def _data_health(db, tenant_id, q, days, label, now):
+    rows = coverage_mod.compute_and_upsert_coverage(db, tenant_id, now)
+    if not rows:
+        return {"answer": "No data sources are connected yet.", "evidence": {"areas": []}}
+    items = [{"area": r.area, "status": getattr(r.status, "value", str(r.status)),
+              "last_data_at": r.last_data_at.isoformat() if r.last_data_at else None} for r in rows]
+    bad = [i for i in items if i["status"] not in ("live", "recent")]
+    if not bad:
+        return {"answer": f"All {len(items)} data area{'s are' if len(items) != 1 else ' is'} up to date.", "evidence": {"areas": items}}
+    return {"answer": f"{len(bad)} of {len(items)} data areas are not up to date: "
+                      + ", ".join(f"{i['area']} ({i['status'].replace('_', ' ')})" for i in bad)
+                      + ". Figures that depend on them may be understated.",
+            "evidence": {"areas": items}}
+
+
+HANDLERS: dict[str, Callable] = {
+    "sales": lambda db, t, q, d, l, n: _metric_answer(db, t, "sale", "sales", d, l, n),
+    "expenses": lambda db, t, q, d, l, n: _metric_answer(db, t, "expense", "expenses", d, l, n),
+    "top_customers": _ranking_answer("customers", "sale", "resolved_customer_id", "sales"),
+    "top_products": _ranking_answer("products", "sale", "resolved_product_id", "sales"),
+    "top_suppliers": _ranking_answer("suppliers", "expense", "resolved_supplier_id", "spend"),
+    "forecast": _forecast, "attention": _attention, "data_health": _data_health,
+}
+
+
+def route(db: Session, tenant_id: str, question: str, default_days: int = 30, now: Optional[datetime] = None) -> Optional[dict]:
+    """Returns {intent, answer, evidence, period_days} for every intent except profit (handled by the
+    caller, which owns the optional LLM phrasing), or None when no rule matches."""
+    now = now or datetime.utcnow()
+    intent = classify(question)
+    if intent is None:
+        return None
+    days, label = parse_period(question, default_days)
+    if intent == "profit":
+        return {"intent": "profit", "period_days": days}
+    out = HANDLERS[intent](db, tenant_id, question.lower(), days, label, now)
+    return {"intent": intent, "period_days": days, **out}
