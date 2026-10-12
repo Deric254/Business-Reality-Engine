@@ -162,12 +162,30 @@ HANDLERS: dict[str, Callable] = {
 }
 
 
-def route(db: Session, tenant_id: str, question: str, default_days: int = 30, now: Optional[datetime] = None) -> Optional[dict]:
+INTENTS = [name for name, _ in _RULES]
+
+
+def classify_with_llm(question: str, provider) -> Optional[str]:
+    """Section 45 fallback when no keyword rule matches. The model only PICKS one of our fixed intents; it
+    never produces numbers or answer text. Anything that is not exactly one allowed intent is ignored."""
+    system = ("Classify a business question into exactly one intent from this list: " + ", ".join(INTENTS) +
+              ". Reply with only the intent name, or the single word none if it fits none of them. "
+              "Questions may be in English or Swahili. Do not answer the question.")
+    try:
+        raw = provider.generate_json(system_prompt=system, user_content=question[:500], max_tokens=10)
+    except Exception:
+        return None
+    word = (raw or "").strip().strip(".\"'` ").lower()
+    return word if word in INTENTS else None
+
+
+def route(db: Session, tenant_id: str, question: str, default_days: int = 30, now: Optional[datetime] = None,
+          intent: Optional[str] = None) -> Optional[dict]:
     """Returns {intent, answer, evidence, period_days} for every intent except profit (handled by the
     caller, which owns the optional LLM phrasing), or None when no rule matches."""
     now = now or datetime.utcnow()
-    intent = classify(question)
-    if intent is None:
+    intent = intent or classify(question)
+    if intent is None or (intent != "profit" and intent not in HANDLERS):
         return None
     days, label = parse_period(question, default_days)
     if intent == "profit":

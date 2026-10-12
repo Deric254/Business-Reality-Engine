@@ -11,6 +11,9 @@ from app.models.alerts import Alert, AlertState
 from app.core.business_memory import historical_experience
 from app.reasoning.llm_reasoning import reason_about_alert
 
+from app.core.advisory import advisory_text
+from app.models.core import Tenant
+
 router = APIRouter()
 
 
@@ -38,6 +41,7 @@ class AlertOut(BaseModel):
     priority_rank: Optional[float] = None
     correlated_alert_ids: Optional[list[str]] = None
     escalated: bool = False
+    kind: Optional[str] = None
     created_at: Optional[datetime] = None
 
     class Config:
@@ -79,6 +83,9 @@ class AlertDetailOut(BaseModel):
     priority_rank: Optional[float] = None
     correlated_alert_ids: list[str] = []
     escalated: bool = False
+    kind: Optional[str] = None
+    external_context: list[dict] = []   # Section 42: holidays/promotions overlapping the period
+    advisory: str = ""                  # Section 56
 
     created_at: datetime
     updated_at: datetime
@@ -149,6 +156,9 @@ def get_alert_detail(alert_id: str, tenant_id: str, db: Session = Depends(get_db
         correlated_alert_ids=alert.correlated_alert_ids or [],
         escalated=bool((alert.evidence or {}).get("escalated_at")),
         historical_experience=historical_experience(db, tenant_id, alert),
+        kind=alert.kind,
+        external_context=(alert.evidence or {}).get("external_context") or [],
+        advisory=advisory_text(getattr(db.get(Tenant, tenant_id), "language", "en")),
         created_at=alert.created_at,
         updated_at=alert.updated_at,
     )

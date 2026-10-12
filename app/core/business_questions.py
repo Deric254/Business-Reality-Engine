@@ -113,22 +113,38 @@ def answer_question(db: Session, tenant_id: str, question: str, period_days: int
     """Section 45: route the question to the analytics that can answer it. Profit questions keep the
     optional LLM phrasing; everything else is deterministic. Unplaceable questions are said so."""
     from app.core.question_router import route, SUGGESTIONS, parse_period
+    from app.core.advisory import advisory_text, language_name
+    from app.core.question_router import classify, classify_with_llm
+    from app.models.core import Tenant
+    tenant = db.get(Tenant, tenant_id)
+    lang = (tenant.language if tenant and tenant.language else "en")
     routed = route(db, tenant_id, question, period_days)
+    if routed is None and classify(question) is None:
+        # No keyword matched: let a configured model pick an intent (classification only; numbers stay in SQL).
+        try:
+            guessed = classify_with_llm(question, get_provider())
+        except Exception:
+            guessed = None
+        if guessed:
+            routed = route(db, tenant_id, question, period_days, intent=guessed)
+            if routed:
+                routed["classified_by"] = "llm"
     if routed is None:
         return {"question": question, "answered": False, "intent": None, "answer_source": "none", "evidence": {},
                 "answer": "I can't answer that yet. I can answer questions about profit, sales, expenses, top customers, "
                           "products or suppliers, next-period forecasts, what needs attention, and data freshness.",
-                "suggestions": SUGGESTIONS}
+                "suggestions": SUGGESTIONS, "advisory": advisory_text(lang)}
     if routed["intent"] != "profit":
         return {"question": question, "answered": True, "intent": routed["intent"], "answer": routed["answer"],
-                "evidence": routed["evidence"], "answer_source": "deterministic"}
+                "evidence": routed["evidence"], "answer_source": "deterministic",
+                "classified_by": routed.get("classified_by", "rules"), "advisory": advisory_text(lang)}
 
     days = routed["period_days"]
     evidence = compute_profit_breakdown(db, tenant_id, period_days=days)
     try:
         provider = get_provider()
         answer_text = provider.generate_json(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=SYSTEM_PROMPT + (f"\nWrite the answer in {language_name(lang)}." if lang != "en" else ""),
             user_content=f"Question: {question}\n\nEvidence: {evidence}",
             max_tokens=200,
         )
@@ -140,4 +156,5 @@ def answer_question(db: Session, tenant_id: str, question: str, period_days: int
         source = "deterministic_fallback"
 
     return {"question": question, "answered": True, "intent": "profit", "answer": answer_text.strip(),
-            "evidence": evidence, "answer_source": source}
+            "evidence": evidence, "answer_source": source,
+            "classified_by": routed.get("classified_by", "rules"), "advisory": advisory_text(lang)}

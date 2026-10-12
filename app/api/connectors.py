@@ -11,15 +11,41 @@ from app.connectors.file_connector import (
     ColumnMapping, validate_upload, parse_file_to_dataframe, dataframe_to_normalized_events,
 )
 from app.connectors.webhook_connector import generate_webhook_token
-from app.connectors.database_connector import (
-    DatabaseColumnMapping, fetch_rows, rows_to_normalized_events, _validate_read_only_query,
-)
-from app.connectors.sftp_connector import list_new_files, fetch_file
-from app.connectors.email_connector import list_new_emails
+from app.connectors.database_connector import DRIVERS, _validate_read_only_query, driver_catalog
+from app.core.netguard import check_host_allowed, tenant_path
+from app.core.sync import MAX_INTERVAL_MINUTES, MIN_INTERVAL_MINUTES, SYNCABLE, record_sync_failure, run_sync
 from app.core.secrets import encrypt_config_secrets
 from app.models.core import Connector
 
 router = APIRouter()
+
+CONNECTOR_TYPES = {"api", "webhook", "database", "file", "sftp", "email", "local_agent", "shared_folder", "manual"}
+FREQUENCIES = {"realtime", "near_realtime", "periodic", "slow"}
+
+
+def _check_interval(connector_type: str, minutes: int):
+    if connector_type not in SYNCABLE:
+        raise HTTPException(400, "Only database, sftp, email and shared_folder connectors can sync on a schedule")
+    if not (MIN_INTERVAL_MINUTES <= minutes <= MAX_INTERVAL_MINUTES):
+        raise HTTPException(400, f"sync_interval_minutes must be between {MIN_INTERVAL_MINUTES} and {MAX_INTERVAL_MINUTES}")
+
+
+def _validate_config(connector_type: str, config: dict, tenant_id: str):
+    """Fail at setup time, not at the first sync: a stored-but-unusable connector is just confusing."""
+    if connector_type == "database":
+        _validate_read_only_query(config.get("query", ""))
+        if config.get("db_type") not in DRIVERS:
+            raise HTTPException(400, f"db_type must be one of {sorted(DRIVERS)}")
+        if config["db_type"] == "sqlite":
+            tenant_path(tenant_id, config.get("database", ""))
+        elif config["db_type"] != "odbc" or config.get("host"):
+            check_host_allowed(config.get("host", ""))
+    elif connector_type == "sftp":
+        check_host_allowed(config.get("host", ""))
+    elif connector_type == "email":
+        check_host_allowed(config.get("imap_host", ""))
+    elif connector_type == "shared_folder":
+        tenant_path(tenant_id, config.get("path", ""))
 
 
 class ConnectorCreate(BaseModel):
@@ -28,6 +54,7 @@ class ConnectorCreate(BaseModel):
     connector_type: str  # api | webhook | database | file | sftp | email | local_agent
     config: dict = {}
     expected_frequency: Optional[str] = None  # realtime | near_realtime | periodic | slow
+    sync_interval_minutes: Optional[int] = None   # pull connectors only (database/sftp/email/shared_folder)
 
 
 class ConnectorOut(BaseModel):
@@ -38,6 +65,9 @@ class ConnectorOut(BaseModel):
     is_active: bool
     last_sync_at: Optional[datetime]
     last_sync_status: Optional[str]
+    expected_frequency: Optional[str] = None
+    sync_interval_minutes: Optional[int] = None
+    last_attempt_at: Optional[datetime] = None
     webhook_url: Optional[str] = None       # only populated once, at creation
     webhook_token: Optional[str] = None      # RAW token — shown exactly once, never again
 
@@ -51,21 +81,6 @@ def _get_owned_connector(db: Session, connector_id: str, tenant_id: str) -> Conn
     if not connector:
         raise HTTPException(404, "Connector not found")
     return connector
-
-
-def _record_sync_failure(db: Session, connector: Connector, exc: HTTPException):
-    """
-    A connection-level failure (wrong credentials, unreachable host, missing
-    directory) used to leave last_sync_status/last_sync_at untouched forever
-    — identical to a connector that was simply never attempted. Section 51's
-    whole point is catching "this is actively broken," so a failed attempt
-    must be recorded, not just per-row outcomes from a successful connection.
-    Called before re-raising; never swallows the original exception.
-    """
-    connector.last_sync_status = "failed"
-    connector.last_sync_at = datetime.utcnow()
-    db.commit()
-    raise exc
 
 
 from app.core.auth_users import authorize_tenant
@@ -89,21 +104,23 @@ def create_connector(payload: ConnectorCreate, request: Request, db: Session = D
     # rejected outright. Connectors hold credentials, so owner-role only.
     me = authorize_tenant(authorization, payload.tenant_id, require_role="owner")
 
-    connector = Connector(**payload.model_dump())
+    if payload.connector_type not in CONNECTOR_TYPES:
+        raise HTTPException(400, f"connector_type must be one of {sorted(CONNECTOR_TYPES)}")
+    if payload.expected_frequency is not None and payload.expected_frequency not in FREQUENCIES:
+        raise HTTPException(400, f"expected_frequency must be one of {sorted(FREQUENCIES)}")
+    if not payload.name.strip():
+        raise HTTPException(400, "name cannot be empty")
+    _validate_config(payload.connector_type, payload.config or {}, payload.tenant_id)
+    if payload.sync_interval_minutes is not None:
+        _check_interval(payload.connector_type, payload.sync_interval_minutes)
+    connector = Connector(**{**payload.model_dump(), "name": payload.name.strip()})
 
     raw_token = None
-    if connector.connector_type == "webhook":
+    if connector.connector_type in ("webhook", "local_agent"):
         raw_token, token_hash = generate_webhook_token()
         # Merge into config rather than overwrite — a webhook connector's
         # config also holds the WebhookMapping fields set by the caller.
         connector.config = {**(connector.config or {}), "webhook_token_hash": token_hash}
-    elif connector.connector_type == "database":
-        # Fail fast: reject a write query at creation time, not only when
-        # someone eventually tries to sync it — a stored-but-never-usable
-        # connector is confusing, not dangerous, but still worth catching
-        # immediately rather than silently accepting.
-        query = (connector.config or {}).get("query", "")
-        _validate_read_only_query(query)
 
     # Encrypt any secret field UNCONDITIONALLY, not just for connector
     # types we've special-cased above — a no-op if no key in
@@ -174,149 +191,84 @@ async def upload_file(
     return {"rows_processed": len(results), "failed": failed, "results": results}
 
 
-@router.post("/{connector_id}/sync-database")
-def sync_database(connector_id: str, tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
-    """
-    Section 8-C: pulls from the configured external database using the
-    connector's fixed, pre-configured query (never a caller-supplied one —
-    see app/connectors/database_connector.py's module docstring for why).
-    Manual trigger for now — would move to the scheduler (Section 17-18)
-    alongside detection once a business's sync frequency is configurable.
-    """
+def _sync_endpoint(connector_id, tenant_id, db, authorization, expected_type):
     authorize_tenant(authorization, tenant_id)
     connector = _get_owned_connector(db, connector_id, tenant_id)
-    if connector.connector_type != "database":
-        raise HTTPException(400, "This connector is not configured as a database connector")
-    if not connector.is_active:
-        raise HTTPException(409, "Connector is not active")
+    if connector.connector_type != expected_type:
+        raise HTTPException(400, f"This connector is not configured as a {expected_type.replace('_', ' ')} connector")
+    return run_sync(db, connector)
 
-    mapping_keys = {"entity", "event_type", "timestamp_col", "amount_col", "quantity_col",
-                     "currency_col", "location_col", "customer_id_col", "product_id_col",
-                     "entity_id_col", "default_currency"}
-    try:
-        mapping = DatabaseColumnMapping(**{k: v for k, v in connector.config.items() if k in mapping_keys})
-    except Exception as e:
-        raise HTTPException(400, f"Connector column mapping is invalid: {e}")
 
-    try:
-        rows = fetch_rows(connector.config)
-    except HTTPException as e:
-        _record_sync_failure(db, connector, e)
-    raw_events = rows_to_normalized_events(rows, mapping, tenant_id=tenant_id, connector_id=connector_id, source=connector.name)
-
-    results = ingest_events_bulk(db, [NormalizedEvent(**e) for e in raw_events])
-    failed = sum(1 for r in results if r["errors"])
-    return {"rows_fetched": len(rows), "rows_processed": len(results), "failed": failed, "results": results}
+@router.post("/{connector_id}/sync-database")
+def sync_database_ep(connector_id: str, tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+    """Section 8-C: pulls with the connector's FIXED, pre-configured query (never a caller-supplied one)."""
+    return _sync_endpoint(connector_id, tenant_id, db, authorization, "database")
 
 
 @router.post("/{connector_id}/sync-sftp")
-def sync_sftp(connector_id: str, tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
-    """
-    Section 8-F. Pulls every new (not previously processed) file matching
-    the connector's configured pattern, parses each with the same logic
-    file uploads use, and records what was processed so a repeat sync
-    doesn't re-ingest the same file (Section 11).
-    """
-    authorize_tenant(authorization, tenant_id)
-    connector = _get_owned_connector(db, connector_id, tenant_id)
-    if connector.connector_type != "sftp":
-        raise HTTPException(400, "This connector is not configured as an SFTP connector")
-    if not connector.is_active:
-        raise HTTPException(409, "Connector is not active")
-
-    mapping_keys = {"entity", "event_type", "timestamp_col", "amount_col", "quantity_col",
-                     "currency_col", "location_col", "customer_id_col", "product_id_col",
-                     "entity_id_col", "default_currency"}
-    try:
-        mapping = ColumnMapping(**{k: v for k, v in connector.config.items() if k in mapping_keys})
-    except Exception as e:
-        raise HTTPException(400, f"Connector column mapping is invalid: {e}")
-
-    try:
-        new_files = list_new_files(connector.config)
-    except HTTPException as e:
-        _record_sync_failure(db, connector, e)
-    file_results = []
-    newly_processed = list(connector.config.get("processed_files", []))
-
-    for f in new_files:
-        try:
-            content = fetch_file(connector.config, f["filename"])
-            ext = validate_upload(f["filename"], content)
-            df = parse_file_to_dataframe(content, ext)
-            raw_events = dataframe_to_normalized_events(
-                df, mapping, tenant_id=tenant_id, connector_id=connector_id, source=connector.name
-            )
-            results = ingest_events_bulk(db, [NormalizedEvent(**e) for e in raw_events])
-            failed = sum(1 for r in results if r["errors"])
-            file_results.append({"filename": f["filename"], "rows_processed": len(results), "failed": failed})
-        except HTTPException as e:
-            # One bad file must not abort the whole sync — record and continue.
-            file_results.append({"filename": f["filename"], "error": e.detail})
-        finally:
-            # Mark processed on EITHER outcome, not just success. A file
-            # that's permanently broken would otherwise retry on every
-            # single sync forever (caught by testing repeat syncs, not
-            # obvious from the happy-path code). If the file is later
-            # fixed/replaced, its mtime changes, so this key naturally
-            # stops matching and the corrected version is picked up
-            # automatically — nothing is permanently lost by marking a
-            # failed attempt as processed.
-            newly_processed.append([f["filename"], f["mtime"]])
-
-    connector.config = {**connector.config, "processed_files": newly_processed}
-    db.commit()
-
-    return {"files_found": len(new_files), "files": file_results}
+def sync_sftp_ep(connector_id: str, tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+    """Section 8-F: every new file matching the pattern; repeat syncs do not re-ingest processed files."""
+    return _sync_endpoint(connector_id, tenant_id, db, authorization, "sftp")
 
 
 @router.post("/{connector_id}/sync-email")
-def sync_email(connector_id: str, tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
-    """
-    Section 8-H. Same processed-tracking principle as SFTP: a message
-    that fails to parse is still marked processed (by Message-ID) so it
-    doesn't retry forever — learned directly from the SFTP connector bug.
-    """
+def sync_email_ep(connector_id: str, tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+    """Section 8-H: new report emails' attachments; processed by Message-ID."""
+    return _sync_endpoint(connector_id, tenant_id, db, authorization, "email")
+
+
+@router.post("/{connector_id}/sync-folder")
+def sync_folder_ep(connector_id: str, tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+    """Section 8-G: new files in the business's shared folder; tracked by content hash."""
+    return _sync_endpoint(connector_id, tenant_id, db, authorization, "shared_folder")
+
+
+@router.get("/meta/database-types")
+def database_types(tenant_id: str, authorization: Optional[str] = Header(default=None)):
+    """Which database engines this server can connect to, and which have actually been verified against a live server."""
     authorize_tenant(authorization, tenant_id)
-    connector = _get_owned_connector(db, connector_id, tenant_id)
-    if connector.connector_type != "email":
-        raise HTTPException(400, "This connector is not configured as an email connector")
-    if not connector.is_active:
-        raise HTTPException(409, "Connector is not active")
+    return driver_catalog()
 
-    mapping_keys = {"entity", "event_type", "timestamp_col", "amount_col", "quantity_col",
-                     "currency_col", "location_col", "customer_id_col", "product_id_col",
-                     "entity_id_col", "default_currency"}
-    try:
-        mapping = ColumnMapping(**{k: v for k, v in connector.config.items() if k in mapping_keys})
-    except Exception as e:
-        raise HTTPException(400, f"Connector column mapping is invalid: {e}")
 
-    try:
-        new_emails = list_new_emails(connector.config)
-    except HTTPException as e:
-        _record_sync_failure(db, connector, e)
-    email_results = []
-    newly_processed = list(connector.config.get("processed_message_ids", []))
+class ConnectorUpdate(BaseModel):
+    name: Optional[str] = None
+    is_active: Optional[bool] = None
+    expected_frequency: Optional[str] = None
+    sync_interval_minutes: Optional[int] = None
+    clear_sync_interval: bool = False
+    config: Optional[dict] = None          # replaces the config (secrets re-encrypted); owner only
 
-    for msg in new_emails:
-        msg_result = {"message_id": msg["message_id"], "subject": msg["subject"], "attachments": []}
-        for filename, content in msg["attachments"]:
-            try:
-                ext = validate_upload(filename, content)
-                df = parse_file_to_dataframe(content, ext)
-                raw_events = dataframe_to_normalized_events(
-                    df, mapping, tenant_id=tenant_id, connector_id=connector_id, source=connector.name
-                )
-                results = ingest_events_bulk(db, [NormalizedEvent(**e) for e in raw_events])
-                failed = sum(1 for r in results if r["errors"])
-                msg_result["attachments"].append({"filename": filename, "rows_processed": len(results), "failed": failed})
-            except HTTPException as e:
-                msg_result["attachments"].append({"filename": filename, "error": e.detail})
-        email_results.append(msg_result)
-        newly_processed.append(msg["message_id"])  # marked regardless of per-attachment outcome — same lesson as SFTP
 
-    connector.config = {**connector.config, "processed_message_ids": newly_processed}
-    db.commit()
-
-    return {"emails_found": len(new_emails), "emails": email_results}
+@router.patch("/{connector_id}", response_model=ConnectorOut)
+def update_connector(connector_id: str, tenant_id: str, payload: ConnectorUpdate, request: Request, db: Session = Depends(get_db),
+                     authorization: Optional[str] = Header(default=None)):
+    me = authorize_tenant(authorization, tenant_id, require_role="owner")
+    c = _get_owned_connector(db, connector_id, tenant_id)
+    data = payload.model_dump(exclude_unset=True)
+    if "name" in data:
+        if not (data["name"] or "").strip():
+            raise HTTPException(400, "name cannot be empty")
+        c.name = data["name"].strip()
+    if data.get("expected_frequency") is not None:
+        if data["expected_frequency"] not in FREQUENCIES:
+            raise HTTPException(400, f"expected_frequency must be one of {sorted(FREQUENCIES)}")
+        c.expected_frequency = data["expected_frequency"]
+    if "is_active" in data and data["is_active"] is not None:
+        c.is_active = data["is_active"]
+    if data.get("clear_sync_interval"):
+        c.sync_interval_minutes = None
+    elif data.get("sync_interval_minutes") is not None:
+        _check_interval(c.connector_type, data["sync_interval_minutes"])
+        c.sync_interval_minutes = data["sync_interval_minutes"]
+    if data.get("config") is not None:
+        new_cfg = dict(data["config"])
+        # Keep stored webhook/agent token hash and processed-tracking unless the caller deliberately replaces them.
+        for keep in ("webhook_token_hash", "processed_files", "processed_message_ids", "processed_hashes"):
+            if keep in (c.config or {}) and keep not in new_cfg:
+                new_cfg[keep] = c.config[keep]
+        _validate_config(c.connector_type, new_cfg, tenant_id)
+        c.config = encrypt_config_secrets(new_cfg)
+    db.commit(); db.refresh(c)
+    audit.record(db, "connector.update", request=request, tenant_id=tenant_id, actor_user_id=me.user_id, target=c.id,
+                 detail={"fields": sorted(k for k in data if k != "config") + (["config"] if "config" in data else [])})
+    return c

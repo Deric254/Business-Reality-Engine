@@ -16,14 +16,15 @@ from typing import Optional
 from fastapi import HTTPException
 from pydantic import BaseModel
 
+from app.core.netguard import check_host_allowed
 from app.core.secrets import decrypt_config_secrets
 from app.connectors.file_connector import ALLOWED_EXTENSIONS
 
 
 class EmailConnectionConfig(BaseModel):
     imap_host: str
-    imap_port: int = 143
-    use_ssl: bool = False   # sandbox test server is plaintext; real deployments should default true
+    imap_port: int = 993
+    use_ssl: bool = True    # encrypted by default; set false only for a trusted local test server
     username: str
     password: str            # encrypted at rest
     mailbox: str = "INBOX"
@@ -32,6 +33,7 @@ class EmailConnectionConfig(BaseModel):
 
 
 def _imap_connect(config: EmailConnectionConfig) -> imaplib.IMAP4:
+    check_host_allowed(config.imap_host)
     try:
         if config.use_ssl:
             conn = imaplib.IMAP4_SSL(config.imap_host, config.imap_port)

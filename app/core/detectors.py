@@ -209,17 +209,21 @@ def detect_daily_anomaly(
         return None
     sev = AlertSeverity.high if abs(rel) >= 0.60 else AlertSeverity.medium
     word = "below" if rel < 0 else "above"
+    from app.core.context import is_holiday
+    holiday = is_holiday(db, tenant_id, target)
+    if holiday:                                   # Section 42: a public holiday explains an off day; do not raise an incident
+        sev = AlertSeverity.informational
     return _upsert(
         db, tenant_id, f"daily_anomaly:{entity}:{field}", now,
         {"metric": f"{entity}.{field}", "day": target.isoformat(), "weekday": target.strftime("%A"), "value": x,
          "typical_for_weekday": round(med, 2), "robust_z": round(z, 2), "history": [round(v, 2) for v in history],
-         "timezone": str(tz), "direction": direction},
+         "timezone": str(tz), "direction": direction, **({"holiday": holiday} if holiday else {})},
         dict(
             severity=sev, title=f"Unusual {target.strftime('%A')}: {entity} {field} {word} normal",
             what_happened=(f"{target.strftime('%A')} {target.isoformat()}: {entity} {field} was {x:,.0f}, "
                            f"{abs(rel)*100:.0f}% {word} a typical {target.strftime('%A')} ({med:,.0f})."),
             magnitude=round(rel, 4), period_start=utc_bounds(target)[0], period_end=utc_bounds(target)[1],
-            confidence=0.6, data_coverage_pct=coverage_mod.coverage_pct_for_entity(db, tenant_id, entity, now=now),
+            confidence=0.6, kind="daily", data_coverage_pct=coverage_mod.coverage_pct_for_entity(db, tenant_id, entity, now=now),
             recommended_action="Check whether something specific happened that day (closure, outage, stock-out, a data gap).",
         ),
     )
@@ -279,12 +283,29 @@ def run_metric_detectors(db: Session, tenant_id: str, *, entity: str, field: str
                          absolute_threshold: Optional[float] = None, now: Optional[datetime] = None) -> list[Alert]:
     """Every detector for one monitored metric. One failing detector never stops the others."""
     direction = direction or default_direction(entity)
+    from app.core.model_versions import active_rebaseline
+    now_ = now or datetime.utcnow()
+    rb = active_rebaseline(db, tenant_id, now_, period_days * (baseline_periods + 1))
+    if rb:                                         # Section 53: do not compare across a declared structural change
+        from app.core import detectors_extra as ex
+        try:
+            a = ex.note_rebaseline(db, tenant_id, entity, field, period_days, rb, now_)
+            return [a] if a else []
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Rebaseline note failed for tenant={tenant_id}: {e}")
+            return []
     steps = [
         lambda: detect_historical_deviation(db, tenant_id, entity, field, period_days, baseline_periods,
                                             deterioration_threshold, now, direction),
         lambda: detect_opportunity(db, tenant_id, entity, field, direction, period_days, baseline_periods, now=now),
         lambda: detect_sustained_trend(db, tenant_id, entity, field, direction, period_days, now=now),
         lambda: detect_daily_anomaly(db, tenant_id, entity, field, direction, now=now),
+    ]
+    from app.core import detectors_extra as ex
+    steps += [
+        lambda: ex.detect_forecast_deviation(db, tenant_id, entity, field, direction, period_days, now=now),
+        lambda: ex.detect_insufficient_data(db, tenant_id, entity, field, period_days, baseline_periods, now=now),
     ]
     has_data = db.query(BusinessEvent.id).filter(BusinessEvent.tenant_id == tenant_id, BusinessEvent.entity == entity).first()
     if absolute_threshold is not None and has_data:      # a brand-new tenant with no data is not "below the line"
@@ -303,23 +324,40 @@ def run_metric_detectors(db: Session, tenant_id: str, *, entity: str, field: str
     return alerts
 
 
-def run_tenant_cycle(db: Session, tenant_id: str, metrics: list[dict], now: Optional[datetime] = None) -> dict:
+def run_tenant_cycle(db: Session, tenant_id: str, metrics: list[dict], now: Optional[datetime] = None, replay: bool = False) -> dict:
     """All detectors for one tenant, then ranking/correlation/escalation over its open alerts."""
     now = now or datetime.utcnow()
     alerts, errors = [], 0
     for m in metrics:
         alerts += run_metric_detectors(db, tenant_id, now=now, **m)
     try:
-        alerts += detect_data_silence(db, tenant_id, now)
+        if not replay:                  # silence compares to the latest event ever stored: meaningless for a past date
+            alerts += detect_data_silence(db, tenant_id, now)
     except Exception as e:
         db.rollback(); errors += 1
         logger.error(f"Silence detector failed for tenant={tenant_id}: {e}")
+    try:
+        from app.core import detectors_extra as ex
+        a = ex.detect_profit_risk(db, tenant_id, now=now)
+        if a:
+            alerts.append(a)
+    except Exception as e:
+        db.rollback(); errors += 1
+        logger.error(f"Profit risk detector failed for tenant={tenant_id}: {e}")
     measured = 0
     try:
-        measured = measure_due_cases(db, tenant_id, now)
+        measured = 0 if replay else measure_due_cases(db, tenant_id, now)
     except Exception as e:
         db.rollback(); errors += 1
         logger.error(f"Case outcome measurement failed for tenant={tenant_id}: {e}")
+    try:
+        from app.core.model_versions import detect_model_changes, stamp_versions
+        if not replay:
+            detect_model_changes(db, tenant_id, now)
+        stamp_versions(db, tenant_id)
+    except Exception as e:
+        db.rollback(); errors += 1
+        logger.error(f"Model versioning failed for tenant={tenant_id}: {e}")
     try:
         post = post_process_tenant(db, tenant_id, now)
     except Exception as e:

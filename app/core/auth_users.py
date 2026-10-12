@@ -47,7 +47,8 @@ def verify_password(password: str, password_hash: str) -> bool:
     return bcrypt.checkpw(password.encode(), password_hash.encode())
 
 
-def create_token(user_id: str, tenant_id: str, role: str, token_type: str, expires_delta: timedelta) -> str:
+def create_token(user_id: str, tenant_id: str, role: str, token_type: str, expires_delta: timedelta,
+                 must_change: bool = False) -> str:
     from app.core.revocation import now_ms
     now = datetime.utcnow()
     payload = {
@@ -55,26 +56,29 @@ def create_token(user_id: str, tenant_id: str, role: str, token_type: str, expir
         "iat": now, "exp": now + expires_delta,
         "jti": uuid.uuid4().hex, "iat_ms": now_ms(),     # unique id + ms-precision issue time, for revocation
     }
+    if must_change:
+        payload["mcp"] = True                          # password change required before anything else
     return jwt.encode(payload, _get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
-def create_access_token(user_id: str, tenant_id: str, role: str) -> str:
-    return create_token(user_id, tenant_id, role, "access", timedelta(minutes=ACCESS_TOKEN_MINUTES))
+def create_access_token(user_id: str, tenant_id: str, role: str, must_change: bool = False) -> str:
+    return create_token(user_id, tenant_id, role, "access", timedelta(minutes=ACCESS_TOKEN_MINUTES), must_change)
 
 
-def create_refresh_token(user_id: str, tenant_id: str, role: str) -> str:
-    return create_token(user_id, tenant_id, role, "refresh", timedelta(days=REFRESH_TOKEN_DAYS))
+def create_refresh_token(user_id: str, tenant_id: str, role: str, must_change: bool = False) -> str:
+    return create_token(user_id, tenant_id, role, "refresh", timedelta(days=REFRESH_TOKEN_DAYS), must_change)
 
 
 class CurrentUser:
     def __init__(self, user_id: str, tenant_id: str, role: str, jti: Optional[str] = None,
-                 exp: Optional[float] = None, iat_ms: Optional[int] = None):
+                 exp: Optional[float] = None, iat_ms: Optional[int] = None, must_change: bool = False):
         self.user_id = user_id
         self.tenant_id = tenant_id
         self.role = role
         self.jti = jti
         self.exp = exp
         self.iat_ms = iat_ms
+        self.must_change = must_change
 
 
 def decode_token(token: str, expected_type: str = "access") -> CurrentUser:
@@ -96,7 +100,14 @@ def decode_token(token: str, expected_type: str = "access") -> CurrentUser:
     if is_revoked_fast(jti, payload["sub"], iat_ms):
         raise HTTPException(401, "Token has been revoked")
     return CurrentUser(user_id=payload["sub"], tenant_id=payload["tenant_id"], role=payload["role"],
-                       jti=jti, exp=float(payload["exp"]), iat_ms=int(iat_ms))
+                       jti=jti, exp=float(payload["exp"]), iat_ms=int(iat_ms), must_change=bool(payload.get("mcp")))
+
+
+def ensure_active(user: CurrentUser) -> CurrentUser:
+    """An account on an owner-issued temporary password can only change that password."""
+    if user.must_change:
+        raise HTTPException(403, "Password change required")
+    return user
 
 
 def get_current_user(authorization: Optional[str] = Header(default=None)) -> CurrentUser:
@@ -104,7 +115,7 @@ def get_current_user(authorization: Optional[str] = Header(default=None)) -> Cur
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Missing or malformed Authorization header")
     token = authorization.removeprefix("Bearer ")
-    return decode_token(token, expected_type="access")
+    return ensure_active(decode_token(token, expected_type="access"))
 
 
 def require_tenant_match(user: CurrentUser, tenant_id: str):
@@ -130,6 +141,8 @@ def authorize_tenant(authorization: Optional[str], tenant_id: str, require_role:
     if not authorization.startswith("Bearer "):
         raise HTTPException(401, "Malformed Authorization header")
     current_user = decode_token(authorization.removeprefix("Bearer "), expected_type="access")
+    if current_user.must_change:
+        raise HTTPException(403, "Password change required")
     require_tenant_match(current_user, tenant_id)
     if require_role == "owner":
         require_owner(current_user)

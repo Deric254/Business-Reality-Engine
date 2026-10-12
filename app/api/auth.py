@@ -47,6 +47,7 @@ class TokenPair(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+    must_change_password: bool = False
 
 
 def _check_new_password(pw: str) -> None:
@@ -57,9 +58,11 @@ def _check_new_password(pw: str) -> None:
 
 
 def _tokens(user: User) -> TokenPair:
+    mc = bool(user.must_change_password)
     return TokenPair(
-        access_token=create_access_token(user.id, user.tenant_id, user.role),
-        refresh_token=create_refresh_token(user.id, user.tenant_id, user.role),
+        access_token=create_access_token(user.id, user.tenant_id, user.role, mc),
+        refresh_token=create_refresh_token(user.id, user.tenant_id, user.role, mc),
+        must_change_password=mc,
     )
 
 
@@ -115,10 +118,7 @@ def register(
     audit.record(db, "auth.register", request=request, tenant_id=user.tenant_id, actor_type="admin" if x_admin_key else "user",
                  actor_user_id=None if x_admin_key else _actor_id(authorization), target=user.id, detail={"role": user.role})
 
-    return TokenPair(
-        access_token=create_access_token(user.id, user.tenant_id, user.role),
-        refresh_token=create_refresh_token(user.id, user.tenant_id, user.role),
-    )
+    return _tokens(user)
 
 
 @router.post("/login", response_model=TokenPair)
@@ -219,6 +219,7 @@ def change_password(payload: ChangePasswordRequest, request: Request, db: Sessio
     if payload.new_password == payload.current_password:
         raise HTTPException(400, "New password must differ from the current one")
     user.password_hash = hash_password(payload.new_password)
+    user.must_change_password = False
     revocation.revoke_user_tokens(db, user.id)
     db.commit()
     lockout.record_success(user.email)

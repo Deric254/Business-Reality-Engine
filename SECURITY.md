@@ -185,3 +185,9 @@ same commit as any security-relevant change — don't let it drift from the code
 - **Audit log** (`audit_log`, append-only, `GET /api/audit/`, owner only, tenant-scoped): logins, failures, lockouts, logouts, password changes, refresh-reuse, registrations, connector/channel/metric changes, entity merges, alert state changes, tenant creation. Details never include secrets or tokens. A failed audit write is logged and never fails the request.
 - **Response headers** on every API response: `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy`, a deny-all `Content-Security-Policy` (not on /docs), `Cache-Control: no-store` on /api/auth, HSTS in production.
 - **Limits, stated:** without Redis, revocation/lockout state is per process and lost on restart (a revoked *access* token could live up to 30 min after a restart; refresh tokens and sign-out-everywhere remain enforced from the database). Read-only actions are not audited. Existing sessions end when this is deployed (old tokens lack `jti`).
+
+## Added with user management
+- `/api/users/*` is owner-only and tenant-scoped; another tenant's user ids answer 404, exactly like a missing one.
+- Owners create accounts with a generated one-time temporary password (~84 bits, shown once, stored only as a bcrypt hash, never logged or audited). The account's tokens carry a `mcp` claim: every endpoint except change-password, logout and refresh answers 403 until the password is changed (enforced server-side, not just in the UI).
+- Guards: a business always keeps at least one owner; nobody removes, demotes or resets themselves; role change, reset and removal revoke that user's sessions immediately; all are audited.
+- Not yet: email invitations and self-service ("forgot my password") reset. Until then an owner resets a forgotten password; if the only owner forgets theirs, an operator must reset it with the admin key (create a new owner via `/api/auth/register`).

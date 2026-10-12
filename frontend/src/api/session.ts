@@ -52,3 +52,21 @@ export function onSessionChange(fn: () => void): () => void {
 export function isSignedIn(): boolean {
   return getTokens() !== null;
 }
+
+// Display-only view of the access token's claims (the server verifies; this just decides what to show).
+export interface Claims {
+  role: string | null;
+  mustChangePassword: boolean;
+}
+
+export function getClaims(): Claims {
+  const token = getTokens()?.access_token;
+  if (!token) return { role: null, mustChangePassword: false };
+  try {
+    const b64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    const payload = JSON.parse(atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, "=")));
+    return { role: typeof payload.role === "string" ? payload.role : null, mustChangePassword: payload.mcp === true };
+  } catch {
+    return { role: null, mustChangePassword: false };
+  }
+}

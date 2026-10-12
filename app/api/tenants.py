@@ -4,10 +4,11 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.auth_users import decode_token
+from app.core.auth_users import decode_token, ensure_active
 from app.models.core import Tenant
 
 router = APIRouter()
+SUPPORTED_LANGUAGES = {"en", "sw"}
 
 
 class TenantOut(BaseModel):
@@ -26,7 +27,7 @@ def list_tenants(db: Session = Depends(get_db), authorization: Optional[str] = H
         raise HTTPException(401, "Authentication required")
     if not authorization.startswith("Bearer "):
         raise HTTPException(401, "Malformed Authorization header")
-    current_user = decode_token(authorization.removeprefix("Bearer "), expected_type="access")
+    current_user = ensure_active(decode_token(authorization.removeprefix("Bearer "), expected_type="access"))
     return db.query(Tenant).filter(Tenant.id == current_user.tenant_id).all()
 
 
@@ -35,6 +36,8 @@ class TenantSettings(BaseModel):
     name: str
     timezone: str
     base_currency: str
+    country: Optional[str] = None
+    language: str = "en"
 
     class Config:
         from_attributes = True
@@ -44,12 +47,14 @@ class TenantSettingsUpdate(BaseModel):
     name: Optional[str] = None
     timezone: Optional[str] = None
     base_currency: Optional[str] = None
+    country: Optional[str] = None
+    language: Optional[str] = None
 
 
 def _me(authorization: Optional[str], need_owner: bool = False):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Authentication required")
-    user = decode_token(authorization.removeprefix("Bearer "), expected_type="access")
+    user = ensure_active(decode_token(authorization.removeprefix("Bearer "), expected_type="access"))
     if need_owner and user.role != "owner":
         raise HTTPException(403, "This action requires the 'owner' role")
     return user
@@ -70,6 +75,12 @@ def update_my_tenant(payload: TenantSettingsUpdate, db: Session = Depends(get_db
         raise HTTPException(400, "Unknown timezone (use an IANA name such as Africa/Nairobi)")
     if "base_currency" in data and not re.fullmatch(r"[A-Z]{3}", data["base_currency"] or ""):
         raise HTTPException(400, "base_currency must be a 3-letter code such as KES")
+    if data.get("country") is not None:
+        data["country"] = data["country"].strip().upper() or None
+        if data["country"] and not re.fullmatch(r"[A-Z]{2}", data["country"]):
+            raise HTTPException(400, "country must be a 2-letter ISO code such as KE")
+    if "language" in data and data["language"] not in SUPPORTED_LANGUAGES:
+        raise HTTPException(400, f"language must be one of {sorted(SUPPORTED_LANGUAGES)}")
     if "name" in data and not (data["name"] or "").strip():
         raise HTTPException(400, "name cannot be empty")
     for k, v in data.items():

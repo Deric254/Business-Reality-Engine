@@ -72,6 +72,14 @@ export async function login(email: string, password: string): Promise<void> {
   setTokens((await res.json()) as TokenPair);
 }
 
+export async function changePassword(current: string, next: string): Promise<void> {
+  const pair = await request<TokenPair>("/api/auth/change-password", {
+    method: "POST",
+    body: JSON.stringify({ current_password: current, new_password: next }),
+  });
+  setTokens(pair); // every old session was revoked; this is the fresh one
+}
+
 export function logout() {
   const tokens = getTokens();
   setTokens(null); // the UI signs out at once; revoking on the server is best-effort and never blocks it
@@ -224,3 +232,23 @@ export const settingsApi = {
 };
 
 export { ApiError };
+
+export interface UserRow {
+  id: string;
+  email: string;
+  role: "owner" | "staff";
+  created_at: string | null;
+  must_change_password: boolean;
+  is_me: boolean;
+}
+
+export const usersApi = {
+  list: (t: string) => request<UserRow[]>(`/api/users/?tenant_id=${t}`),
+  create: (t: string, email: string, role: "owner" | "staff") =>
+    request<UserRow & { temporary_password: string }>("/api/users/", { method: "POST", ...json({ tenant_id: t, email, role }) }),
+  setRole: (t: string, id: string, role: "owner" | "staff") =>
+    request<UserRow>(`/api/users/${id}?tenant_id=${t}`, { method: "PATCH", ...json({ role }) }),
+  resetPassword: (t: string, id: string) =>
+    request<UserRow & { temporary_password: string }>(`/api/users/${id}/reset-password?tenant_id=${t}`, { method: "POST" }),
+  remove: (t: string, id: string) => request<{ deleted: boolean }>(`/api/users/${id}?tenant_id=${t}`, { method: "DELETE" }),
+};

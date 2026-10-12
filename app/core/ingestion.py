@@ -15,7 +15,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
-from app.models.core import BusinessEvent, Connector
+from app.models.core import BusinessEvent, Connector, Tenant
+from app.core.fx import convert_event_fields
 from app.core.entity_resolution import resolve_entities_bulk
 
 
@@ -116,10 +117,20 @@ def _ingest_chunk(db: Session, chunk: list[NormalizedEvent], connectors: dict[st
             resolved_cols[i][resolved_field] = res.resolved_entity_id
 
     rows, errors_by_idx = [], []
+    bases = {t.id: t.base_currency for t in db.query(Tenant).filter(Tenant.id.in_({p.tenant_id for p in chunk}))}
+    fx_cache: dict = {}
     for i, p in enumerate(chunk):
         data = p.model_dump()
         data["timestamp"] = _naive_utc(p.timestamp)
         errors = _validate_event(SimpleNamespace(**data))
+        # Section 57: convert to the tenant's base currency (or flag when no rate exists).
+        amt, cur, meta, fx_err = convert_event_fields(
+            db, bases.get(p.tenant_id, "KES"), p.tenant_id, data["amount"], data["currency"], data["timestamp"], fx_cache)
+        data["amount"], data["currency"] = amt, cur
+        if meta:
+            data["metadata_json"] = {**(data.get("metadata_json") or {}), **meta}
+        if fx_err:
+            errors.append(fx_err)
         errors_by_idx.append(errors)
         rows.append({
             **data, **resolved_cols[i], "id": str(uuid.uuid4()),

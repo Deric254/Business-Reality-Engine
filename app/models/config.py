@@ -1,7 +1,7 @@
 """Per-tenant configuration (Section 50) and alert delivery (Section 49)."""
 from datetime import datetime
 from sqlalchemy import (
-    Column, String, DateTime, Numeric, Integer, Boolean, ForeignKey, Index, Text, UniqueConstraint,
+    Column, String, DateTime, Date, Numeric, Integer, Boolean, ForeignKey, Index, Text, UniqueConstraint, JSON,
 )
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -75,3 +75,92 @@ class NotificationDelivery(Base):
         Index("ix_deliveries_due", "status", "next_attempt_at"),
         Index("ix_deliveries_tenant_created", "tenant_id", "created_at"),
     )
+
+
+class FxRate(Base):
+    """Section 57: units of base currency per 1 unit of `currency`, effective from `effective_date`.
+    An event converts with the latest rate on or before its own date."""
+    __tablename__ = "fx_rates"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    tenant_id = Column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False)
+    currency = Column(String(3), nullable=False)
+    rate_to_base = Column(Numeric(18, 8), nullable=False)
+    effective_date = Column(Date, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("tenant_id", "currency", "effective_date", name="uq_fx_rate_day"),)
+
+
+class ExternalContext(Base):
+    """Section 42: external facts (holidays, weather, promotions...) kept SEPARATE from business
+    data. They explain or temper alerts; they are never mixed into business totals."""
+    __tablename__ = "external_context"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    tenant_id = Column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False)
+    kind = Column(String, nullable=False)              # holiday | promotion | weather | event | other
+    name = Column(String, nullable=False)
+    starts_on = Column(Date, nullable=False)
+    ends_on = Column(Date, nullable=False)
+    source = Column(String, nullable=False, default="manual")   # manual | calendar
+    details = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_external_context_range", "tenant_id", "starts_on", "ends_on"),
+        UniqueConstraint("tenant_id", "kind", "name", "starts_on", name="uq_external_context_item"),
+    )
+
+
+class ModelChange(Base):
+    """Section 53: a change in the shape of the business (new/closed branch, product line, replaced system).
+    `version` increases per tenant; alerts and cases carry the version in force when they were raised.
+    `rebaseline` makes period-over-period detectors wait until enough post-change history exists."""
+    __tablename__ = "model_changes"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    tenant_id = Column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False)
+    version = Column(Integer, nullable=False)
+    kind = Column(String, nullable=False)          # location_added | location_discontinued | product_added | product_discontinued | source_added | source_replaced | restructure
+    subject = Column(String, nullable=False)       # what changed (name/id); with kind, makes auto-detection idempotent
+    description = Column(Text, nullable=True)
+    effective_at = Column(DateTime, nullable=False)
+    rebaseline = Column(Boolean, nullable=False, default=False, server_default="false")
+    source = Column(String, nullable=False, default="auto")     # auto | manual
+    details = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "kind", "subject", name="uq_model_change_subject"),
+        UniqueConstraint("tenant_id", "version", name="uq_model_change_version"),
+    )
+
+
+class GroundTruthEvent(Base):
+    """Section 55: something that really happened (an outage, a stock-out, a theft, a promotion that worked)
+    that a good detector should have noticed. Used to measure recall/precision of backtests and live alerts."""
+    __tablename__ = "ground_truth_events"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    tenant_id = Column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False)
+    label = Column(String, nullable=False)
+    metric = Column(String, nullable=True)         # optional entity (e.g. "sale") the event should show up in
+    starts_on = Column(Date, nullable=False)
+    ends_on = Column(Date, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (Index("ix_ground_truth_range", "tenant_id", "starts_on"),)
+
+
+class BacktestRun(Base):
+    """Section 55: a stored replay result, so go-live validation can be reviewed later."""
+    __tablename__ = "backtest_runs"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    tenant_id = Column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False)
+    params = Column(JSON, nullable=False)
+    result = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (Index("ix_backtest_runs_tenant", "tenant_id", "created_at"),)

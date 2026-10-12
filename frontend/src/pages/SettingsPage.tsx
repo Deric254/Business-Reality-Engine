@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { api, settingsApi, ApiError, type Channel, type Metric, type Tenant } from "../api/client";
+import { api, settingsApi, usersApi, ApiError, type Channel, type Metric, type Tenant, type UserRow } from "../api/client";
+import { PasswordForm } from "../components/PasswordForm";
+import { getClaims } from "../api/session";
 
 const SEVERITIES = ["critical", "high", "medium", "informational"];
 
@@ -15,6 +17,11 @@ export function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [secret, setSecret] = useState<string | null>(null);
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [temp, setTemp] = useState<{ email: string; password: string } | null>(null);
+  const [uEmail, setUEmail] = useState("");
+  const [uRole, setURole] = useState<"owner" | "staff">("staff");
+  const isOwner = getClaims().role === "owner";
 
   const [chType, setChType] = useState("email");
   const [chTarget, setChTarget] = useState("");
@@ -31,10 +38,11 @@ export function SettingsPage() {
       const [c, m] = await Promise.all([settingsApi.listChannels(t.id), settingsApi.listMetrics(t.id)]);
       setChannels(c);
       setMetrics(m);
+      if (isOwner) setUsers(await usersApi.list(t.id));
     } catch (e) {
       setError(errText(e));
     }
-  }, []);
+  }, [isOwner]);
 
   useEffect(() => {
     api.listTenants().then((ts) => {
@@ -79,6 +87,24 @@ export function SettingsPage() {
     } catch (e) {
       setError(errText(e));
     }
+  }
+
+  async function addUser(e: FormEvent) {
+    e.preventDefault();
+    if (!tenant) return;
+    await run(async () => {
+      const u = await usersApi.create(tenant.id, uEmail.trim(), uRole);
+      setUEmail("");
+      setTemp({ email: u.email, password: u.temporary_password });
+    }, "Account created.");
+  }
+
+  async function resetUser(u: UserRow) {
+    if (!tenant || !window.confirm(`Reset the password for ${u.email}? They will be signed out everywhere.`)) return;
+    await run(async () => {
+      const r = await usersApi.resetPassword(tenant.id, u.id);
+      setTemp({ email: r.email, password: r.temporary_password });
+    });
   }
 
   const field = "bg-ink border border-border rounded-sm px-2 py-1.5 text-sm text-ink-text";
@@ -146,6 +172,56 @@ export function SettingsPage() {
             </label>
             <button type="submit" className="bg-info text-ink font-medium rounded-sm px-3 py-1.5 text-sm">Add channel</button>
           </form>
+        </section>
+
+        {isOwner && (
+          <section aria-labelledby="us">
+            <h2 id="us" className="text-base font-semibold mb-1">People</h2>
+            <p className="text-sm text-ink-muted mb-4">Owners manage settings, channels and people. Staff can view everything else. A new person gets a one-time temporary password and must choose their own at first sign-in.</p>
+            {temp && (
+              <div role="status" className="border border-border bg-panel rounded-sm p-3 mb-4 text-sm">
+                <p className="mb-1">Temporary password for <strong>{temp.email}</strong>. Share it privately; it is shown only once.</p>
+                <code className="kpi-figure break-all select-all">{temp.password}</code>
+                <button className={`${btn} ml-3`} onClick={() => setTemp(null)}>Done</button>
+              </div>
+            )}
+            <ul className="divide-y divide-border border border-border rounded-sm mb-4">
+              {users.map((u) => (
+                <li key={u.id} className="flex flex-wrap items-center gap-3 px-3 py-2 text-sm">
+                  <span className="flex-1 break-all">{u.email}{u.is_me ? " (you)" : ""}{u.must_change_password ? " · hasn't signed in yet" : ""}</span>
+                  <select
+                    aria-label={`Role for ${u.email}`} value={u.role} disabled={u.is_me} className={field}
+                    onChange={(e) => run(() => usersApi.setRole(tenant!.id, u.id, e.target.value as "owner" | "staff"), "Role updated.")}
+                  >
+                    <option value="staff">staff</option>
+                    <option value="owner">owner</option>
+                  </select>
+                  {!u.is_me && <button className={btn} onClick={() => resetUser(u)}>Reset password</button>}
+                  {!u.is_me && (
+                    <button className={btn} onClick={() => { if (window.confirm(`Remove ${u.email}? They are signed out immediately.`)) run(() => usersApi.remove(tenant!.id, u.id), "Person removed."); }}>Remove</button>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <form onSubmit={addUser} className="flex flex-wrap items-end gap-3">
+              <label className="text-sm text-ink-muted">Email
+                <input type="email" required value={uEmail} onChange={(e) => setUEmail(e.target.value)} className={`${field} block mt-1 w-64`} />
+              </label>
+              <label className="text-sm text-ink-muted">Role
+                <select value={uRole} onChange={(e) => setURole(e.target.value as "owner" | "staff")} className={`${field} block mt-1`}>
+                  <option value="staff">staff</option>
+                  <option value="owner">owner</option>
+                </select>
+              </label>
+              <button type="submit" className="bg-info text-ink font-medium rounded-sm px-3 py-1.5 text-sm">Add person</button>
+            </form>
+          </section>
+        )}
+
+        <section aria-labelledby="pw">
+          <h2 id="pw" className="text-base font-semibold mb-1">Your password</h2>
+          <p className="text-sm text-ink-muted mb-4">Changing it signs you out of every other device.</p>
+          <PasswordForm />
         </section>
 
         <section aria-labelledby="mt">

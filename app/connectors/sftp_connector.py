@@ -18,6 +18,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 import paramiko
 
+from app.core.netguard import check_host_allowed
 from app.core.secrets import decrypt_config_secrets
 from app.connectors.file_connector import (
     ColumnMapping, validate_upload, parse_file_to_dataframe, dataframe_to_normalized_events,
@@ -32,14 +33,25 @@ class SftpConnectionConfig(BaseModel):
     password: str            # encrypted at rest, same as DatabaseConnectionConfig.password
     remote_directory: str
     file_pattern: str = "*"   # simple glob — only * and ? wildcards, matched via fnmatch
+    host_key_sha256: Optional[str] = None   # base64 SHA-256 of the server's host key; pin it to rule out a man-in-the-middle
 
 
 def _sftp_connect(config: SftpConnectionConfig) -> tuple[paramiko.Transport, paramiko.SFTPClient]:
+    check_host_allowed(config.host)
     try:
         transport = paramiko.Transport((config.host, config.port))
         transport.connect(username=config.username, password=config.password)
+        if config.host_key_sha256:
+            import base64, hashlib
+            key = transport.get_remote_server_key()
+            seen = base64.b64encode(hashlib.sha256(key.asbytes()).digest()).decode().rstrip("=")
+            if seen != config.host_key_sha256.rstrip("=").replace("SHA256:", ""):
+                transport.close()
+                raise HTTPException(502, "SFTP host key does not match the pinned fingerprint; refusing to send credentials")
         sftp = paramiko.SFTPClient.from_transport(transport)
         return transport, sftp
+    except HTTPException:
+        raise
     except Exception as e:
         # Same principle as every other error handler here — never leak
         # host/credential details in the client-facing error.

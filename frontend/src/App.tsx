@@ -4,14 +4,20 @@ import { Dashboard } from "./pages/Dashboard";
 import { AlertDetailPage } from "./pages/AlertDetailPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { LoginPage } from "./pages/LoginPage";
-import { isSignedIn, onSessionChange } from "./api/session";
+import { ChangePasswordPage } from "./pages/ChangePasswordPage";
+import { getClaims, getTokens, isSignedIn, onSessionChange } from "./api/session";
 
 function useSignedIn() {
   return useSyncExternalStore(onSessionChange, isSignedIn);
 }
 
 function RequireAuth({ children }: { children: ReactNode }) {
-  return useSignedIn() ? <>{children}</> : <Navigate to="/login" replace />;
+  // Subscribe to the access token itself (not just "is there one"): a password change swaps the token,
+  // and the page must re-evaluate its claims when that happens.
+  const token = useSyncExternalStore(onSessionChange, () => getTokens()?.access_token ?? null);
+  if (!token) return <Navigate to="/login" replace />;
+  if (getClaims().mustChangePassword) return <ChangePasswordPage />;
+  return <>{children}</>;
 }
 
 export default function App() {

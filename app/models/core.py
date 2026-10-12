@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from sqlalchemy import (
     Column, String, DateTime, Numeric, Text, ForeignKey, Boolean,
-    Index, JSON, Enum as SAEnum, BigInteger
+    Index, JSON, Enum as SAEnum, BigInteger, Integer
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import declarative_base, relationship
@@ -43,6 +43,8 @@ class Tenant(Base):
     name = Column(String, nullable=False)
     timezone = Column(String, nullable=False, default="UTC")  # Section 57
     base_currency = Column(String, nullable=False, default="KES")  # Section 57
+    country = Column(String, nullable=True)                         # ISO 3166 alpha-2; drives the holiday calendar (Section 42)
+    language = Column(String, nullable=False, default="en", server_default="en")  # Section 57: UI and narrative language
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -59,6 +61,8 @@ class Connector(Base):
     is_active = Column(Boolean, default=True)
     last_sync_at = Column(DateTime, nullable=True)
     last_sync_status = Column(String, nullable=True)     # success | failed | partial
+    sync_interval_minutes = Column(Integer, nullable=True)   # Section 17: pull-type connectors sync on this schedule (NULL = manual only)
+    last_attempt_at = Column(DateTime, nullable=True)         # last scheduled/manual sync attempt, successful or not
     created_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (Index("ix_connectors_tenant", "tenant_id"),)
@@ -243,6 +247,8 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     # Every token issued at or before this instant (epoch ms) is invalid: sign-out-everywhere / password change.
     tokens_valid_after_ms = Column(BigInteger, nullable=False, default=0, server_default="0")
+    # True while the password is one an owner generated: the account can do nothing but change it.
+    must_change_password = Column(Boolean, nullable=False, default=False, server_default=text("false"))
 
     __table_args__ = (Index("ix_users_email", "email", unique=True),)
 

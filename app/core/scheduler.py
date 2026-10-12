@@ -172,6 +172,22 @@ def run_dispatch_cycle():
         db.close()
 
 
+def run_sync_cycle():
+    """Pull-type connectors that have a sync interval (Section 17). Safe on many workers: each connector's sync takes an
+    advisory lock, so a connector is never synced twice at once."""
+    from app.core.sync import run_due_syncs
+    db = SessionLocal()
+    try:
+        stats = run_due_syncs(db)
+        if stats["due"]:
+            logger.info(f"Connector sync cycle: {stats}")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Connector sync cycle failed: {e}")
+    finally:
+        db.close()
+
+
 def start_scheduler(interval_minutes: int):
     global _scheduler
     if _scheduler is not None:
@@ -183,6 +199,7 @@ def start_scheduler(interval_minutes: int):
     )
     _scheduler.add_job(run_dispatch_cycle, "interval", minutes=1, id="notification_dispatch",
                        max_instances=1, coalesce=True)
+    _scheduler.add_job(run_sync_cycle, "interval", minutes=1, id="connector_sync", max_instances=1, coalesce=True)
     _scheduler.start()
     logger.info(f"Scheduler started — detection cycle every {interval_minutes} minute(s)")
 

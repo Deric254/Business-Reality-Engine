@@ -4,7 +4,7 @@ Alert Engine (Sections 21-26) and Business Memory (Sections 36-41).
 import uuid
 from datetime import datetime
 from sqlalchemy import (
-    Column, String, DateTime, Numeric, Text, ForeignKey, JSON, Enum as SAEnum, Index, text
+    Column, String, DateTime, Numeric, Integer, Text, ForeignKey, JSON, Enum as SAEnum, Index, text
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import declarative_base
@@ -43,6 +43,11 @@ class Alert(Base):
     severity = Column(SAEnum(AlertSeverity), nullable=False)
     state = Column(SAEnum(AlertState), nullable=False, default=AlertState.detected)
     title = Column(String, nullable=False)
+    # Section 19-20: which detector family produced it (deviation | opportunity | trend | daily |
+    # silence | threshold | forecast | risk | unknown | quality). Informational; lifecycle never depends on it.
+    kind = Column(String, nullable=True)
+    # Section 53: the business-model version in force when the alert was raised, so past evidence stays interpretable.
+    model_version = Column(Integer, nullable=True)
 
     what_happened = Column(Text, nullable=False)
     magnitude = Column(Numeric(10, 4), nullable=True)     # e.g. -0.154 for -15.4%
@@ -108,5 +113,6 @@ class Case(Base):
         "high", "medium", "low", "uncertain", name="attribution_confidence_enum"
     ), nullable=True)
 
+    model_version = Column(Integer, nullable=True)     # Section 53
     detected_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     outcome_measured_at = Column(DateTime, nullable=True)

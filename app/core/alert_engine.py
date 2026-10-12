@@ -3,6 +3,7 @@ Alert lifecycle over a tenant's open alerts (Sections 25-26): priority ranking,
 correlation (grouping related alerts) and escalation of ignored ones.
 Suppression (cooldown after a human closes an alert) lives with dedup in detection.py.
 """
+import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -46,6 +47,37 @@ def _entity_of(alert: Alert) -> Optional[str]:
     return None
 
 
+_KIND_BY_PREFIX = {"historical_deviation": "deviation", "opportunity": "opportunity", "trend": "trend", "daily_anomaly": "daily",
+                   "data_silence": "silence", "threshold": "threshold", "forecast_miss": "forecast", "risk": "risk", "unknown": "unknown"}
+
+
+def kind_of(alert: Alert) -> Optional[str]:
+    key = (alert.evidence or {}).get("dedup_key")
+    return _KIND_BY_PREFIX.get(str(key).split(":")[0]) if key else None
+
+
+def _attach_model_changes(db: Session, a: Alert) -> None:
+    from app.core.model_versions import changes_near
+    ch = changes_near(db, a.tenant_id, a.period_start, a.period_end)
+    if (a.evidence or {}).get("model_changes", []) != ch and (ch or (a.evidence or {}).get("model_changes")):
+        a.evidence = {**(a.evidence or {}), "model_changes": ch}
+
+
+_DRIVER_KINDS = {"deviation", "forecast", "daily"}
+
+
+def _attach_drivers(db: Session, a: Alert) -> None:
+    """Section 6: name the customer/product/location behind a change, when one clearly is."""
+    from app.core.relationships import change_drivers
+    ent = _entity_of(a)
+    if kind_of(a) not in _DRIVER_KINDS or ent not in ("sale", "expense") or not (a.period_start and a.period_end):
+        return
+    d = change_drivers(db, a.tenant_id, ent, a.period_start, a.period_end)
+    new = {"drivers": d["drivers"], "statements": d["statements"]}
+    if (a.evidence or {}).get("change_drivers") != new:
+        a.evidence = {**(a.evidence or {}), "change_drivers": new}
+
+
 def post_process_tenant(db: Session, tenant_id: str, now: Optional[datetime] = None) -> dict:
     now = now or datetime.utcnow()
     open_alerts = (
@@ -53,7 +85,17 @@ def post_process_tenant(db: Session, tenant_id: str, now: Optional[datetime] = N
         .order_by(Alert.created_at.desc()).limit(500).all()
     )
     escalated = 0
+    from app.core.context import attach_context
     for a in open_alerts:
+        if a.kind is None and kind_of(a):
+            a.kind = kind_of(a)
+        try:
+            with db.begin_nested():
+                attach_context(db, a)
+                _attach_drivers(db, a)
+                _attach_model_changes(db, a)
+        except Exception as e:      # enrichment must never stop ranking/escalation
+            logging.getLogger("business_reality_engine").warning(f"alert enrichment failed for {a.id}: {e}")
         after = ESCALATE_AFTER.get(a.severity)
         if after and a.state == AlertState.detected and a.created_at and now - a.created_at >= after \
                 and not (a.evidence or {}).get("escalated_at"):

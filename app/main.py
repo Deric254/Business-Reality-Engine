@@ -9,7 +9,7 @@ from app.core.config import get_settings
 from app.core.auth import require_admin_key
 from app.core.scheduler import start_scheduler, stop_scheduler
 from app.core.rate_limit import RateLimitMiddleware
-from app.api import health, connectors, events, alerts, entities, detection, coverage, cases, questions, tenants, forecasting, simulation, webhooks, system, auth, notifications, monitoring, audit as audit_api
+from app.api import health, connectors, events, alerts, entities, detection, coverage, cases, questions, tenants, forecasting, simulation, webhooks, system, auth, notifications, monitoring, audit as audit_api, users, business, accuracy as accuracy_api, capture
 
 # Without this, every logger.info() call in the app is silently dropped —
 # Python's root logger defaults to WARNING with no handler configured.
@@ -146,8 +146,12 @@ app.include_router(
     auth.router, prefix="/api/auth", tags=["auth"],
 )
 app.include_router(audit_api.router, prefix="/api/audit", tags=["audit"])
+app.include_router(users.router, prefix="/api/users", tags=["users"])
 
 
 @app.get("/")
 def root():
     return {"service": settings.APP_NAME, "status": "running"}
+app.include_router(business.router, prefix="/api/business", tags=["business"])
+app.include_router(accuracy_api.router, prefix="/api/accuracy", tags=["accuracy"])
+app.include_router(capture.router, prefix="/api/capture", tags=["capture"])

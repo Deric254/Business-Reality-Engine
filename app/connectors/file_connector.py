@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024   # 10MB — generous for a business's periodic export
 MAX_ROWS = 50_000                         # prevents a hostile/corrupt file from exhausting memory
-ALLOWED_EXTENSIONS = {".csv", ".xlsx"}
+ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".json", ".jsonl", ".xml", ".txt", ".tsv"}
 
 
 class ColumnMapping(BaseModel):
@@ -56,11 +56,22 @@ def validate_upload(filename: str, content: bytes) -> str:
 def parse_file_to_dataframe(content: bytes, ext: str) -> pd.DataFrame:
     buf = io.BytesIO(content)
     try:
-        if ext == ".csv":
+        if ext in (".json", ".jsonl"):
+            from app.connectors.parsers import parse_json
+            df = parse_json(content)
+        elif ext == ".xml":
+            from app.connectors.parsers import parse_xml
+            df = parse_xml(content)
+        elif ext in (".txt", ".tsv"):
+            from app.connectors.parsers import parse_txt
+            df = parse_txt(content)
+        elif ext == ".csv":
             df = pd.read_csv(buf)
         else:  # .xlsx
             # data_only reads cached computed values, not formulas — no formula execution
             df = pd.read_excel(buf, engine="openpyxl")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(400, f"Could not parse file: {e}")
 
@@ -69,6 +80,24 @@ def parse_file_to_dataframe(content: bytes, ext: str) -> pd.DataFrame:
     if len(df) == 0:
         raise HTTPException(400, "File has no data rows")
     return df
+
+
+def to_number(val, where: str):
+    """Numbers from text sources: tolerate thousands separators and surrounding spaces, refuse anything else loudly."""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    txt = str(val).strip().replace(",", "").replace(" ", "")
+    if txt == "":
+        return None
+    try:
+        out = float(txt)
+    except ValueError:
+        raise HTTPException(400, f"{where}: '{val}' is not a number")
+    if out != out or out in (float("inf"), float("-inf")):
+        raise HTTPException(400, f"{where}: '{val}' is not a finite number")
+    return out
 
 
 def dataframe_to_normalized_events(
@@ -108,8 +137,8 @@ def dataframe_to_normalized_events(
             "entity_id": str(_get("entity_id_col")) if _get("entity_id_col") is not None else None,
             "event_type": mapping.event_type,
             "timestamp": timestamp,
-            "amount": float(_get("amount_col")) if _get("amount_col") is not None else None,
-            "quantity": float(_get("quantity_col")) if _get("quantity_col") is not None else None,
+            "amount": to_number(_get("amount_col"), f"Row {idx} amount"),
+            "quantity": to_number(_get("quantity_col"), f"Row {idx} quantity"),
             "currency": str(_get("currency_col")) if _get("currency_col") is not None else mapping.default_currency,
             "location": str(_get("location_col")) if _get("location_col") is not None else None,
             "customer_id": str(_get("customer_id_col")) if _get("customer_id_col") is not None else None,

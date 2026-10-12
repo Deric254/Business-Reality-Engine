@@ -70,7 +70,11 @@ def reason_about_alert(db: Session, alert: Alert, force: bool = False) -> dict:
     if alert.severity not in MIN_SEVERITY_FOR_REASONING:
         return {"skipped": True, "reason": f"severity '{alert.severity.value}' below reasoning threshold"}
 
-    current_hash = _evidence_hash(alert.evidence, alert.related_variables, alert.possible_explanations)
+    from app.core.advisory import language_name
+    from app.models.core import Tenant
+    tenant = db.get(Tenant, alert.tenant_id)
+    lang = (tenant.language if tenant and tenant.language else "en")
+    current_hash = _evidence_hash(alert.evidence, alert.related_variables, alert.possible_explanations) + f":{lang}"
 
     if not force and alert.ai_evidence_hash == current_hash and alert.ai_summary:
         return {
@@ -90,7 +94,7 @@ def reason_about_alert(db: Session, alert: Alert, force: bool = False) -> dict:
     provider = get_provider()  # raises RuntimeError with a clear message if misconfigured — caller maps to 502
     try:
         raw_text = provider.generate_json(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=SYSTEM_PROMPT + (f"\n- Write the narrative and recommended_action in {language_name(lang)}; keep the JSON keys in English." if lang != "en" else ""),
             user_content=json.dumps(evidence_payload, default=str),
             max_tokens=400,
         )
