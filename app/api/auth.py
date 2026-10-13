@@ -1,7 +1,7 @@
 import time
 from typing import Optional
 from pydantic import BaseModel, EmailStr
-from fastapi import APIRouter, Depends, HTTPException, Header, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Header, Request
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -9,7 +9,7 @@ from app.core.auth_users import (
     hash_password, verify_password, create_access_token, create_refresh_token, decode_token,
     authorize_tenant, MAX_PASSWORD_BYTES,
 )
-from app.core import audit, lockout, revocation
+from app.core import audit, lockout, recovery, revocation
 from app.core.auth import require_admin_key
 from app.core.rate_limit import auth_limiter, _client_ip
 
@@ -226,3 +226,47 @@ def change_password(payload: ChangePasswordRequest, request: Request, db: Sessio
     audit.record(db, "auth.change_password", request=request, tenant_id=user.tenant_id, actor_user_id=user.id)
     time.sleep(0.002)               # guarantee the new tokens' issue time is strictly after the revocation cutoff
     return _tokens(user)
+
+
+class ForgotRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+@router.post("/forgot-password")
+def forgot_password(payload: ForgotRequest, request: Request, background: BackgroundTasks, db: Session = Depends(get_db)):
+    """Always answers the same way, whether or not the address is registered."""
+    _throttle(request)
+    user = db.query(User).filter(User.email == payload.email).first()
+    if user and recovery.mail_enabled() and recovery.email_allowed(payload.email):
+        token = recovery.issue_token(db, user, "reset")
+        background.add_task(recovery.send_reset_email, user.email, token)
+        audit.record(db, "auth.forgot_password", request=request, tenant_id=user.tenant_id, target=user.id)
+    return {"ok": True, "message": "If that address has an account, a reset link is on its way."}
+
+
+@router.post("/reset-password")
+def reset_password(payload: ResetRequest, request: Request, db: Session = Depends(get_db)):
+    """Completes a reset or an invitation. The token is spent only if the new password is acceptable,
+    so a typo does not burn the link."""
+    _throttle(request)
+    _check_new_password(payload.new_password)
+    spent = recovery.consume_token(db, payload.token)
+    if not spent:
+        raise HTTPException(400, "This link is invalid or has expired")
+    user_id, purpose = spent
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(400, "This link is invalid or has expired")
+    user.password_hash = hash_password(payload.new_password)
+    user.must_change_password = False
+    revocation.revoke_user_tokens(db, user.id)
+    db.commit()
+    lockout.record_success(user.email)
+    audit.record(db, "auth.reset_password" if purpose == "reset" else "auth.accept_invite", request=request,
+                 tenant_id=user.tenant_id, actor_user_id=user.id, target=user.id)
+    return {"ok": True}

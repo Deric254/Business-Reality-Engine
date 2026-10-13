@@ -49,6 +49,15 @@ class NotificationChannel(Base):
     min_severity = Column(String, nullable=False, default="high")
     enabled = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Delivery preferences (all times are UTC "HH:MM"; a window may cross midnight).
+    quiet_start = Column(String(5), nullable=True)
+    quiet_end = Column(String(5), nullable=True)
+    digest_mode = Column(String, nullable=False, default="off", server_default="off")   # off | daily
+    digest_hour = Column(Integer, nullable=False, default=7, server_default="7")        # UTC hour 0-23
+    last_digest_at = Column(DateTime, nullable=True)
+    last_digest_attempt_at = Column(DateTime, nullable=True)
+    filter_kinds = Column(JSON(none_as_null=True), nullable=True)      # list of detector kinds; null = all
+    filter_entities = Column(JSON(none_as_null=True), nullable=True)   # list of entity ids; null = all
 
     __table_args__ = (Index("ix_notification_channels_tenant", "tenant_id"),)
 
@@ -63,7 +72,7 @@ class NotificationDelivery(Base):
     alert_id = Column(UUID(as_uuid=False), ForeignKey("alerts.id", ondelete="CASCADE"), nullable=False)
     kind = Column(String, nullable=False, default="alert", server_default="alert")   # alert | escalation
     channel_id = Column(UUID(as_uuid=False), ForeignKey("notification_channels.id", ondelete="CASCADE"), nullable=False)
-    status = Column(String, nullable=False, default="pending")    # pending | sent | dead
+    status = Column(String, nullable=False, default="pending")    # pending | held (awaiting digest) | sent | dead
     attempts = Column(Integer, nullable=False, default=0)
     next_attempt_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     last_error = Column(Text, nullable=True)

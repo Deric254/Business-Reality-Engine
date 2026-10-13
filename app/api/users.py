@@ -1,8 +1,8 @@
 """
 User management (Section 48/50). Owner-only, tenant-scoped.
 
-There is no email-invitation flow yet, so an owner creates a colleague's account and hands over a
-one-time temporary password (shown once, never stored in plain text). That account can do nothing
+An owner either invites a colleague by email (a single-use link, valid 7 days; needs SMTP) or, when
+mail is not set up, creates the account and hands over a one-time temporary password (shown once, never stored in plain text). That account can do nothing
 except change its password (enforced server-side via a token claim) until it does. Guards: a business
 always keeps at least one owner; nobody removes or demotes themselves; every change revokes the
 affected user's sessions and is written to the audit log.
@@ -11,14 +11,14 @@ import secrets
 from datetime import datetime
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
-from app.core import audit, revocation
+from app.core import audit, recovery, revocation
 from app.core.auth_users import authorize_tenant, hash_password
 from app.core.db import get_db
-from app.models.core import User
+from app.models.core import Tenant, User
 
 router = APIRouter()
 MAX_USERS_PER_TENANT = 50
@@ -91,6 +91,51 @@ def create_user(payload: UserCreate, request: Request, db: Session = Depends(get
     audit.record(db, "user.create", request=request, tenant_id=payload.tenant_id, actor_user_id=me.user_id,
                  target=u.id, detail={"email": u.email, "role": u.role})
     return UserCreated(**_out(u, me.user_id).model_dump(), temporary_password=temp)
+
+
+class InviteRequest(BaseModel):
+    tenant_id: str
+    email: EmailStr
+    role: Literal["owner", "staff"] = "staff"
+
+
+@router.post("/invite", response_model=UserOut)
+def invite_user(payload: InviteRequest, request: Request, background: BackgroundTasks, db: Session = Depends(get_db),
+                authorization: Optional[str] = Header(default=None)):
+    me = authorize_tenant(authorization, payload.tenant_id, require_role="owner")
+    if not recovery.mail_enabled():
+        raise HTTPException(409, "Email is not configured on this server; create the user with a temporary password instead")
+    if db.query(User).filter(User.tenant_id == payload.tenant_id).count() >= MAX_USERS_PER_TENANT:
+        raise HTTPException(409, f"At most {MAX_USERS_PER_TENANT} users per business")
+    if db.query(User).filter(User.email == payload.email).first():
+        raise HTTPException(409, "Could not create this account")
+    tenant = db.query(Tenant).filter(Tenant.id == payload.tenant_id).first()
+    # Unusable placeholder password: the account cannot sign in until the invitation is accepted.
+    u = User(tenant_id=payload.tenant_id, email=payload.email, password_hash=hash_password(secrets.token_urlsafe(24)),
+             role=payload.role, must_change_password=True)
+    db.add(u)
+    db.commit(); db.refresh(u)
+    token = recovery.issue_token(db, u, "invite")
+    background.add_task(recovery.send_invite_email, u.email, token, tenant.name if tenant else "your business")
+    audit.record(db, "user.invite", request=request, tenant_id=payload.tenant_id, actor_user_id=me.user_id,
+                 target=u.id, detail={"email": u.email, "role": u.role})
+    return _out(u, me.user_id)
+
+
+@router.post("/{user_id}/resend-invite")
+def resend_invite(user_id: str, tenant_id: str, request: Request, background: BackgroundTasks, db: Session = Depends(get_db),
+                  authorization: Optional[str] = Header(default=None)):
+    me = authorize_tenant(authorization, tenant_id, require_role="owner")
+    u = _owned(db, user_id, tenant_id)
+    if not recovery.mail_enabled():
+        raise HTTPException(409, "Email is not configured on this server")
+    if not u.must_change_password:
+        raise HTTPException(400, "This user has already set a password")
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    token = recovery.issue_token(db, u, "invite")
+    background.add_task(recovery.send_invite_email, u.email, token, tenant.name if tenant else "your business")
+    audit.record(db, "user.resend_invite", request=request, tenant_id=tenant_id, actor_user_id=me.user_id, target=u.id)
+    return {"ok": True}
 
 
 @router.patch("/{user_id}", response_model=UserOut)

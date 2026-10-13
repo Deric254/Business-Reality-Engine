@@ -303,3 +303,17 @@ class SchedulerRun(Base):
     error_detail = Column(JSON, nullable=True)  # list of {tenant_id, metric, error} — internal ops only, never user-facing
 
     __table_args__ = (Index("ix_scheduler_runs_started_at", "started_at"),)
+
+
+class PasswordResetToken(Base):
+    """Single-use, expiring token for forgot-password and email invitations. Only the SHA-256 of the
+    token is stored, so a database read never yields a usable link."""
+    __tablename__ = "password_reset_tokens"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    user_id = Column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash = Column(String, nullable=False, unique=True)
+    purpose = Column(String, nullable=False)          # reset | invite
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
