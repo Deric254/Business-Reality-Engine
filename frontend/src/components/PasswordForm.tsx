@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { changePassword, ApiError } from "../api/client";
 
-const input = "mt-1 w-full bg-ink border border-border rounded-sm px-3 py-2 text-sm text-ink-text";
+const input = "mt-1 w-full bg-panel border border-field rounded-sm px-3 py-2 text-sm text-ink-text";
 
 export function PasswordForm({ onDone }: { onDone?: () => void }) {
   const [current, setCurrent] = useState("");
@@ -44,7 +44,7 @@ export function PasswordForm({ onDone }: { onDone?: () => void }) {
       </label>
       {error && <p role="alert" className="text-sm text-critical">{error}</p>}
       {done && <p role="status" className="text-sm text-opportunity">Password changed. Other devices were signed out.</p>}
-      <button type="submit" disabled={busy} className="bg-info text-ink font-medium rounded-sm px-3 py-2 text-sm disabled:opacity-60">
+      <button type="submit" disabled={busy} className="bg-info text-white font-semibold hover:brightness-110 rounded-sm px-3 py-2 text-sm disabled:opacity-60">
         {busy ? "Saving…" : "Change password"}
       </button>
     </form>

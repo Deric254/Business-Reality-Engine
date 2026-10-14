@@ -1,17 +1,18 @@
-import { useSyncExternalStore, type ReactNode } from "react";
+import { Suspense, lazy, useSyncExternalStore, type ReactNode } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Dashboard } from "./pages/Dashboard";
-import { AlertDetailPage } from "./pages/AlertDetailPage";
-import { SettingsPage } from "./pages/SettingsPage";
 import { LoginPage } from "./pages/LoginPage";
-import { BusinessPage } from "./pages/BusinessPage";
-import { DataPage } from "./pages/DataPage";
-import { AccuracyPage } from "./pages/AccuracyPage";
-import { SetupWizardPage } from "./pages/SetupWizardPage";
-import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
-import { ResetPasswordPage } from "./pages/ResetPasswordPage";
-import { ChangePasswordPage } from "./pages/ChangePasswordPage";
 import { getClaims, getTokens, isSignedIn, onSessionChange } from "./api/session";
+
+const AlertDetailPage = lazy(() => import("./pages/AlertDetailPage").then((m) => ({ default: m.AlertDetailPage })));
+const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
+const BusinessPage = lazy(() => import("./pages/BusinessPage").then((m) => ({ default: m.BusinessPage })));
+const DataPage = lazy(() => import("./pages/DataPage").then((m) => ({ default: m.DataPage })));
+const AccuracyPage = lazy(() => import("./pages/AccuracyPage").then((m) => ({ default: m.AccuracyPage })));
+const SetupWizardPage = lazy(() => import("./pages/SetupWizardPage").then((m) => ({ default: m.SetupWizardPage })));
+const ForgotPasswordPage = lazy(() => import("./pages/ForgotPasswordPage").then((m) => ({ default: m.ForgotPasswordPage })));
+const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage").then((m) => ({ default: m.ResetPasswordPage })));
+const ChangePasswordPage = lazy(() => import("./pages/ChangePasswordPage").then((m) => ({ default: m.ChangePasswordPage })));
 
 function useSignedIn() {
   return useSyncExternalStore(onSessionChange, isSignedIn);
@@ -30,6 +31,7 @@ export default function App() {
   const signedIn = useSignedIn();
   return (
     <BrowserRouter>
+      <Suspense fallback={<div className="min-h-screen" aria-busy="true" />}>
       <Routes>
         <Route path="/login" element={signedIn ? <Navigate to="/" replace /> : <LoginPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
@@ -43,6 +45,7 @@ export default function App() {
         <Route path="/settings" element={<RequireAuth><SettingsPage /></RequireAuth>} />
         <Route path="/alert/:alertId" element={<RequireAuth><AlertDetailPage /></RequireAuth>} />
       </Routes>
+      </Suspense>
     </BrowserRouter>
   );
 }

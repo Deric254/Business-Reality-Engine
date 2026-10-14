@@ -1,10 +1,10 @@
-import { SEVERITY_COLOR, SEVERITY_LABEL } from "../lib/severity";
+import { SEVERITY_COLOR, SEVERITY_LABEL, SEVERITY_TEXT, SEVERITY_TINT } from "../lib/severity";
 
 const SEVERITIES = ["critical", "high", "medium", "informational", "opportunity"];
 const STATES = [
   { value: "", label: "All states" },
-  { value: "detected", label: "Detected" },
-  { value: "investigating", label: "Investigating" },
+  { value: "detected", label: "New" },
+  { value: "investigating", label: "Being looked at" },
   { value: "action_taken", label: "Action taken" },
   { value: "resolved", label: "Resolved" },
 ];
@@ -18,38 +18,34 @@ interface FilterBarProps {
 
 export function FilterBar({ activeSeverities, onToggleSeverity, state, onStateChange }: FilterBarProps) {
   return (
-    <div className="flex items-center gap-2 flex-wrap py-3 px-1">
+    <div className="flex items-center gap-2 flex-wrap">
+      <h2 className="text-base font-bold tracking-tight mr-2">Alerts</h2>
       {SEVERITIES.map((sev) => {
         const active = activeSeverities.has(sev);
-        const color = SEVERITY_COLOR[sev];
         return (
           <button
             key={sev}
             onClick={() => onToggleSeverity(sev)}
             aria-pressed={active}
-            className="text-xs px-2.5 py-1 rounded-sm border transition-colors flex items-center gap-1.5"
+            className="text-xs font-medium px-3 py-1.5 rounded-full border transition-colors flex items-center gap-1.5"
             style={{
-              borderColor: active ? color : "var(--color-border)",
-              color: active ? color : "var(--color-ink-muted)",
-              backgroundColor: active ? `${color}1a` : "transparent",
+              borderColor: active ? SEVERITY_COLOR[sev] : "var(--color-field)",
+              color: active ? SEVERITY_TEXT[sev] : "var(--color-ink-muted)",
+              backgroundColor: active ? SEVERITY_TINT[sev] : "var(--color-panel)",
             }}
           >
-            <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: color }} aria-hidden />
+            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: active ? SEVERITY_COLOR[sev] : "var(--color-field)" }} aria-hidden />
             {SEVERITY_LABEL[sev]}
           </button>
         );
       })}
-      <div className="w-px h-5 bg-border mx-1" aria-hidden />
       <select
+        aria-label="Filter by status"
         value={state}
         onChange={(e) => onStateChange(e.target.value)}
-        className="text-xs bg-transparent border border-border rounded-sm px-2 py-1 text-ink-muted focus:text-ink-text"
+        className="text-sm bg-panel border border-field rounded-sm px-2.5 py-1.5 text-ink-text sm:ml-auto"
       >
-        {STATES.map((s) => (
-          <option key={s.value} value={s.value} className="bg-panel">
-            {s.label}
-          </option>
-        ))}
+        {STATES.map((s) => (<option key={s.value} value={s.value}>{s.label}</option>))}
       </select>
     </div>
   );

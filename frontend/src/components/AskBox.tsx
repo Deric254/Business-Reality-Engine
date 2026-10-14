@@ -3,6 +3,7 @@ import { api } from "../api/client";
 import type { QuestionAnswer } from "../api/client";
 
 const EXAMPLES = ["Why did profit fall?", "Who are my top customers?", "What needs my attention?", "What will sales be next week?"];
+const chip = "text-sm border border-field rounded-full px-3 py-1 text-ink-text bg-panel hover:bg-ink transition-colors";
 
 export function AskBox({ tenantId }: { tenantId: string }) {
   const [q, setQ] = useState("");
@@ -24,33 +25,33 @@ export function AskBox({ tenantId }: { tenantId: string }) {
   }
 
   return (
-    <section aria-labelledby="ask" className="mb-6">
-      <h2 id="ask" className="sr-only">Ask a question</h2>
+    <section aria-labelledby="ask" className="bg-panel border border-border rounded-sm p-5">
+      <h2 id="ask" className="text-base font-bold tracking-tight mb-3">Ask about your business</h2>
       <form onSubmit={(e) => { e.preventDefault(); ask(q); }} className="flex gap-2">
         <input
           aria-label="Ask a question about your business" maxLength={500} value={q} onChange={(e) => setQ(e.target.value)}
-          placeholder="Ask about your business, e.g. “Why did profit fall?”"
-          className="flex-1 bg-ink border border-border rounded-sm px-3 py-2 text-sm text-ink-text"
+          placeholder="For example: Why did profit fall?"
+          className="flex-1 min-w-0 bg-panel border border-field rounded-sm px-3 py-2.5 text-sm text-ink-text"
         />
-        <button type="submit" disabled={busy || !q.trim()} className="bg-info text-ink font-medium rounded-sm px-4 py-2 text-sm disabled:opacity-50">
+        <button type="submit" disabled={busy || !q.trim()} className="bg-info text-white font-semibold rounded-sm px-5 py-2.5 text-sm hover:brightness-110 disabled:opacity-50">
           {busy ? "Asking…" : "Ask"}
         </button>
       </form>
       {!result && !error && (
-        <div className="flex flex-wrap gap-2 mt-2">
+        <div className="flex flex-wrap gap-2 mt-3">
           {EXAMPLES.map((e) => (
-            <button key={e} type="button" className="text-xs border border-border rounded-sm px-2 py-1 text-ink-muted hover:text-ink-text" onClick={() => { setQ(e); ask(e); }}>{e}</button>
+            <button key={e} type="button" className={chip} onClick={() => { setQ(e); ask(e); }}>{e}</button>
           ))}
         </div>
       )}
-      {error && <p role="alert" className="text-sm text-[#f85149] mt-2">{error}</p>}
+      {error && <p role="alert" className="text-sm text-critical mt-3">{error}</p>}
       {result && (
-        <div className="border-l-2 border-info bg-panel px-4 py-3 mt-3" aria-live="polite">
-          <p className="text-sm text-ink-text leading-relaxed">{result.answer}</p>
+        <div className="border-l-4 border-info bg-ink rounded-sm px-4 py-3 mt-4" aria-live="polite">
+          <p className="text-base text-ink-text leading-relaxed">{result.answer}</p>
           {!result.answered && result.suggestions && (
-            <div className="flex flex-wrap gap-2 mt-2">
+            <div className="flex flex-wrap gap-2 mt-3">
               {result.suggestions.map((s) => (
-                <button key={s} type="button" className="text-xs border border-border rounded-sm px-2 py-1 text-ink-muted hover:text-ink-text" onClick={() => { setQ(s); ask(s); }}>{s}</button>
+                <button key={s} type="button" className={chip} onClick={() => { setQ(s); ask(s); }}>{s}</button>
               ))}
             </div>
           )}

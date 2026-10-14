@@ -38,7 +38,7 @@ function ReportSection({ tenantId }: { tenantId: string }) {
           <Card>
             <div className="text-xs text-ink-muted mb-2">Do higher-confidence alerts turn out more useful?</div>
             {r.calibration.length === 0 ? <p className="text-sm text-ink-muted">Needs more reviewed alerts before this means anything.</p> : (
-              <div className="space-y-2">{r.calibration.map((c) => <Bar key={c.band} label={`Confidence ${c.band} (${c.alerts})`} value={(c.useful_rate ?? 0) * 100} max={100} text={pct(c.useful_rate)} color="#4caf7d" />)}</div>
+              <div className="space-y-2">{r.calibration.map((c) => <Bar key={c.band} label={`Confidence ${c.band} (${c.alerts})`} value={(c.useful_rate ?? 0) * 100} max={100} text={pct(c.useful_rate)} color="#1f9254" />)}</div>
             )}
             {r.live_recall != null && <p className="text-xs text-ink-muted mt-3">Known incidents we caught: {pct(r.live_recall)}</p>}
           </Card>

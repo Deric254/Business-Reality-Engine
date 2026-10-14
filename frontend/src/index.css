@@ -1,45 +1,83 @@
+@import "@fontsource-variable/figtree";
 @import "tailwindcss";
 
 @theme {
-  /* Base surfaces — Business Reality Engine control room palette */
-  --color-ink: #14181f;
-  --color-panel: #1c222c;
-  --color-panel-raised: #232a36;
-  --color-border: #2c3542;
+  /* Surfaces: a light, slightly green-grey page with white work surfaces */
+  --color-ink: #f3f5f4;            /* page background (and quiet fills inside cards) */
+  --color-panel: #ffffff;          /* cards, header */
+  --color-panel-raised: #f7f9f8;   /* hover / selected rows */
+  --color-border: #dde2e0;
+  --color-field: #aab5b1;          /* input and button outlines: 3:1 against white */
 
-  /* Severity — the product's actual visual language (Section 23), not decoration */
-  --color-critical: #e5484d;
-  --color-high: #f0883e;
-  --color-medium: #e8c547;
-  --color-info: #5b9bd5;
-  --color-opportunity: #4caf7d;
+  /* Brand + links + primary buttons (white text on this passes AAA) */
+  --color-info: #1b4f8a;
+
+  /* Status colours used as TEXT: each passes 4.5:1 on white */
+  --color-critical: #b42318;
+  --color-high: #a8400a;
+  --color-medium: #8a5a00;
+  --color-opportunity: #146c3e;
 
   /* Text */
-  --color-ink-text: #e8eaed;
-  --color-ink-muted: #8b93a1;
-  --color-ink-faint: #5a6270;
+  --color-ink-text: #14211f;
+  --color-ink-muted: #4a5754;
+  --color-ink-faint: #6a7673;
 
-  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+  --font-sans: "Figtree Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Friendlier corners, applied everywhere rounded-sm is used */
+  --radius-sm: 0.5rem;
+
+  /* Slightly larger small text: easier to read on phones and in daylight */
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.2rem;
+  --text-sm: 0.9375rem;
+  --text-sm--line-height: 1.4rem;
+  --text-2xl: 1.75rem;
+  --text-2xl--line-height: 2.1rem;
 }
+
+html { background: var(--color-ink); }
 
 body {
   background: var(--color-ink);
   color: var(--color-ink-text);
   font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Tabular figures for KPI numbers — instrument-panel treatment */
+/* Numbers line up in columns and don't jitter as they change */
 .kpi-figure {
-  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
+  font-weight: 600;
 }
 
-/* Visible keyboard focus (skill's quality floor) */
+/* Status colours as variables so components never hard-code hex */
+:root {
+  --good: #146c3e;
+  --bad: #b42318;
+  --neutral: #4a5754;
+}
+
+input, select, textarea { font: inherit; }
+input:focus, select:focus, textarea:focus { border-color: var(--color-info); }
+
 :focus-visible {
   outline: 2px solid var(--color-info);
   outline-offset: 2px;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.skeleton {
+  border-radius: 0.5rem;
+  background: linear-gradient(90deg, #e9edeb 25%, #f4f6f5 37%, #e9edeb 63%);
+  background-size: 400% 100%;
+  animation: shimmer 1.6s ease infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {

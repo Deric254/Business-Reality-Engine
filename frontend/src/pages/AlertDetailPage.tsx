@@ -76,7 +76,7 @@ export function AlertDetailPage() {
             {SEVERITY_LABEL[alert.severity]}
           </span>
           <span className="text-xs text-ink-faint">· {timeAgo(alert.created_at)}</span>
-          {alert.escalated && <span className="text-xs font-semibold text-[#f0883e]">· ESCALATED: not acted on in time</span>}
+          {alert.escalated && <span className="text-xs font-semibold text-high">· Overdue: not acted on in time</span>}
         </div>
         {!!alert.correlated_alert_ids?.length && (
           <p className="text-xs text-ink-muted mb-3">

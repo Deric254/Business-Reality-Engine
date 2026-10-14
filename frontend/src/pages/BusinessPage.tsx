@@ -11,17 +11,17 @@ import { SEVERITY_COLOR } from "../lib/severity";
 import { useT } from "../lib/i18n";
 
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong. Try again.");
-const STATUS_COLOR: Record<string, string> = { healthy: "#4caf7d", watch: "#e8c547", attention: "#f0883e", critical: "#e5484d" };
+const STATUS_COLOR: Record<string, string> = { healthy: "#1f9254", watch: "#d4a017", attention: "#e8590c", critical: "#d92d20" };
 const PERIODS = [7, 30, 90];
 
 function ScoreRing({ score, color }: { score: number; color: string }) {
   const r = 42, c = 2 * Math.PI * r, v = Math.max(0, Math.min(100, score));
   return (
     <svg width="112" height="112" viewBox="0 0 112 112" role="img" aria-label={`Health score ${score} out of 100`}>
-      <circle cx="56" cy="56" r={r} fill="none" stroke="#2c3542" strokeWidth="9" />
+      <circle cx="56" cy="56" r={r} fill="none" stroke="#dde2e0" strokeWidth="9" />
       <circle cx="56" cy="56" r={r} fill="none" stroke={color} strokeWidth="9" strokeLinecap="round"
         strokeDasharray={`${(v / 100) * c} ${c}`} transform="rotate(-90 56 56)" />
-      <text x="56" y="62" textAnchor="middle" fontSize="26" fill="#e8eaed" style={{ fontFamily: "var(--font-mono)" }}>{Math.round(v)}</text>
+      <text x="56" y="62" textAnchor="middle" fontSize="26" fill="#14211f" style={{ fontFamily: "var(--font-sans)", fontWeight: 700 }}>{Math.round(v)}</text>
     </svg>
   );
 }
@@ -31,7 +31,7 @@ function HealthSection({ tenantId, cur, days, setDays }: { tenantId: string; cur
   const [h, setH] = useState<Health | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => { setErr(null); businessApi.health(tenantId, days).then(setH).catch((e) => setErr(errText(e))); }, [tenantId, days]);
-  const color = STATUS_COLOR[h?.status ?? ""] ?? "#5b9bd5";
+  const color = STATUS_COLOR[h?.status ?? ""] ?? "#2f6db5";
   return (
     <Section title={t("biz.health")} hint={h?.score_basis}
       action={
@@ -90,7 +90,7 @@ function QualitySection({ tenantId, days }: { tenantId: string; days: number }) 
           <div className="kpi-figure text-2xl mb-3">{Math.round(q.score)}<span className="text-sm text-ink-muted"> / 100</span></div>
           <div className="space-y-2">
             {Object.entries(q.sales_missing_pct).map(([k, v]) => (
-              <Bar key={k} label={`Sales missing ${k}`} value={v} max={100} text={`${v.toFixed(1)}%`} color={v > 20 ? "#e5484d" : v > 5 ? "#e8c547" : "#4caf7d"} />
+              <Bar key={k} label={`Sales missing ${k}`} value={v} max={100} text={`${v.toFixed(1)}%`} color={v > 20 ? "#d92d20" : v > 5 ? "#d4a017" : "#1f9254"} />
             ))}
           </div>
         </Card>
@@ -100,7 +100,7 @@ function QualitySection({ tenantId, days }: { tenantId: string; days: number }) 
             <div className="space-y-2">
               {q.by_connector.map((c) => (
                 <Bar key={c.connector} label={c.connector} value={c.events - c.failed} max={Math.max(c.events, 1)}
-                  text={`${c.events.toLocaleString()} events, ${c.failed_pct.toFixed(1)}% failed`} color={c.failed_pct > 5 ? "#e5484d" : "#4caf7d"} />
+                  text={`${c.events.toLocaleString()} events, ${c.failed_pct.toFixed(1)}% failed`} color={c.failed_pct > 5 ? "#d92d20" : "#1f9254"} />
               ))}
             </div>
           )}
@@ -148,7 +148,7 @@ function DiscoverySection({ tenantId, isOwner }: { tenantId: string; isOwner: bo
                   <td className="p-2 font-medium">{e.entity}</td>
                   <td className="p-2 kpi-figure">{e.events.toLocaleString()}</td>
                   <td className="p-2 kpi-figure">{e.span_days} d</td>
-                  {cols.map(([c, k]) => <td key={c} className="p-2 kpi-figure" style={{ color: (e[k] as number) < 50 ? "#8b93a1" : "#e8eaed" }}>{(e[k] as number).toFixed(0)}%</td>)}
+                  {cols.map(([c, k]) => <td key={c} className="p-2 kpi-figure" style={{ color: (e[k] as number) < 50 ? "#6a7673" : "#14211f" }}>{(e[k] as number).toFixed(0)}%</td>)}
                 </tr>
               ))}
             </tbody>

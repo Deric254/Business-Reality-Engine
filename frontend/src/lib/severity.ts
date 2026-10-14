@@ -1,24 +1,41 @@
+// Strong colour (dots, borders), readable text colour, and soft tint per severity. Text colours pass 4.5:1 on their tint.
 export const SEVERITY_COLOR: Record<string, string> = {
-  critical: "#e5484d",
-  high: "#f0883e",
-  medium: "#e8c547",
-  informational: "#5b9bd5",
-  opportunity: "#4caf7d",
+  critical: "#d92d20",
+  high: "#e8590c",
+  medium: "#d4a017",
+  informational: "#2f6db5",
+  opportunity: "#1f9254",
+};
+
+export const SEVERITY_TEXT: Record<string, string> = {
+  critical: "#b42318",
+  high: "#a8400a",
+  medium: "#8a5a00",
+  informational: "#1b4f8a",
+  opportunity: "#146c3e",
+};
+
+export const SEVERITY_TINT: Record<string, string> = {
+  critical: "#fef3f2",
+  high: "#fff4ec",
+  medium: "#fef8e1",
+  informational: "#eef4fb",
+  opportunity: "#edf8f1",
 };
 
 export const SEVERITY_LABEL: Record<string, string> = {
   critical: "Critical",
   high: "High",
   medium: "Medium",
-  informational: "Informational",
+  informational: "Info",
   opportunity: "Opportunity",
 };
 
 export const COVERAGE_COLOR: Record<string, string> = {
-  live: "#4caf7d",
-  recent: "#5b9bd5",
-  stale: "#e8c547",
-  not_connected: "#8b93a1",
+  live: "#1f9254",
+  recent: "#2f6db5",
+  stale: "#d4a017",
+  not_connected: "#8a9390",
 };
 
 // The API stores naive UTC timestamps (no "Z"). JS parses a zone-less ISO string

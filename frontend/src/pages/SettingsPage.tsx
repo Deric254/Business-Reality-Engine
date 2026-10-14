@@ -21,7 +21,7 @@ function ChannelOptions({ c, onSave }: { c: Channel; onSave: (patch: Parameters<
   const [kinds, setKinds] = useState<string[]>(c.filter_kinds ?? []);
   const [ents, setEnts] = useState((c.filter_entities ?? []).join(", "));
   const toggle = (k: string) => setKinds((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]));
-  const f = "bg-ink border border-border rounded-sm px-2 py-1 text-sm text-ink-text";
+  const f = "bg-panel border border-field rounded-sm px-2 py-1 text-sm text-ink-text";
   return (
     <details className="basis-full text-sm">
       <summary className="cursor-pointer text-xs text-ink-muted">Delivery options</summary>
@@ -47,7 +47,7 @@ function ChannelOptions({ c, onSave }: { c: Channel; onSave: (patch: Parameters<
         <label className="sm:col-span-2 text-xs text-ink-muted">Only these record types, comma separated (blank = all)
           <input className={`${f} block mt-1 w-full`} value={ents} onChange={(e) => setEnts(e.target.value)} placeholder="sale, expense" /></label>
       </div>
-      <button className="mt-3 bg-info text-ink font-medium rounded-sm px-3 py-1 text-xs" onClick={() => {
+      <button className="mt-3 bg-info text-white font-semibold hover:brightness-110 rounded-sm px-3 py-1 text-xs" onClick={() => {
         const entities = ents.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
         const quiet = qs && qe ? { quiet_start: qs, quiet_end: qe } : { clear_quiet_hours: true };
         onSave({ ...quiet, digest_mode: mode, digest_hour: hour, filter_kinds: kinds.length ? kinds : null, filter_entities: entities.length ? entities : null,
@@ -163,7 +163,7 @@ export function SettingsPage() {
     });
   }
 
-  const field = "bg-ink border border-border rounded-sm px-2 py-1.5 text-sm text-ink-text";
+  const field = "bg-panel border border-field rounded-sm px-2 py-1.5 text-sm text-ink-text";
   const btn = "text-xs border border-border rounded-sm px-2 py-1 text-ink-muted hover:text-ink-text";
 
   return (
@@ -233,7 +233,7 @@ export function SettingsPage() {
                 {SEVERITIES.map((s) => <option key={s} value={s}>{s} and above</option>)}
               </select>
             </label>
-            <button type="submit" className="bg-info text-ink font-medium rounded-sm px-3 py-1.5 text-sm">Add channel</button>
+            <button type="submit" className="bg-info text-white font-semibold hover:brightness-110 rounded-sm px-3 py-1.5 text-sm">Add channel</button>
           </form>
         </section>
 
@@ -277,7 +277,7 @@ export function SettingsPage() {
                   <option value="owner">owner</option>
                 </select>
               </label>
-              <button type="button" onClick={inviteUser} className="bg-info text-ink font-medium rounded-sm px-3 py-1.5 text-sm">Invite by email</button>
+              <button type="button" onClick={inviteUser} className="bg-info text-white font-semibold hover:brightness-110 rounded-sm px-3 py-1.5 text-sm">Invite by email</button>
               <button type="submit" className={btn}>Create with temporary password</button>
             </form>
           </section>
@@ -336,7 +336,7 @@ export function SettingsPage() {
             <label className="text-sm text-ink-muted">Fixed limit (optional)
               <input type="number" min={0} step="any" className={`${field} block mt-1 w-32`} value={mLimit} onChange={(e) => setMLimit(e.target.value)} />
             </label>
-            <button type="submit" className="bg-info text-ink font-medium rounded-sm px-3 py-1.5 text-sm">Add metric</button>
+            <button type="submit" className="bg-info text-white font-semibold hover:brightness-110 rounded-sm px-3 py-1.5 text-sm">Add metric</button>
           </form>
         </section>
       </main>

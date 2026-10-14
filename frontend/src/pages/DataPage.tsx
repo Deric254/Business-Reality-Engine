@@ -170,7 +170,7 @@ function ConnectorList({ tenantId, rows, isOwner, reload, setNotice, setError }:
     setBusy(id); setError(null); setNotice(null);
     try { await fn(); setNotice(done); reload(); } catch (e) { setError(errText(e)); } finally { setBusy(null); }
   }
-  const state = (c: ConnectorRow) => (!c.is_active ? ["Paused", "#8b93a1"] : c.last_sync_status === "failed" || c.last_sync_status === "error" ? ["Failing", "#e5484d"] : c.last_sync_at ? ["Working", "#4caf7d"] : ["Waiting for data", "#e8c547"]);
+  const state = (c: ConnectorRow) => (!c.is_active ? ["Paused", "#8a9390"] : c.last_sync_status === "failed" || c.last_sync_status === "error" ? ["Failing", "#d92d20"] : c.last_sync_at ? ["Working", "#1f9254"] : ["Waiting for data", "#d4a017"]);
   return (
     <>
       <input ref={fileRef} type="file" hidden accept=".csv,.xlsx,.xls,.json,.xml,.txt"
@@ -258,9 +258,9 @@ function DataBody({ tenantId, isOwner, title }: { tenantId: string; isOwner: boo
       <h1 className="text-lg font-semibold tracking-tight">{title}</h1>
       <Notice error={err} notice={notice} />
       {created?.webhook_url && (
-        <Card accent="#e8c547">
+        <Card accent="#d4a017">
           <p className="text-sm font-medium">Copy this link now — it is shown only once.</p>
-          <code className="block mt-2 text-xs break-all bg-ink border border-border rounded-sm p-2 select-all">{base}{created.webhook_url}</code>
+          <code className="block mt-2 text-xs break-all bg-panel border border-field rounded-sm p-2 select-all">{base}{created.webhook_url}</code>
           <p className="text-xs text-ink-muted mt-2">Have your system POST a JSON record to it for every sale or expense.</p>
           <button className={`${btnCls} mt-2`} onClick={() => setCreated(null)}>I've saved it</button>
         </Card>

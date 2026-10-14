@@ -26,6 +26,10 @@ const en = {
   "common.save": "Save", "common.add": "Add", "common.remove": "Remove", "common.cancel": "Cancel", "common.loading": "Loading…",
   "common.next": "Next", "common.back": "Back", "common.skip": "Skip for now", "common.done": "Finish",
   "common.none": "Nothing here yet.",
+  "dash.allClear": "Nothing needs your attention right now.",
+  "dash.critical.one": "1 critical alert needs you today.", "dash.critical.many": "{n} critical alerts need you today.",
+  "dash.high.one": "1 alert needs a look today.", "dash.high.many": "{n} alerts need a look today.",
+  "dash.sub": "Last 30 days, compared with the 30 before.",
 } as const;
 
 const sw: Partial<Record<keyof typeof en, string>> = {
@@ -49,6 +53,10 @@ const sw: Partial<Record<keyof typeof en, string>> = {
   "common.save": "Hifadhi", "common.add": "Ongeza", "common.remove": "Ondoa", "common.cancel": "Ghairi", "common.loading": "Inapakia…",
   "common.next": "Endelea", "common.back": "Rudi", "common.skip": "Ruka kwa sasa", "common.done": "Maliza",
   "common.none": "Hakuna kitu bado.",
+  "dash.allClear": "Hakuna kinachohitaji umakini wako sasa hivi.",
+  "dash.critical.one": "Tahadhari 1 kubwa inakuhitaji leo.", "dash.critical.many": "Tahadhari {n} kubwa zinakuhitaji leo.",
+  "dash.high.one": "Tahadhari 1 inahitaji kutazamwa leo.", "dash.high.many": "Tahadhari {n} zinahitaji kutazamwa leo.",
+  "dash.sub": "Siku 30 zilizopita, ikilinganishwa na siku 30 kabla yake.",
 };
 
 export type TKey = keyof typeof en;
