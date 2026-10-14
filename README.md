@@ -57,3 +57,6 @@ agent/          on-premise local agent           alembic/        migrations
 frontend/       React + TypeScript + Tailwind    scripts/        seed, load test, backup, restore
 tests/          357 tests                        .github/        CI
 ```
+
+## Free hosting
+See [docs/FREE_DEPLOY.md](docs/FREE_DEPLOY.md): Neon + free VM + Cloudflare Pages, no monthly cost.
