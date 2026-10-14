@@ -258,7 +258,8 @@ def test_two_workers_never_send_the_same_digest(client, tenant_a, http):
 
 def test_turning_digest_off_releases_held_alerts(client, tenant_a, http):
     tok = owner(client, tenant_a)
-    cid = add_channel(client, tok, tenant_a, channel_type="slack", target=http + "/s", min_severity="informational", digest_mode="daily", digest_hour=23).json()["id"]
+    cid = add_channel(client, tok, tenant_a, channel_type="slack", target=http + "/s", min_severity="informational", digest_mode="daily", digest_hour=0).json()["id"]
+    db = SessionLocal(); db.query(NotificationChannel).filter_by(id=cid).update({"last_digest_at": datetime.utcnow()}); db.commit(); db.close()   # today's digest already went: independent of the clock
     a = make_alert(tenant_a, AlertSeverity.medium, "Held one")
     dispatch(); assert status_of(a)[0] == "held" and not _Recv.got
     client.patch(f"/api/notifications/channels/{cid}?tenant_id={tenant_a}", json={"digest_mode": "off"}, headers=bearer(tok))

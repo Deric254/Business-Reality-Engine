@@ -1,0 +1,40 @@
+name: Deploy smoke test
+# Builds the real images, boots the whole compose stack with throwaway secrets, and exercises it through the
+# public web port: health, creating a business, signing in, reading the SPA. Kept separate from CI so a Docker
+# problem is reported on its own. Run it manually from the Actions tab, or it runs on every push to main.
+on:
+  workflow_dispatch:
+  push: {branches: [main, master]}
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Throwaway environment
+        run: |
+          {
+            echo "POSTGRES_PASSWORD=ci-$(openssl rand -hex 8)"
+            echo "API_KEY=$(openssl rand -hex 16)"
+            echo "ADMIN_API_KEY=ci-admin-key"
+            echo "JWT_SECRET_KEY=$(openssl rand -hex 32)"
+            echo "CONNECTOR_ENCRYPTION_KEY=$(python3 -c 'import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
+            echo "CORS_ORIGINS=http://localhost:8080"
+          } > .env
+      - run: docker compose up -d --build
+      - name: Wait for the web port
+        run: |
+          for i in $(seq 60); do curl -fsS http://localhost:8080/api/health/ && exit 0; sleep 3; done
+          docker compose ps; docker compose logs --tail=80; exit 1
+      - name: Create a business and sign in through the proxy
+        run: |
+          set -e
+          EMAIL="owner-$RANDOM@example.com"
+          curl -fsS -X POST http://localhost:8080/api/system/tenants -H "x-admin-key: ci-admin-key" -H 'content-type: application/json' \
+            -d "{\"name\":\"CI Co\",\"owner_email\":\"$EMAIL\",\"owner_password\":\"ci-password-1\"}" > tenant.json
+          curl -fsS -X POST http://localhost:8080/api/auth/login -H 'content-type: application/json' \
+            -d "{\"email\":\"$EMAIL\",\"password\":\"ci-password-1\"}" | grep -q access_token
+          curl -fsS http://localhost:8080/ | grep -qi "<div id=\"root\""
+          curl -fsSI http://localhost:8080/ | grep -qi "content-security-policy"
+      - if: failure()
+        run: docker compose ps; docker compose logs --tail=200

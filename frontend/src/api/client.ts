@@ -188,15 +188,25 @@ export const api = {
   getCoverage: (tenantId: string) => request<CoverageRow[]>(`/api/coverage/?tenant_id=${tenantId}`),
 };
 
+export type ChannelType = "email" | "webhook" | "slack" | "teams" | "sms" | "whatsapp";
+
 export interface Channel {
   id: string;
-  channel_type: "email" | "webhook";
+  channel_type: ChannelType;
   target: string;
   label: string | null;
   min_severity: string;
   enabled: boolean;
+  quiet_start: string | null;
+  quiet_end: string | null;
+  digest_mode: "off" | "daily";
+  digest_hour: number;
+  filter_kinds: string[] | null;
+  filter_entities: string[] | null;
   signing_secret?: string | null;
 }
+
+export type ChannelPrefs = Partial<Pick<Channel, "quiet_start" | "quiet_end" | "digest_mode" | "digest_hour" | "filter_kinds" | "filter_entities">>;
 
 export interface Metric {
   id: string;
@@ -214,9 +224,9 @@ const json = (body: unknown): RequestInit => ({ body: JSON.stringify(body) });
 
 export const settingsApi = {
   listChannels: (t: string) => request<Channel[]>(`/api/notifications/channels?tenant_id=${t}`),
-  createChannel: (t: string, c: { channel_type: string; target: string; min_severity: string }) =>
+  createChannel: (t: string, c: { channel_type: string; target: string; min_severity: string } & ChannelPrefs) =>
     request<Channel>("/api/notifications/channels", { method: "POST", ...json({ tenant_id: t, ...c }) }),
-  updateChannel: (t: string, id: string, patch: Partial<Pick<Channel, "enabled" | "min_severity">>) =>
+  updateChannel: (t: string, id: string, patch: Partial<Pick<Channel, "enabled" | "min_severity">> & ChannelPrefs & { clear_quiet_hours?: boolean; clear_filters?: boolean }) =>
     request<Channel>(`/api/notifications/channels/${id}?tenant_id=${t}`, { method: "PATCH", ...json(patch) }),
   deleteChannel: (t: string, id: string) =>
     request<{ deleted: boolean }>(`/api/notifications/channels/${id}?tenant_id=${t}`, { method: "DELETE" }),
@@ -251,4 +261,154 @@ export const usersApi = {
   resetPassword: (t: string, id: string) =>
     request<UserRow & { temporary_password: string }>(`/api/users/${id}/reset-password?tenant_id=${t}`, { method: "POST" }),
   remove: (t: string, id: string) => request<{ deleted: boolean }>(`/api/users/${id}?tenant_id=${t}`, { method: "DELETE" }),
+  invite: (t: string, email: string, role: "owner" | "staff") =>
+    request<UserRow>("/api/users/invite", { method: "POST", ...json({ tenant_id: t, email, role }) }),
+  resendInvite: (t: string, id: string) =>
+    request<{ ok: boolean }>(`/api/users/${id}/resend-invite?tenant_id=${t}`, { method: "POST" }),
+};
+
+// ---- public (signed-out) account recovery ----
+async function publicPost<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!res.ok) throw await parseError(res);
+  return res.json();
+}
+export const forgotPassword = (email: string) => publicPost<{ ok: boolean; message: string }>("/api/auth/forgot-password", { email });
+export const resetPassword = (token: string, newPassword: string) =>
+  publicPost<{ ok: boolean }>("/api/auth/reset-password", { token, new_password: newPassword });
+
+// ---- business picture ----
+export interface Health {
+  period_days: number;
+  status: "healthy" | "watch" | "attention" | "critical" | string;
+  score: number;
+  headline: string;
+  financials: { sales: number; expenses: number; profit: number; sales_change_pct: number | null; expenses_change_pct: number | null; profit_change_pct: number | null };
+  open_alerts: Record<string, number>;
+  top_alert: { id: string; title: string; severity: string } | null;
+  stale_sources: string[];
+  data_quality_score: number;
+  score_basis: string;
+}
+export interface Quality {
+  period_days: number; events: number; failed: number; failed_pct: number; score: number;
+  sales_missing_pct: Record<string, number>;
+  top_failure_reasons: { reason: string; count: number }[];
+  by_connector: { connector: string; events: number; failed: number; failed_pct: number }[];
+  notes: string[];
+}
+export interface Discovery {
+  entities: { entity: string; events: number; first: string; last: string; span_days: number; has_amount_pct: number; has_quantity_pct: number; has_customer_pct: number; has_product_pct: number; has_location_pct: number }[];
+  suggested_metrics: { entity: string; field: string; period_days: number; direction: "drop" | "rise"; already_monitored: boolean; enough_history: boolean; reason: string }[];
+  next_steps: string[];
+}
+export interface EntityRow { id: string; entity_type: string; canonical_name: string; confidence: number }
+export interface LinkRow { id: string | null; name: string; amount: number; events: number; share: number }
+export interface Relationships {
+  entity: { id: string; type: string; name: string }; period_days: number; measure: string; total: number; events: number;
+  linked: Record<string, LinkRow[]>; statements: string[]; share_of_business: number | null;
+}
+export interface ContextItem { id: string; kind: string; name: string; starts_on: string; ends_on: string | null }
+export interface FxRow { id: string; currency: string; rate_to_base: number; effective_date: string }
+
+export const businessApi = {
+  health: (t: string, days = 30) => request<Health>(`/api/business/health?tenant_id=${t}&days=${days}`),
+  quality: (t: string, days = 30) => request<Quality>(`/api/business/quality?tenant_id=${t}&days=${days}`),
+  discovery: (t: string) => request<Discovery>(`/api/business/discovery?tenant_id=${t}`),
+  entities: (t: string) => request<EntityRow[]>(`/api/entities/?tenant_id=${t}`),
+  relationships: (t: string, id: string, days = 90) => request<Relationships>(`/api/business/relationships/${id}?tenant_id=${t}&days=${days}`),
+  listContext: (t: string) => request<ContextItem[]>(`/api/business/context?tenant_id=${t}`),
+  addContext: (t: string, c: { kind: string; name: string; starts_on: string; ends_on: string | null }) =>
+    request<ContextItem>(`/api/business/context?tenant_id=${t}`, { method: "POST", ...json(c) }),
+  deleteContext: (t: string, id: string) => requestVoid(`/api/business/context/${id}?tenant_id=${t}`, "DELETE"),
+  syncHolidays: (t: string) => request<{ added: number }>(`/api/business/context/sync-holidays?tenant_id=${t}`, { method: "POST" }),
+  listFx: (t: string) => request<FxRow[]>(`/api/business/fx?tenant_id=${t}`),
+  putFx: (t: string, f: { currency: string; rate_to_base: number; effective_date: string }) =>
+    request<unknown>(`/api/business/fx?tenant_id=${t}`, { method: "PUT", ...json(f) }),
+  reprocessFx: (t: string) => request<unknown>(`/api/business/fx/reprocess?tenant_id=${t}`, { method: "POST" }),
+};
+
+async function requestVoid(path: string, method: string): Promise<void> {
+  const tokens = getTokens();
+  const res = await fetch(`${API_BASE}${path}`, { method, headers: tokens ? { Authorization: `Bearer ${tokens.access_token}` } : {} });
+  if (!res.ok) throw await parseError(res);
+}
+
+// ---- tenant settings ----
+export interface TenantSettings { id: string; name: string; timezone: string; base_currency: string; country: string | null; language: string }
+export const tenantApi = {
+  me: () => request<TenantSettings>("/api/tenants/me"),
+  update: (patch: Partial<Omit<TenantSettings, "id">>) => request<TenantSettings>("/api/tenants/me", { method: "PATCH", ...json(patch) }),
+};
+
+// ---- data sources ----
+export interface ConnectorRow {
+  id: string; name: string; connector_type: string; is_active: boolean; last_sync_at: string | null; last_sync_status: string | null;
+  expected_frequency: string | null; sync_interval_minutes: number | null; last_attempt_at: string | null;
+  webhook_url?: string | null; webhook_token?: string | null;
+}
+export interface DbType { db_type: string; available: boolean; verified: boolean; default_port: number | null; notes: string }
+
+export const connectorApi = {
+  list: (t: string) => request<ConnectorRow[]>(`/api/connectors/?tenant_id=${t}`),
+  create: (body: { tenant_id: string; name: string; connector_type: string; config: Record<string, unknown>; expected_frequency?: string | null; sync_interval_minutes?: number | null }) =>
+    request<ConnectorRow>("/api/connectors/", { method: "POST", ...json(body) }),
+  update: (t: string, id: string, patch: { is_active?: boolean; sync_interval_minutes?: number | null; clear_sync_interval?: boolean }) =>
+    request<ConnectorRow>(`/api/connectors/${id}?tenant_id=${t}`, { method: "PATCH", ...json(patch) }),
+  dbTypes: (t: string) => request<DbType[]>(`/api/connectors/meta/database-types?tenant_id=${t}`),
+  sync: (t: string, id: string, type: string) =>
+    request<Record<string, unknown>>(`/api/connectors/${id}/sync-${type === "shared_folder" ? "folder" : type}?tenant_id=${t}`, { method: "POST" }),
+  upload: async (t: string, id: string, file: File) => {
+    const tokens = getTokens();
+    const form = new FormData();
+    form.append("tenant_id", t);
+    form.append("file", file);
+    const res = await fetch(`${API_BASE}/api/connectors/${id}/upload`, { method: "POST", body: form, headers: tokens ? { Authorization: `Bearer ${tokens.access_token}` } : {} });
+    if (!res.ok) throw await parseError(res);
+    return (await res.json()) as Record<string, unknown>;
+  },
+};
+
+export interface CaptureEntry {
+  entity: "sale" | "expense"; amount: number; timestamp?: string; quantity?: number; currency?: string;
+  location?: string; customer?: string; product?: string; supplier?: string; note?: string; client_ref?: string;
+}
+export const captureApi = {
+  submit: (t: string, entries: CaptureEntry[]) =>
+    request<Record<string, unknown>>("/api/capture/", { method: "POST", ...json({ tenant_id: t, entries }) }),
+};
+
+// ---- accuracy, model, backtests ----
+export interface ModelChange { id: string; kind: string; subject: string; description: string | null; effective_at: string; version: number; rebaseline: boolean; source: string }
+export interface ModelOverview { version: number; changes: ModelChange[] }
+export interface TruthRow { id: string; label: string; metric: string | null; starts_on: string; ends_on: string | null }
+export interface BacktestResult {
+  episodes: number; alerts_per_30_days: number; by_kind: Record<string, number>; precision: number | null; recall: number | null;
+  labelled_events: number; note: string | null; threshold_multiplier: number;
+}
+export interface Episode { key: string; first_day: string; last_day: string; days_firing: number; kind: string; severity: string; title: string; metric: string | null }
+export interface BacktestOutcome {
+  range: { start: string; end: string; step_days: number }; tolerance_days: number;
+  results: (BacktestResult & { sample_episodes?: Episode[] })[]; recommended_threshold_multiplier?: number | null; limitations?: string[];
+}
+export interface BacktestRun extends BacktestOutcome { id: string }
+export interface BacktestListItem { id: string; created_at: string; params: Record<string, unknown>; result: BacktestOutcome }
+export interface KindStat { alerts: number; closed: number; false_positive: number; dismissed: number; resolved: number; false_positive_rate: number | null; not_useful_rate: number | null; note: string | null }
+export interface AccuracyReport {
+  period_days: number; by_kind: Record<string, KindStat>; by_month: Record<string, KindStat>;
+  calibration: { band: string; alerts: number; useful_rate: number | null }[]; live_recall: number | null; method: string;
+}
+export const accuracyApi = {
+  model: (t: string) => request<ModelOverview>(`/api/accuracy/model?tenant_id=${t}`),
+  declareChange: (t: string, c: { kind: string; subject: string; description?: string; effective_at: string; rebaseline: boolean }) =>
+    request<{ id: string; version: number }>(`/api/accuracy/model/changes?tenant_id=${t}`, { method: "POST", ...json(c) }),
+  clearRebaseline: (t: string, id: string) => requestVoid(`/api/accuracy/model/changes/${id}/clear-rebaseline?tenant_id=${t}`, "POST"),
+  truth: (t: string) => request<TruthRow[]>(`/api/accuracy/ground-truth?tenant_id=${t}`),
+  addTruth: (t: string, r: { label: string; metric?: string | null; starts_on: string; ends_on?: string | null }) =>
+    request<{ id: string }>(`/api/accuracy/ground-truth?tenant_id=${t}`, { method: "POST", ...json(r) }),
+  deleteTruth: (t: string, id: string) => requestVoid(`/api/accuracy/ground-truth/${id}?tenant_id=${t}`, "DELETE"),
+  backtest: (t: string, b: { start: string; end: string; step_days: number; tolerance_days: number }) =>
+    request<BacktestRun>(`/api/accuracy/backtest?tenant_id=${t}`, { method: "POST", ...json(b) }),
+  backtests: (t: string) => request<BacktestListItem[]>(`/api/accuracy/backtest?tenant_id=${t}`),
+  report: (t: string, days = 180) => request<AccuracyReport>(`/api/accuracy/report?tenant_id=${t}&days=${days}`),
 };

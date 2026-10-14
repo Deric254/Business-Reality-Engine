@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { Link } from "react-router-dom";
 import type { Tenant, Alert, KpiBreakdown } from "../api/client";
 import { api } from "../api/client";
 import { TopBar } from "../components/TopBar";
@@ -82,6 +83,12 @@ export function Dashboard() {
         {error && (
           <div className="border-l-2 border-critical bg-panel px-4 py-3 mb-4 text-sm text-ink-text">
             Couldn't load data: {error}
+          </div>
+        )}
+
+        {activeTenant && !loading && alerts.length === 0 && kpis && kpis.revenue.current === 0 && kpis.revenue.previous === 0 && (
+          <div className="border-l-2 border-info bg-panel px-4 py-3 mb-4 text-sm">
+            No data yet. <Link to="/setup" className="text-info hover:underline">Run the 3-step setup</Link> to connect your numbers.
           </div>
         )}
 

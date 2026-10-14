@@ -1,90 +1,59 @@
 # Business Reality Engine
 
-Always-on business intelligence and decision system. Connects to a
-business's existing systems, builds a unified model, monitors it, detects
-what matters, explains why, alerts management, and builds institutional
-memory of decisions and outcomes.
+Always-on business intelligence and decision layer. It connects to the systems a business already uses, builds a living model of the business, watches it continuously, detects what matters, explains why, alerts the right people, and remembers decisions and outcomes. Every business (tenant) is isolated from every other.
 
-Full product blueprint: see `docs/blueprint.md`.
-Security status: see `SECURITY.md` — read before adding any new connector
-or endpoint. It tracks what's actually implemented vs. still owed, and
-has caught a real bug (tenant isolation, CORS, error leaks) nearly every
-time it's been followed through on — keep it current.
+- Product blueprint: `docs/blueprint.md`
+- What is built vs. what is left, section by section: `docs/PROGRESS_REPORT.md`
+- Security design, residual risks and audit history: `SECURITY.md`
+- Operating it (deploy, backup, restore, upgrades, troubleshooting): `docs/RUNBOOK.md`
+- Local agent for on-premise systems: `agent/README.md`
 
-## Backend setup
+## Quick start (Docker)
+
+```bash
+cp .env.example .env          # fill POSTGRES_PASSWORD, API_KEY, ADMIN_API_KEY, JWT_SECRET_KEY, CONNECTOR_ENCRYPTION_KEY
+docker compose up -d --build  # db, redis, migrations, api, web  ->  http://localhost:8080
+```
+
+Generate secrets with `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`; the encryption key must be a Fernet key (`python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`).
+Compose has not been built in the authoring environment; see the runbook's first-deploy checklist.
+
+## Local development
 
 ```bash
 python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt pytest httpx aiosmtpd
+cp .env.example .env                         # DATABASE_URL, API_KEY, ADMIN_API_KEY, JWT_SECRET_KEY, CONNECTOR_ENCRYPTION_KEY
+createdb business_reality && alembic upgrade head
+uvicorn app.main:app --reload                # API on :8000
 
-cp .env.example .env   # fill in DATABASE_URL, API_KEY, an LLM provider (optional)
-
-createdb business_reality
-alembic upgrade head
-
-uvicorn app.main:app --reload
+cd frontend && npm install && npm run dev    # UI on :5173 (set VITE_API_BASE if the API is elsewhere)
+python scripts/seed_demo.py --api http://localhost:8000 --admin-key "$ADMIN_API_KEY"   # a demo business with a sales slump
+python -m pytest tests -q -W ignore          # 357 tests; needs Postgres at DATABASE_URL
 ```
 
-Every request except `/api/health` needs an `x-api-key` header matching
-`API_KEY` in your `.env`.
+## Who calls what
 
-### LLM provider (optional)
+| Caller | Credential | Reaches |
+|---|---|---|
+| People in the web app | per-user JWT (owner or staff) | everything in their own business; owners change settings |
+| Connected systems | per-connector webhook token; service key `x-api-key` for event ingestion only | `/api/webhooks/...`, `/api/events/...` |
+| The operator | `x-admin-key` | `/api/system/*`, creating businesses |
 
-The reasoning layer (alert narratives, `/api/questions/ask`) works with
-any of: Anthropic, OpenAI, or an OpenAI-compatible endpoint (Groq,
-Together, local Ollama, etc). Set `LLM_PROVIDER` in `.env` — see
-`.env.example` for the full set of vars per provider. Without one
-configured, alert reasoning is skipped (severity-gated feature) and
-`/api/questions/ask` falls back to a deterministic template — nothing
-breaks, it just doesn't get the natural-language layer.
+Create the first business and its owner: `POST /api/system/tenants` with `x-admin-key` (name, owner_email, owner_password).
 
-## Frontend setup
+## Optional integrations
 
-```bash
-cd frontend
-npm install
-cp .env.example .env   # VITE_API_BASE + VITE_API_KEY, matching the backend
-npm run dev
-```
+- **Email** (alerts, password reset, invitations): `SMTP_*` and `APP_BASE_URL`.
+- **SMS / WhatsApp**: Twilio (`TWILIO_*`). **Slack / Teams**: paste an incoming-webhook URL per channel in Settings.
+- **LLM narratives and question fallback**: `LLM_PROVIDER` = `anthropic` | `openai` | `openai_compatible` (Groq, Together, Ollama...). Without it everything works; the natural-language layer is simply skipped.
 
-Opens on `http://localhost:5173`. The backend's `CORS_ORIGINS` env var
-must include this origin (it does by default).
-
-## Structure
+## Layout
 
 ```
-app/
-  models/       # SQLAlchemy models — core (tenants, events, entities), alerts, cases
-  api/          # FastAPI routers
-  core/         # config, DB session, auth, shared ingestion, detection, entity resolution, coverage, business memory
-  connectors/   # per-source-type ingestion (file/CSV built; API/webhook/DB/SFTP not yet)
-  reasoning/    # provider-agnostic LLM layer + alert reasoning
-alembic/        # DB migrations
-frontend/       # React + TypeScript + Tailwind Control Room
-  src/pages/       # Dashboard (Section 33), Alert Detail (Section 35)
-  src/components/  # KpiStrip, FilterBar, AlertRow, TopBar
-  src/api/client.ts
-docs/
-  blueprint.md  # the full 57-section product blueprint
+app/api/        routers          app/core/       detection, ingestion, delivery, auth, forecasting, memory...
+app/connectors/ source adapters  app/reasoning/  provider-agnostic LLM layer
+agent/          on-premise local agent           alembic/        migrations
+frontend/       React + TypeScript + Tailwind    scripts/        seed, load test, backup, restore
+tests/          357 tests                        .github/        CI
 ```
-
-## Status
-
-The full product loop (Section 4) is built and tested end-to-end against
-real Postgres data, not mocks: connect → ingest → resolve entities →
-detect deviation → explain why → AI reasoning → alert → act → remember →
-measure outcome → retrieve history → ask questions directly. A React
-Control Room frontend consumes it live.
-
-Every stage is tenant-isolated, with that isolation proven by actual
-attack attempts (cross-tenant reads/writes/merges), not just code review
-— see `SECURITY.md`'s audit history for what testing caught that review
-didn't.
-
-**Not built yet:** forecasting (Section 43), scenario simulation (44),
-external context integration (42), a real scheduler (detection currently
-runs on manual trigger), and the production-hardening items in
-`SECURITY.md` (self-monitoring, deployment model, backtesting,
-localization). The frontend has not been visually verified in a real
-browser — only that it builds clean and every API call it depends on
-returns correct data.

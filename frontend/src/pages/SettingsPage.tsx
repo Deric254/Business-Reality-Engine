@@ -5,6 +5,57 @@ import { PasswordForm } from "../components/PasswordForm";
 import { getClaims } from "../api/session";
 
 const SEVERITIES = ["critical", "high", "medium", "informational"];
+const TARGET_LABEL: Record<string, string> = {
+  email: "Email address", webhook: "Webhook URL (https)", slack: "Slack incoming-webhook URL", teams: "Teams workflow webhook URL",
+  sms: "Phone number (international format)", whatsapp: "WhatsApp number (international format)",
+};
+const KINDS = ["deviation", "opportunity", "trend", "daily", "silence", "threshold", "forecast", "risk", "unknown", "quality"];
+const DIGEST_OK = ["email", "slack", "teams"];
+
+/** Quiet hours, daily digest and filters for one channel. Times are UTC. */
+function ChannelOptions({ c, onSave }: { c: Channel; onSave: (patch: Parameters<typeof settingsApi.updateChannel>[2]) => void }) {
+  const [qs, setQs] = useState(c.quiet_start ?? "");
+  const [qe, setQe] = useState(c.quiet_end ?? "");
+  const [mode, setMode] = useState(c.digest_mode);
+  const [hour, setHour] = useState(c.digest_hour);
+  const [kinds, setKinds] = useState<string[]>(c.filter_kinds ?? []);
+  const [ents, setEnts] = useState((c.filter_entities ?? []).join(", "));
+  const toggle = (k: string) => setKinds((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]));
+  const f = "bg-ink border border-border rounded-sm px-2 py-1 text-sm text-ink-text";
+  return (
+    <details className="basis-full text-sm">
+      <summary className="cursor-pointer text-xs text-ink-muted">Delivery options</summary>
+      <div className="mt-3 grid sm:grid-cols-2 gap-4">
+        <fieldset><legend className="text-xs text-ink-muted mb-1">Quiet hours (UTC) — critical alerts still come through</legend>
+          <input type="time" aria-label="Quiet from" className={f} value={qs} onChange={(e) => setQs(e.target.value)} />
+          <span className="mx-2 text-ink-muted">to</span>
+          <input type="time" aria-label="Quiet until" className={f} value={qe} onChange={(e) => setQe(e.target.value)} />
+        </fieldset>
+        {DIGEST_OK.includes(c.channel_type) && (
+          <fieldset><legend className="text-xs text-ink-muted mb-1">Medium / informational / opportunity alerts</legend>
+            <select aria-label="Digest mode" className={f} value={mode} onChange={(e) => setMode(e.target.value as "off" | "daily")}>
+              <option value="off">Send as they happen</option><option value="daily">One daily digest</option></select>
+            {mode === "daily" && <><span className="mx-2 text-ink-muted">at</span>
+              <select aria-label="Digest hour (UTC)" className={f} value={hour} onChange={(e) => setHour(Number(e.target.value))}>
+                {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00 UTC</option>)}</select></>}
+          </fieldset>
+        )}
+        <fieldset className="sm:col-span-2"><legend className="text-xs text-ink-muted mb-1">Only these kinds of alert (none ticked = all)</legend>
+          <div className="flex flex-wrap gap-x-4 gap-y-1">{KINDS.map((k) => (
+            <label key={k} className="flex items-center gap-1 text-xs"><input type="checkbox" checked={kinds.includes(k)} onChange={() => toggle(k)} />{k}</label>))}</div>
+        </fieldset>
+        <label className="sm:col-span-2 text-xs text-ink-muted">Only these record types, comma separated (blank = all)
+          <input className={`${f} block mt-1 w-full`} value={ents} onChange={(e) => setEnts(e.target.value)} placeholder="sale, expense" /></label>
+      </div>
+      <button className="mt-3 bg-info text-ink font-medium rounded-sm px-3 py-1 text-xs" onClick={() => {
+        const entities = ents.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+        const quiet = qs && qe ? { quiet_start: qs, quiet_end: qe } : { clear_quiet_hours: true };
+        onSave({ ...quiet, digest_mode: mode, digest_hour: hour, filter_kinds: kinds.length ? kinds : null, filter_entities: entities.length ? entities : null,
+          ...(!kinds.length && !entities.length ? { clear_filters: true } : {}) });
+      }}>Save options</button>
+    </details>
+  );
+}
 
 function errText(e: unknown) {
   return e instanceof ApiError ? e.message : "Something went wrong. Try again.";
@@ -99,6 +150,11 @@ export function SettingsPage() {
     }, "Account created.");
   }
 
+  async function inviteUser() {
+    if (!tenant || !uEmail.trim()) return;
+    await run(async () => { await usersApi.invite(tenant.id, uEmail.trim(), uRole); setUEmail(""); }, "Invitation emailed. The link works for 7 days.");
+  }
+
   async function resetUser(u: UserRow) {
     if (!tenant || !window.confirm(`Reset the password for ${u.email}? They will be signed out everywhere.`)) return;
     await run(async () => {
@@ -150,6 +206,8 @@ export function SettingsPage() {
                   </label>
                   <button className={btn} onClick={() => test(c)}>Send test</button>
                   <button className={btn} onClick={() => run(() => settingsApi.deleteChannel(tenant!.id, c.id), "Channel removed.")}>Remove</button>
+                  <ChannelOptions key={`${c.id}${c.quiet_start}${c.quiet_end}${c.digest_mode}${c.digest_hour}${(c.filter_kinds ?? []).join()}${(c.filter_entities ?? []).join()}`} c={c}
+                    onSave={(patch) => run(() => settingsApi.updateChannel(tenant!.id, c.id, patch), "Options saved.")} />
                 </li>
               ))}
             </ul>
@@ -158,12 +216,17 @@ export function SettingsPage() {
             <label className="text-sm text-ink-muted">Type
               <select className={`${field} block mt-1`} value={chType} onChange={(e) => setChType(e.target.value)}>
                 <option value="email">Email</option>
-                <option value="webhook">Webhook</option>
+                <option value="slack">Slack</option>
+                <option value="teams">Microsoft Teams</option>
+                <option value="sms">SMS</option>
+                <option value="whatsapp">WhatsApp</option>
+                <option value="webhook">Custom webhook</option>
               </select>
             </label>
-            <label className="text-sm text-ink-muted flex-1 min-w-48">{chType === "email" ? "Email address" : "Webhook URL (https)"}
+            <label className="text-sm text-ink-muted flex-1 min-w-48">{TARGET_LABEL[chType]}
               <input required className={`${field} block mt-1 w-full`} value={chTarget} onChange={(e) => setChTarget(e.target.value)}
-                type={chType === "email" ? "email" : "url"} />
+                type={chType === "email" ? "email" : chType === "sms" || chType === "whatsapp" ? "tel" : "url"}
+                placeholder={chType === "sms" || chType === "whatsapp" ? "+254712345678" : undefined} />
             </label>
             <label className="text-sm text-ink-muted">Send at
               <select className={`${field} block mt-1`} value={chSeverity} onChange={(e) => setChSeverity(e.target.value)}>
@@ -189,6 +252,7 @@ export function SettingsPage() {
               {users.map((u) => (
                 <li key={u.id} className="flex flex-wrap items-center gap-3 px-3 py-2 text-sm">
                   <span className="flex-1 break-all">{u.email}{u.is_me ? " (you)" : ""}{u.must_change_password ? " · hasn't signed in yet" : ""}</span>
+                  {u.must_change_password && !u.is_me && <button className={btn} onClick={() => run(() => usersApi.resendInvite(tenant!.id, u.id), "Invitation re-sent.")}>Resend invite</button>}
                   <select
                     aria-label={`Role for ${u.email}`} value={u.role} disabled={u.is_me} className={field}
                     onChange={(e) => run(() => usersApi.setRole(tenant!.id, u.id, e.target.value as "owner" | "staff"), "Role updated.")}
@@ -213,7 +277,8 @@ export function SettingsPage() {
                   <option value="owner">owner</option>
                 </select>
               </label>
-              <button type="submit" className="bg-info text-ink font-medium rounded-sm px-3 py-1.5 text-sm">Add person</button>
+              <button type="button" onClick={inviteUser} className="bg-info text-ink font-medium rounded-sm px-3 py-1.5 text-sm">Invite by email</button>
+              <button type="submit" className={btn}>Create with temporary password</button>
             </form>
           </section>
         )}

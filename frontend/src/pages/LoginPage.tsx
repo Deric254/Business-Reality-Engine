@@ -1,9 +1,11 @@
 import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { useT } from "../lib/i18n";
 import { login, ApiError } from "../api/client";
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const t = useT();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -28,9 +30,9 @@ export function LoginPage() {
   return (
     <main className="min-h-screen flex items-center justify-center px-4">
       <form onSubmit={submit} className="w-full max-w-sm bg-panel border border-border rounded-sm p-6 space-y-4">
-        <h1 className="text-lg font-semibold tracking-tight">Sign in to Business Reality</h1>
+        <h1 className="text-lg font-semibold tracking-tight">{t("login.title")}</h1>
         <label className="block text-sm">
-          <span className="text-ink-muted">Email</span>
+          <span className="text-ink-muted">{t("login.email")}</span>
           <input
             type="email" required autoComplete="username" value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -38,7 +40,7 @@ export function LoginPage() {
           />
         </label>
         <label className="block text-sm">
-          <span className="text-ink-muted">Password</span>
+          <span className="text-ink-muted">{t("login.password")}</span>
           <input
             type="password" required autoComplete="current-password" value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -50,8 +52,9 @@ export function LoginPage() {
           type="submit" disabled={busy}
           className="w-full bg-info text-ink font-medium rounded-sm px-3 py-2 disabled:opacity-60"
         >
-          {busy ? "Signing in…" : "Sign in"}
+          {busy ? "Signing in…" : t("login.submit")}
         </button>
+        <Link to="/forgot-password" className="block text-xs text-ink-muted hover:text-ink-text">{t("login.forgot")}</Link>
       </form>
     </main>
   );
