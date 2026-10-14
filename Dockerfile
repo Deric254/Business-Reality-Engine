@@ -18,4 +18,6 @@ USER bre
 EXPOSE 8000
 # WEB_CONCURRENCY = number of worker processes. Shared state (rate limits,
 # scheduler lock) lives in Redis, so any number of workers/containers is safe.
-CMD ["sh", "-c", "exec gunicorn app.main:app -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 --workers ${WEB_CONCURRENCY:-4} --keep-alive 30 --timeout 60 --graceful-timeout 30 --access-logfile -"]
+# RUN_MIGRATIONS=1 (set on single-service hosts such as Render) applies DB migrations before starting.
+# docker-compose uses its own migrate service and leaves it unset.
+CMD ["sh", "-c", "if [ \"$RUN_MIGRATIONS\" = \"1\" ]; then alembic upgrade head || exit 1; fi; exec gunicorn app.main:app -k uvicorn.workers.UvicornWorker -b 0.0.0.0:${PORT:-8000} --workers ${WEB_CONCURRENCY:-4} --keep-alive 30 --timeout 60 --graceful-timeout 30 --access-logfile -"]

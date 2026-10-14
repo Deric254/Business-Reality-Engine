@@ -16,10 +16,7 @@ neon.tech → create project → **Connect** → Connection pooling **OFF** → 
 ## 2. API on Render
 render.com → sign in with GitHub → **New → Web Service** → pick the repo.
 - Runtime: **Docker**, root directory blank, instance type **Free**
-- Docker Command:
-  ```
-  sh -c "alembic upgrade head && exec gunicorn app.main:app -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 --workers 1 --keep-alive 30 --timeout 60 --access-logfile -"
-  ```
+- Docker Command: **leave blank** (the Dockerfile runs migrations when `RUN_MIGRATIONS=1`)
 - Health Check Path: `/api/health/`
 - Environment: every variable in `deploy/render/env.example` (leave `APP_BASE_URL` / `CORS_ORIGINS` as placeholders for now)
 
