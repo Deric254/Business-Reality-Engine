@@ -3,7 +3,7 @@
 import { writeFileSync } from "node:fs";
 const api = (process.env.VITE_API_BASE || "").replace(/\/+$/, "");
 if (!/^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(api)) {
-  console.error("VITE_API_BASE must be the https origin of the API, e.g. https://34-12-56-78.sslip.io");
+  console.error("VITE_API_BASE must be the https origin of the API, e.g. https://your-service.onrender.com");
   process.exit(1);
 }
 const csp = `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' ${api}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`;

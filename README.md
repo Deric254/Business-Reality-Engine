@@ -59,4 +59,4 @@ tests/          357 tests                        .github/        CI
 ```
 
 ## Free hosting
-See [docs/FREE_DEPLOY.md](docs/FREE_DEPLOY.md): Neon + free VM + Cloudflare Pages, no monthly cost.
+See [docs/FREE_DEPLOY.md](docs/FREE_DEPLOY.md): Neon + Render + Cloudflare Pages, no card, no monthly cost.
