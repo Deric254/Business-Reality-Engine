@@ -47,7 +47,7 @@ class Settings:
     take effect. __init__ re-reads on every instantiation instead.
     """
     def __init__(self):
-        self.APP_NAME: str = "Business Reality Engine"
+        self.APP_NAME: str = "DericBI"
         self.DATABASE_URL: str = normalize_database_url(os.getenv(
             "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/business_reality"
         ))

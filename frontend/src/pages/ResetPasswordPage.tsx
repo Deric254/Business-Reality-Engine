@@ -34,7 +34,7 @@ export function ResetPasswordPage({ invite = false }: { invite?: boolean }) {
   const input = "mt-1 w-full bg-panel border border-field rounded-sm px-3 py-2 text-ink-text";
   return (
     <main className="min-h-screen flex flex-col items-center justify-center gap-6 px-4 py-10">
-      <Logo size={32} />
+      <Logo size={96} stacked />
       <form onSubmit={submit} className="w-full max-w-sm bg-panel border border-border rounded-sm p-7 space-y-4">
         <h1 className="display text-2xl">{invite ? t("invite.title") : t("reset.title")}</h1>
         {!token ? (

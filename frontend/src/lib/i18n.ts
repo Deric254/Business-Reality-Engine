@@ -8,7 +8,7 @@ const KEY = "bre.lang";
 const en = {
   "nav.overview": "Overview", "nav.alerts": "Alerts", "nav.business": "Business", "nav.data": "Data sources", "nav.accuracy": "Accuracy",
   "nav.settings": "Settings", "nav.signout": "Sign out", "lang.label": "Language",
-  "login.title": "Sign in to Business Reality", "login.email": "Email", "login.password": "Password",
+  "login.title": "Sign in to DericBI", "login.email": "Email", "login.password": "Password",
   "login.submit": "Sign in", "login.forgot": "Forgot your password?",
   "forgot.title": "Reset your password", "forgot.help": "Enter your account email and we'll send a reset link.",
   "forgot.send": "Send reset link", "forgot.sent": "If that address has an account, a reset link is on its way.",
@@ -35,7 +35,7 @@ const en = {
 const sw: Partial<Record<keyof typeof en, string>> = {
   "nav.overview": "Muhtasari", "nav.alerts": "Tahadhari", "nav.business": "Biashara", "nav.data": "Vyanzo vya data", "nav.accuracy": "Usahihi",
   "nav.settings": "Mipangilio", "nav.signout": "Toka", "lang.label": "Lugha",
-  "login.title": "Ingia kwenye Business Reality", "login.email": "Barua pepe", "login.password": "Nenosiri",
+  "login.title": "Ingia kwenye DericBI", "login.email": "Barua pepe", "login.password": "Nenosiri",
   "login.submit": "Ingia", "login.forgot": "Umesahau nenosiri?",
   "forgot.title": "Weka upya nenosiri lako", "forgot.help": "Weka barua pepe ya akaunti yako tutakutumia kiungo cha kuweka upya.",
   "forgot.send": "Tuma kiungo", "forgot.sent": "Ikiwa anwani hiyo ina akaunti, kiungo cha kuweka upya kinakuja.",
