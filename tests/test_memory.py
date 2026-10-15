@@ -1,10 +1,9 @@
 """Section 35-40: historical experience in alert detail, similar-case matching, automatic outcome measurement."""
 import datetime as dt
-import uuid
 
 from app.core.business_memory import create_case_from_alert, find_similar_cases, measure_due_cases
 from app.core.db import SessionLocal
-from app.models.alerts import Alert, AlertSeverity, AlertState, Case
+from app.models.alerts import Alert, AlertSeverity, AlertState
 from app.models.core import BusinessEvent, Connector
 from tests.conftest import _make_tenant, bearer, register
 

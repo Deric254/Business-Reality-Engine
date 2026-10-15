@@ -18,7 +18,6 @@ event data along those dimensions rather than just reporting the total.
 """
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from decimal import Decimal
 from typing import Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -56,6 +55,22 @@ def _sum_metric(db: Session, tenant_id: str, entity: str, field: str, start: dat
         .scalar()
     )
     return float(result or 0)
+
+
+_NOUNS = {("sale", "amount"): "Sales", ("expense", "amount"): "Spending", ("sale", "quantity"): "Items sold"}
+
+
+def _noun(entity: str, field: str) -> str:
+    return _NOUNS.get((entity, field), f"{entity.capitalize()} {field}")
+
+
+def _headline(entity: str, field: str, change: float, period_days: int) -> str:
+    """Plain words an owner would say: 'Sales are down 42% this week'."""
+    noun = _noun(entity, field)
+    word = "up" if change > 0 else "down"
+    span = "this week" if period_days == 7 else f"in the last {period_days} days"
+    verb = "is" if noun in ("Spending",) else "are"
+    return f"{noun} {verb} {word} {abs(change)*100:.0f}% {span}"
 
 
 def _severity_for_change(pct_change: float) -> AlertSeverity:
@@ -281,8 +296,8 @@ def detect_historical_deviation(
         "dedup_key": dedup_key,
     }
     what_happened = (
-        f"{entity.capitalize()} {field} is {abs(pct_change)*100:.1f}% {'above' if rising else 'below'} the "
-        f"{baseline_periods}-period baseline over the last {period_days} days."
+        f"{_noun(entity, field)} {'rose' if pct_change > 0 else 'fell'} {abs(pct_change)*100:.0f}% over the last {period_days} days: "
+        f"{current_value:,.0f}, against {baseline_avg:,.0f} in a typical {period_days} days (the average of the {len(valid_baseline)} before)."
     )
 
     # Explanation (Section 27): compare current period against the single
@@ -318,7 +333,7 @@ def detect_historical_deviation(
         tenant_id=tenant_id,
         severity=_severity_for_change(pct_change),
         state=AlertState.detected,
-        title=f"{entity.capitalize()} increase detected" if rising else f"{entity.capitalize()} deterioration detected",
+        title=_headline(entity, field, pct_change, period_days),
         what_happened=what_happened,
         magnitude=round(pct_change, 4),
         period_start=current_start,
@@ -329,8 +344,9 @@ def detect_historical_deviation(
         confidence=0.7 if len(valid_baseline) >= 2 else 0.4,  # more baseline periods = more confidence
         data_coverage_pct=coverage_pct_for_entity(db, tenant_id, entity, now=now),
         recommended_action=(
-            f"Review recent {entity} activity for the causes of the increase." if rising
-            else f"Review recent {entity} activity for causes of the decline."
+            f"Check what drove the rise in {_noun(entity, field).lower()}: which days, branches or suppliers grew the most."
+            if rising else
+            f"Check what changed in {_noun(entity, field).lower()}: which days, branches or products fell the most, and whether anything changed on your side (prices, stock, staff, opening hours)."
         ),
     )
     db.add(alert)

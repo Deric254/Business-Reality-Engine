@@ -8,8 +8,7 @@ from app.core.db import get_db
 from app.core.auth_users import authorize_tenant
 from app.core.detectors import run_tenant_cycle
 from app.core.scheduler import _metrics_for_tenant
-from app.core.detection import detect_historical_deviation, detect_threshold_breach
-from app.models.alerts import AlertSeverity
+from app.core.detection import detect_historical_deviation
 
 router = APIRouter()
 

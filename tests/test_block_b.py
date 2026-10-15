@@ -10,9 +10,8 @@ from app.core.db import SessionLocal, engine
 from app.core.detectors import run_metric_detectors
 from app.core.model_versions import (active_rebaseline, current_version, detect_model_changes, record_change, stamp_versions,
                                      version_at, _versions)
-from app.models.alerts import Alert, AlertSeverity, AlertState, Case
-from app.models.config import BacktestRun, GroundTruthEvent, ModelChange
-from app.models.core import BusinessEvent, Connector
+from app.models.alerts import Alert, AlertSeverity, AlertState
+from app.models.config import GroundTruthEvent, ModelChange
 from tests.conftest import _make_tenant, bearer, register
 from tests.test_block_a import add, mk_conn
 
@@ -109,7 +108,7 @@ def test_rebaseline_pauses_comparisons_then_resumes(db):
     assert [a.kind for a in out] == ["unknown"] and out[0].evidence["rebaselining"] and out[0].evidence["model_version"] == ch.version
     assert active_rebaseline(db, t, NOW, 35).id == ch.id
     assert active_rebaseline(db, t, NOW + dt.timedelta(days=60), 35) is None                      # window over: monitoring resumes
-    assert [a.kind for a in run_metric_detectors(db, t, **{**kw, "now": NOW + dt.timedelta(days=60)}) if a.kind != "unknown"] is not None
+    assert [a.kind for a in run_metric_detectors(db, t, **{**kw, "now": NOW + dt.timedelta(days=60)}) if a.kind != "unknown"] != None
 
 
 def test_alert_shows_recent_model_changes_in_evidence(db):

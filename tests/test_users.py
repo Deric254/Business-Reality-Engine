@@ -2,7 +2,7 @@
 import uuid
 
 from app.core.db import SessionLocal
-from app.models.core import AuditLog, User
+from app.models.core import User
 from tests.conftest import bearer, register
 
 

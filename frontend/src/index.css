@@ -1,88 +1,87 @@
-@import "@fontsource-variable/figtree";
+@import "@fontsource-variable/instrument-sans";
+@import "@fontsource-variable/fraunces";
 @import "tailwindcss";
 
 @theme {
-  /* Surfaces: a light, slightly green-grey page with white work surfaces */
-  --color-ink: #f3f5f4;            /* page background (and quiet fills inside cards) */
-  --color-panel: #ffffff;          /* cards, header */
-  --color-panel-raised: #f7f9f8;   /* hover / selected rows */
-  --color-border: #dde2e0;
-  --color-field: #aab5b1;          /* input and button outlines: 3:1 against white */
+  /* Surfaces */
+  --color-ink: #eef0ec;            /* page background and quiet fills */
+  --color-panel: #ffffff;
+  --color-panel-raised: #f6f7f4;
+  --color-border: #dfe3dc;
+  --color-field: #a9b2a8;          /* input outlines (3:1 on white) */
 
-  /* Brand + links + primary buttons (white text on this passes AAA) */
-  --color-info: #1b4f8a;
+  /* Brand: spruce. Buttons, links, focus. White text on it passes AAA. */
+  --color-info: #1b5a54;
+  --color-info-soft: #e1eeeb;
 
-  /* Status colours used as TEXT: each passes 4.5:1 on white */
+  /* Status colours as text (each >= 4.5:1 on white) */
   --color-critical: #b42318;
   --color-high: #a8400a;
   --color-medium: #8a5a00;
   --color-opportunity: #146c3e;
 
-  /* Text */
-  --color-ink-text: #14211f;
-  --color-ink-muted: #4a5754;
-  --color-ink-faint: #6a7673;
+  --color-ink-text: #16211e;
+  --color-ink-muted: #46524d;
+  --color-ink-faint: #67726c;
 
-  --font-sans: "Figtree Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-sans: "Instrument Sans Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Fraunces Variable", ui-serif, Georgia, serif;
 
-  /* Friendlier corners, applied everywhere rounded-sm is used */
   --radius-sm: 0.5rem;
+  --radius-xl: 0.875rem;
 
-  /* Slightly larger small text: easier to read on phones and in daylight */
   --text-xs: 0.8125rem;
   --text-xs--line-height: 1.2rem;
   --text-sm: 0.9375rem;
-  --text-sm--line-height: 1.4rem;
+  --text-sm--line-height: 1.45rem;
   --text-2xl: 1.75rem;
   --text-2xl--line-height: 2.1rem;
 }
 
 html { background: var(--color-ink); }
-
 body {
   background: var(--color-ink);
   color: var(--color-ink-text);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-/* Numbers line up in columns and don't jitter as they change */
-.kpi-figure {
-  font-variant-numeric: tabular-nums;
+/* Headlines and the big figures carry the personality: a soft, ink-trap serif */
+.display {
+  font-family: var(--font-display);
+  font-variation-settings: "opsz" 72, "SOFT" 50;
+  font-weight: 560;
+  letter-spacing: -0.015em;
+  line-height: 1.12;
+}
+.figure {
+  font-family: var(--font-display);
+  font-variation-settings: "opsz" 48, "SOFT" 30;
+  font-weight: 520;
+  font-variant-numeric: lining-nums tabular-nums;
   letter-spacing: -0.01em;
-  font-weight: 600;
 }
+.kpi-figure { font-variant-numeric: tabular-nums; letter-spacing: -0.01em; font-weight: 600; }
 
-/* Status colours as variables so components never hard-code hex */
-:root {
-  --good: #146c3e;
-  --bad: #b42318;
-  --neutral: #4a5754;
-}
+:root { --good: #146c3e; --bad: #b42318; --neutral: #46524d; }
 
 input, select, textarea { font: inherit; }
-input:focus, select:focus, textarea:focus { border-color: var(--color-info); }
+input:focus, select:focus, textarea:focus { border-color: var(--color-info); outline: 2px solid color-mix(in srgb, var(--color-info) 25%, transparent); outline-offset: 0; }
+:focus-visible { outline: 2px solid var(--color-info); outline-offset: 2px; }
 
-:focus-visible {
-  outline: 2px solid var(--color-info);
-  outline-offset: 2px;
-}
-
-@keyframes shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 .skeleton {
   border-radius: 0.5rem;
-  background: linear-gradient(90deg, #e9edeb 25%, #f4f6f5 37%, #e9edeb 63%);
+  background: linear-gradient(90deg, #e6e9e3 25%, #f3f5f1 37%, #e6e9e3 63%);
   background-size: 400% 100%;
   animation: shimmer 1.6s ease infinite;
 }
 
+/* One orchestrated moment: the chart line draws itself once on load */
+@keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+.draw { stroke-dasharray: 1; animation: draw 1.1s ease-out both; }
+
 @media (prefers-reduced-motion: reduce) {
-  * {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
-  }
+  * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }

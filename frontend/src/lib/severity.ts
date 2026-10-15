@@ -55,7 +55,3 @@ export function timeAgo(iso: string): string {
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
 }
-
-export function formatKes(value: number): string {
-  return new Intl.NumberFormat("en-KE", { maximumFractionDigits: 0 }).format(value);
-}

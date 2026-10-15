@@ -4,14 +4,14 @@ from datetime import datetime
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core import audit
 from app.core.auth_users import authorize_tenant
 from app.core.db import get_db
 from app.core.notifications import (
-    CHANNEL_TYPES, DIGEST_TYPES, PHONE_RE, URL_TYPES, DeliveryError, SEVERITIES, alert_payload, render_alert,
+    DIGEST_TYPES, PHONE_RE, DeliveryError, alert_payload, render_alert,
     send_email, send_webhook, _send_text, validate_webhook_url, valid_hhmm,
 )
 from app.core.secrets import encrypt_secret

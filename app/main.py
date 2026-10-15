@@ -8,6 +8,8 @@ from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
 from app.core.config import get_settings
 from app.core.auth import require_admin_key
 from app.core.scheduler import start_scheduler, stop_scheduler
+from app.core.keepalive import start_keepalive, stop_keepalive
+from app.spa import mount_spa, SPA_CSP
 from app.core.rate_limit import RateLimitMiddleware
 from app.api import health, connectors, events, alerts, entities, detection, coverage, cases, questions, tenants, forecasting, simulation, webhooks, system, auth, notifications, monitoring, audit as audit_api, users, business, accuracy as accuracy_api, capture
 
@@ -28,7 +30,9 @@ async def lifespan(app: FastAPI):
         start_scheduler(settings.DETECTION_INTERVAL_MINUTES)
     else:
         logger.info("Scheduler disabled via SCHEDULER_ENABLED=false")
+    start_keepalive(settings.KEEPALIVE_URL, settings.KEEPALIVE_MINUTES)
     yield
+    stop_keepalive()
     stop_scheduler()
 
 
@@ -64,8 +68,10 @@ async def security_headers(request: Request, call_next):
     h.setdefault("Referrer-Policy", "no-referrer")
     h.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
     h.setdefault("Cross-Origin-Resource-Policy", "same-site")
-    if not request.url.path.startswith(("/docs", "/redoc", "/openapi.json")):
+    if request.url.path.startswith("/api"):
         h.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+    elif not request.url.path.startswith(("/docs", "/redoc", "/openapi.json", "/healthz")):
+        h.setdefault("Content-Security-Policy", SPA_CSP)
     if request.url.path.startswith("/api/auth"):
         h.setdefault("Cache-Control", "no-store")
     if settings.ENV == "production":
@@ -149,9 +155,22 @@ app.include_router(audit_api.router, prefix="/api/audit", tags=["audit"])
 app.include_router(users.router, prefix="/api/users", tags=["users"])
 
 
-@app.get("/")
-def root():
-    return {"service": settings.APP_NAME, "status": "running"}
+@app.get("/healthz", include_in_schema=False)
+def healthz():
+    """Liveness only: no database call. A sleeping/slow database must never make the host think the service is dead and
+    restart it (/api/health/ is the deep check). Point the host's health check and any uptime monitor here."""
+    return {"status": "ok"}
 app.include_router(business.router, prefix="/api/business", tags=["business"])
 app.include_router(accuracy_api.router, prefix="/api/accuracy", tags=["accuracy"])
 app.include_router(capture.router, prefix="/api/capture", tags=["capture"])
+
+# Must be last: the catch-all route that serves the web app can only come after every API route.
+if settings.SERVE_FRONTEND:
+    if not mount_spa(app, settings.FRONTEND_DIST):
+        @app.get("/")
+        def root():
+            return {"service": settings.APP_NAME, "status": "running"}
+else:
+    @app.get("/")
+    def root():
+        return {"service": settings.APP_NAME, "status": "running"}

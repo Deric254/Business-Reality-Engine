@@ -21,7 +21,6 @@ import paramiko
 from app.core.netguard import check_host_allowed
 from app.core.secrets import decrypt_config_secrets
 from app.connectors.file_connector import (
-    ColumnMapping, validate_upload, parse_file_to_dataframe, dataframe_to_normalized_events,
     MAX_FILE_SIZE_BYTES,
 )
 

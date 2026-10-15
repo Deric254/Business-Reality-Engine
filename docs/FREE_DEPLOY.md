@@ -1,55 +1,44 @@
-# Free deployment (no card, no monthly cost)
+# Deploy on Render (one service, one URL)
 
 ```
-Browser ──► Cloudflare Pages (web page, free)
-   │
-   └─ HTTPS ─► Render free web service (API + scheduler) ─► Neon Postgres (free)
-                        ▲
-                        └─ UptimeRobot ping every 5 min (keeps it awake)
+Browser ──► Render web service (web app + API + scheduler, one Docker image) ──► Neon Postgres (free)
+                      ▲
+                      └─ UptimeRobot / cron-job.org pings /healthz every 5 min
 ```
 
-None of these sign-ups should ask for a card. Free terms change: if any page asks for card details, stop and recheck its current terms. Not verified in the authoring sandbox: the Docker build and the Render / Neon / Cloudflare / UptimeRobot steps (they need your accounts).
+The web app is built into the same image as the API, so there is no second host and no CORS setup.
+
+Not verified in the authoring sandbox: the Docker build and the Render / Neon / UptimeRobot steps (they need your accounts).
 
 ## 1. Neon database
-neon.tech → create project → **Connect** → Connection pooling **OFF** → copy the string (ends `?sslmode=require`). This is `DATABASE_URL`.
+neon.tech → create project → **Connect** → pooling **OFF** → copy the string. That is `DATABASE_URL` (`postgres://` or `postgresql://` both work).
 
-## 2. API on Render
-render.com → sign in with GitHub → **New → Web Service** → pick the repo.
-- Runtime: **Docker**, root directory blank, instance type **Free**
-- Docker Command: **leave blank** (the Dockerfile runs migrations when `RUN_MIGRATIONS=1`)
-- Health Check Path: `/api/health/`
-- Environment: every variable in `deploy/render/env.example` (leave `APP_BASE_URL` / `CORS_ORIGINS` as placeholders for now)
+## 2. Render
+render.com → **New → Blueprint** → pick the repo. `render.yaml` sets everything up:
+- Docker web service, health check `/healthz`
+- `ADMIN_API_KEY` and `APP_SECRET` are generated for you (other secrets are derived from `APP_SECRET`)
+- 1 worker and a small DB pool, so it fits in free-tier memory
 
-Deploy. Your API URL is `https://<service>.onrender.com`. Check `https://<service>.onrender.com/api/health/`.
+Render will ask for one value: **DATABASE_URL** (paste the Neon string). Deploy.
 
-## 3. First business
-```bash
-curl -X POST https://<service>.onrender.com/api/system/tenants -H "x-admin-key: <ADMIN_API_KEY>" -H "Content-Type: application/json" -d '{"name":"My Business","owner_email":"you@example.com","owner_password":"<strong password>"}'
-```
+## 3. First sign-in
+Open `https://<service>.onrender.com`. On first run you'll see **Create your business**. The setup key is the `ADMIN_API_KEY` from Render → Environment. After that, log in normally.
 
-## 4. Web page on Cloudflare Pages
-dash.cloudflare.com → *Workers & Pages* → *Create* → *Pages* → connect the repo:
-- Root directory: `frontend`
-- Build command: `npm run build:pages`
-- Output directory: `dist`
-- Environment variable: `VITE_API_BASE` = `https://<service>.onrender.com`
+## 4. Keep it from sleeping (important)
+Render's free plan puts a service to sleep after ~15 minutes without *outside* traffic. The built-in self-ping (`KEEPALIVE_MINUTES`, default 10) helps while it's awake but can't wake a sleeping service. So add a free external pinger:
+- UptimeRobot or cron-job.org → HTTP monitor on `https://<service>.onrender.com/healthz` every 5 minutes.
 
-Then set `APP_BASE_URL` and `CORS_ORIGINS` on Render to the `https://<project>.pages.dev` URL and let it redeploy.
+Honest limits: free instances can still restart or cold-start (~30–60s), and Neon free has monthly compute-hour limits. The Render **Starter** plan (~$7/mo) removes sleeping entirely.
 
-## 5. Keep the API awake
-Render free services sleep after 15 minutes idle, and detection only runs while awake. uptimerobot.com (free) → HTTP monitor on `https://<service>.onrender.com/api/health/`, every 5 minutes. One always-awake service uses about 720 of the 750 free hours per month; do not run a second free web service in the same workspace.
+## Environment variables
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | Neon connection string (required) |
+| `APP_SECRET` | Master secret; JWT, API and connector-encryption keys derive from it |
+| `ADMIN_API_KEY` | Setup key for creating the first business; never derived |
+| `KEEPALIVE_MINUTES` / `KEEPALIVE_URL` | Self-ping interval / target (defaults to the Render URL) |
+| `SERVE_FRONTEND` / `FRONTEND_DIST` | Serve the built web app from the API (on in the Docker image) |
+| `WEB_CONCURRENCY` | Workers; keep 1 on the free plan |
 
-## 6. Updating
-Push to GitHub: Render and Cloudflare Pages both redeploy automatically.
-
-## 7. Backups
-Neon keeps a short point-in-time history on the free plan. Also run weekly from anywhere with `pg_dump`: `DATABASE_URL=... bash scripts/backup.sh`.
-
-## Limits to know
-- Render free: 512 MB RAM, 0.5 vCPU, may restart at any time, ~1 min cold start if it ever sleeps.
-- Neon free: 500 MB, compute sleeps after ~5 idle minutes (first query after a wake is slower).
-- No Redis: rate limits and revoked sessions live in the single worker's memory and reset on restart (see SECURITY.md).
-- `TRUSTED_PROXY_HOPS=1` is a starting value; verify rate limiting sees real client IPs (see SECURITY.md).
-
-## Scaling later
-Paid Render instance (no sleep) → add Redis (`REDIS_URL`) → paid Neon plan → or use the full `docker-compose.yml` at the repo root.
+## Connectors
+Google Sheets (share link), Excel/CSV upload, Web link / REST API, WooCommerce, Shopify, live-feed webhook, database, SFTP, email, shared folder, local agent. The WooCommerce and Shopify presets are unverified against live stores. OAuth connectors (QuickBooks, Zoho, etc.) are not built.

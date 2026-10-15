@@ -1,8 +1,6 @@
 """Token revocation, single-use refresh, lockout, password change, audit log, security headers."""
-import time
 import uuid
 
-import pytest
 
 from app.core import kv, lockout
 from app.core.db import SessionLocal

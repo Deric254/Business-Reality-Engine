@@ -10,12 +10,12 @@ from datetime import datetime, timedelta
 from typing import Callable
 
 from fastapi import HTTPException
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.connectors.database_connector import DatabaseColumnMapping, fetch_rows, rows_to_normalized_events
 from app.connectors.email_connector import list_new_emails
-from app.connectors.file_connector import (ColumnMapping, dataframe_to_normalized_events, parse_file_to_dataframe, validate_upload)
+from app.connectors.file_connector import (ColumnMapping, add_row_ids, dataframe_to_normalized_events, parse_file_to_dataframe, validate_upload, with_default_id)
+from app.connectors.url_connector import fetch_dataframe
 from app.connectors.folder_connector import MAX_TRACKED, list_new_files as list_folder_files, read_file
 from app.connectors.sftp_connector import fetch_file, list_new_files as list_sftp_files
 from app.core.locks import try_advisory_lock
@@ -26,7 +26,7 @@ logger = logging.getLogger("business_reality_engine")
 
 MAPPING_KEYS = {"entity", "event_type", "timestamp_col", "amount_col", "quantity_col", "currency_col", "location_col",
                 "customer_id_col", "product_id_col", "entity_id_col", "default_currency"}
-SYNCABLE = {"database", "sftp", "email", "shared_folder"}
+SYNCABLE = {"database", "url", "sftp", "email", "shared_folder"}
 MIN_INTERVAL_MINUTES, MAX_INTERVAL_MINUTES = 5, 10080
 
 
@@ -47,7 +47,8 @@ def _mapping(connector: Connector, cls):
 
 def _ingest_frame(db, connector, mapping, content, filename):
     ext = validate_upload(filename, content)
-    df = parse_file_to_dataframe(content, ext)
+    df = add_row_ids(parse_file_to_dataframe(content, ext))
+    mapping = with_default_id(df, mapping)
     raw = dataframe_to_normalized_events(df, mapping, tenant_id=connector.tenant_id, connector_id=connector.id, source=connector.name)
     results = ingest_events_bulk(db, [NormalizedEvent(**e) for e in raw])
     return {"rows_processed": len(results), "failed": sum(1 for r in results if r["errors"])}
@@ -131,8 +132,22 @@ def sync_folder(db: Session, connector: Connector) -> dict:
     return {"files_found": len(items), "files": results}
 
 
+def sync_url(db: Session, connector: Connector) -> dict:
+    mapping = _mapping(connector, ColumnMapping)
+    try:
+        df = add_row_ids(fetch_dataframe(connector.config))
+    except HTTPException as e:
+        record_sync_failure(db, connector, e)
+    mapping = with_default_id(df, mapping)
+    raw = dataframe_to_normalized_events(df, mapping, tenant_id=connector.tenant_id, connector_id=connector.id, source=connector.name)
+    results = ingest_events_bulk(db, [NormalizedEvent(**e) for e in raw])
+    new = sum(1 for r in results if not r["duplicate"])
+    return {"rows_fetched": len(df), "rows_processed": len(results), "new_rows": new,
+            "duplicates": len(results) - new, "failed": sum(1 for r in results if r["errors"])}
+
+
 SYNCERS: dict[str, Callable[[Session, Connector], dict]] = {
-    "database": sync_database, "sftp": sync_sftp, "email": sync_email, "shared_folder": sync_folder,
+    "database": sync_database, "url": sync_url, "sftp": sync_sftp, "email": sync_email, "shared_folder": sync_folder,
 }
 
 

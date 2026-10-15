@@ -5,7 +5,7 @@ Redis when REDIS_URL is set (shared by every worker/machine), otherwise a
 per-process dict. Keys always include the tenant id, so one tenant can never
 be served another's cached value. Any Redis error degrades to "no cache"
 (compute normally) — a cache must never take a request down. Staleness is
-bounded by the TTL; ingestion does not invalidate.
+bounded by the TTL, and ingestion drops the tenant's entries (invalidate_prefix) so new data shows at once.
 """
 import json
 import logging
@@ -76,3 +76,17 @@ def cached(key: str, ttl_seconds: int, compute: Callable[[], Any]) -> Any:
 def clear_local():
     with _lock:
         _local.clear()
+
+
+def invalidate_prefix(prefix: str) -> None:
+    """Drop every cached entry whose key starts with `prefix` (e.g. f"kpis:{tenant_id}:"). Never raises."""
+    try:
+        with _lock:
+            for k in [k for k in _local if k.startswith(prefix)]:
+                _local.pop(k, None)
+        r = _client()
+        if r is not None:
+            for k in r.scan_iter(match=prefix + "*", count=200):
+                r.delete(k)
+    except Exception as e:
+        logger.error(f"Cache invalidate failed: {e}")

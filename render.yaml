@@ -1,0 +1,36 @@
+# Render Blueprint: Dashboard -> New -> Blueprint -> pick this repo. One web service (API + web app).
+# You only have to paste DATABASE_URL (a free Neon database; Render's own free database expires after 30 days).
+services:
+  - type: web
+    name: business-reality-engine
+    runtime: docker
+    plan: free              # change to "starter" ($7/mo) for a service that never sleeps
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        sync: false         # paste your Neon connection string (ends ?sslmode=require)
+      - key: ADMIN_API_KEY
+        generateValue: true # needed once, to create your first business
+      - key: APP_SECRET
+        generateValue: true # every other secret is derived from this
+      - key: ENV
+        value: production
+      - key: RUN_MIGRATIONS
+        value: "1"
+      - key: WEB_CONCURRENCY
+        value: "1"
+      - key: DB_POOL_SIZE
+        value: "3"
+      - key: DB_MAX_OVERFLOW
+        value: "2"
+      - key: TRUSTED_PROXY_HOPS
+        value: "1"
+      - key: BLOCK_PRIVATE_CONNECTOR_HOSTS
+        value: "true"
+      - key: KEEPALIVE_MINUTES
+        value: "10"
+      - key: LLM_PROVIDER
+        value: anthropic
+      - key: ANTHROPIC_API_KEY
+        sync: false         # optional: plain-language explanations of alerts

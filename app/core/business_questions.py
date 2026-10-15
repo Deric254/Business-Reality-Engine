@@ -112,7 +112,7 @@ def _deterministic_fallback(evidence: dict) -> str:
 def answer_question(db: Session, tenant_id: str, question: str, period_days: int = 30) -> dict:
     """Section 45: route the question to the analytics that can answer it. Profit questions keep the
     optional LLM phrasing; everything else is deterministic. Unplaceable questions are said so."""
-    from app.core.question_router import route, SUGGESTIONS, parse_period
+    from app.core.question_router import route, SUGGESTIONS
     from app.core.advisory import advisory_text, language_name
     from app.core.question_router import classify, classify_with_llm
     from app.models.core import Tenant

@@ -8,24 +8,26 @@ from app.core import audit
 from app.core.db import get_db
 from app.core.ingestion import NormalizedEvent, ingest_events_bulk
 from app.connectors.file_connector import (
-    ColumnMapping, validate_upload, parse_file_to_dataframe, dataframe_to_normalized_events,
+    ColumnMapping, validate_upload, parse_file_to_dataframe, dataframe_to_normalized_events, add_row_ids, with_default_id,
 )
+from app.connectors.inspect import describe
+from app.connectors import url_connector
 from app.connectors.webhook_connector import generate_webhook_token
 from app.connectors.database_connector import DRIVERS, _validate_read_only_query, driver_catalog
 from app.core.netguard import check_host_allowed, tenant_path
-from app.core.sync import MAX_INTERVAL_MINUTES, MIN_INTERVAL_MINUTES, SYNCABLE, record_sync_failure, run_sync
+from app.core.sync import MAX_INTERVAL_MINUTES, MIN_INTERVAL_MINUTES, SYNCABLE, run_sync
 from app.core.secrets import encrypt_config_secrets
 from app.models.core import Connector
 
 router = APIRouter()
 
-CONNECTOR_TYPES = {"api", "webhook", "database", "file", "sftp", "email", "local_agent", "shared_folder", "manual"}
+CONNECTOR_TYPES = {"url", "api", "webhook", "database", "file", "sftp", "email", "local_agent", "shared_folder", "manual"}
 FREQUENCIES = {"realtime", "near_realtime", "periodic", "slow"}
 
 
 def _check_interval(connector_type: str, minutes: int):
     if connector_type not in SYNCABLE:
-        raise HTTPException(400, "Only database, sftp, email and shared_folder connectors can sync on a schedule")
+        raise HTTPException(400, "Only database, web link, sftp, email and shared_folder connectors can sync on a schedule")
     if not (MIN_INTERVAL_MINUTES <= minutes <= MAX_INTERVAL_MINUTES):
         raise HTTPException(400, f"sync_interval_minutes must be between {MIN_INTERVAL_MINUTES} and {MAX_INTERVAL_MINUTES}")
 
@@ -40,6 +42,13 @@ def _validate_config(connector_type: str, config: dict, tenant_id: str):
             tenant_path(tenant_id, config.get("database", ""))
         elif config["db_type"] != "odbc" or config.get("host"):
             check_host_allowed(config.get("host", ""))
+    elif connector_type == "url":
+        url_connector.validate_url(config.get("url", ""))
+        url_connector._auth(config)
+        if not config.get("timestamp_col") and not config.get("timestamp_path"):
+            raise HTTPException(400, "Say which column holds the date (timestamp_col)")
+        if not config.get("entity") or not config.get("event_type"):
+            raise HTTPException(400, "Say whether each row is a sale or an expense (entity, event_type)")
     elif connector_type == "sftp":
         check_host_allowed(config.get("host", ""))
     elif connector_type == "email":
@@ -84,7 +93,6 @@ def _get_owned_connector(db: Session, connector_id: str, tenant_id: str) -> Conn
 
 
 from app.core.auth_users import authorize_tenant
-from fastapi import Header
 from typing import Optional as _Optional
 
 
@@ -181,7 +189,8 @@ async def upload_file(
 
     content = await file.read()
     ext = validate_upload(file.filename, content)
-    df = parse_file_to_dataframe(content, ext)
+    df = add_row_ids(parse_file_to_dataframe(content, ext))
+    mapping = with_default_id(df, mapping)
     raw_events = dataframe_to_normalized_events(
         df, mapping, tenant_id=tenant_id, connector_id=connector_id, source=connector.name
     )
@@ -203,6 +212,35 @@ def _sync_endpoint(connector_id, tenant_id, db, authorization, expected_type):
 def sync_database_ep(connector_id: str, tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
     """Section 8-C: pulls with the connector's FIXED, pre-configured query (never a caller-supplied one)."""
     return _sync_endpoint(connector_id, tenant_id, db, authorization, "database")
+
+
+@router.post("/{connector_id}/sync-url")
+def sync_url_ep(connector_id: str, tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+    """Pulls the connector's web link / API now; rows already seen are skipped, so repeating it is safe."""
+    return _sync_endpoint(connector_id, tenant_id, db, authorization, "url")
+
+
+@router.post("/inspect-file")
+async def inspect_file(tenant_id: str = Form(...), file: UploadFile = File(...), authorization: Optional[str] = Header(default=None)):
+    """Read an uploaded spreadsheet WITHOUT storing anything: returns its columns, a few rows and a suggested mapping."""
+    authorize_tenant(authorization, tenant_id)
+    content = await file.read()
+    ext = validate_upload(file.filename or "", content)
+    return describe(parse_file_to_dataframe(content, ext))
+
+
+class InspectUrl(BaseModel):
+    tenant_id: str
+    config: dict
+
+
+@router.post("/inspect-url")
+def inspect_url(payload: InspectUrl, authorization: Optional[str] = Header(default=None)):
+    """Test a web link / API (including its login) and show what it returns: columns, sample rows, suggested mapping.
+    Nothing is saved, so this is the 'Test connection' button."""
+    authorize_tenant(authorization, payload.tenant_id, require_role="owner")
+    df = url_connector.fetch_dataframe(payload.config, max_pages=1)
+    return describe(df)
 
 
 @router.post("/{connector_id}/sync-sftp")

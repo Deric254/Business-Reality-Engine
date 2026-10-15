@@ -2,7 +2,8 @@ import { getTokens, setTokens, type TokenPair } from "./session";
 
 // API base is configured at build/run time. No service API key lives in the
 // browser bundle: users authenticate with their own per-tenant token.
-const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
+// Production: the web app and API are one service, so calls are same-origin (empty base). Dev: the API on :8000.
+export const API_BASE: string = import.meta.env.VITE_API_BASE ?? (import.meta.env.DEV ? "http://localhost:8000" : "");
 
 class ApiError extends Error {
   status: number;
@@ -311,7 +312,28 @@ export interface Relationships {
 export interface ContextItem { id: string; kind: string; name: string; starts_on: string; ends_on: string | null }
 export interface FxRow { id: string; currency: string; rate_to_base: number; effective_date: string }
 
+export interface TrendDay { date: string; sales: number; expenses: number }
+export interface Trend { days: number; previous: TrendDay[]; current: TrendDay[] }
+export interface SetupStatus { has_business: boolean; setup_key_configured: boolean }
+
+export const setupApi = {
+  status: async (): Promise<SetupStatus> => {
+    const res = await fetch(`${API_BASE}/api/health/setup`);
+    if (!res.ok) throw await parseError(res);
+    return res.json();
+  },
+  /** First business + its owner. The setup key is the ADMIN_API_KEY from the host's environment settings. */
+  createBusiness: async (setupKey: string, b: { name: string; owner_email: string; owner_password: string; timezone?: string; base_currency?: string }) => {
+    const res = await fetch(`${API_BASE}/api/system/tenants`, { method: "POST", headers: { "Content-Type": "application/json", "x-admin-key": setupKey }, body: JSON.stringify(b) });
+    if (!res.ok) throw await parseError(res);
+    return res.json() as Promise<{ id: string; name: string }>;
+  },
+};
+
 export const businessApi = {
+  trend: (t: string, days = 30) => request<Trend>(`/api/business/trend?tenant_id=${t}&days=${days}`),
+  loadDemo: (t: string) => request<{ events: number; alerts: number }>(`/api/business/demo-data?tenant_id=${t}`, { method: "POST" }),
+  clearDemo: (t: string) => request<{ removed: boolean }>(`/api/business/demo-data?tenant_id=${t}`, { method: "DELETE" }),
   health: (t: string, days = 30) => request<Health>(`/api/business/health?tenant_id=${t}&days=${days}`),
   quality: (t: string, days = 30) => request<Quality>(`/api/business/quality?tenant_id=${t}&days=${days}`),
   discovery: (t: string) => request<Discovery>(`/api/business/discovery?tenant_id=${t}`),
@@ -349,7 +371,20 @@ export interface ConnectorRow {
 }
 export interface DbType { db_type: string; available: boolean; verified: boolean; default_port: number | null; notes: string }
 
+export interface Inspection { columns: string[]; row_count: number; sample: Record<string, unknown>[]; suggested_mapping: Record<string, string> }
+
 export const connectorApi = {
+  inspectUrl: (t: string, config: Record<string, unknown>) =>
+    request<Inspection>("/api/connectors/inspect-url", { method: "POST", ...json({ tenant_id: t, config }) }),
+  inspectFile: async (t: string, file: File): Promise<Inspection> => {
+    const tokens = getTokens();
+    const form = new FormData();
+    form.append("tenant_id", t);
+    form.append("file", file);
+    const res = await fetch(`${API_BASE}/api/connectors/inspect-file`, { method: "POST", body: form, headers: tokens ? { Authorization: `Bearer ${tokens.access_token}` } : {} });
+    if (!res.ok) throw await parseError(res);
+    return res.json();
+  },
   list: (t: string) => request<ConnectorRow[]>(`/api/connectors/?tenant_id=${t}`),
   create: (body: { tenant_id: string; name: string; connector_type: string; config: Record<string, unknown>; expected_frequency?: string | null; sync_interval_minutes?: number | null }) =>
     request<ConnectorRow>("/api/connectors/", { method: "POST", ...json(body) }),

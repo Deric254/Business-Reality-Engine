@@ -8,7 +8,7 @@ Section 48: Multi-tenant isolation (tenant_id on every row)
 import uuid
 from datetime import datetime
 from sqlalchemy import (
-    Column, String, DateTime, Numeric, Text, ForeignKey, Boolean,
+    Column, String, DateTime, Numeric, ForeignKey, Boolean,
     Index, JSON, Enum as SAEnum, BigInteger, Integer
 )
 from sqlalchemy.dialects.postgresql import UUID

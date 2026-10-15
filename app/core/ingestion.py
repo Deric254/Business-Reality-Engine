@@ -214,6 +214,12 @@ def ingest_events_bulk(db: Session, payloads: list[NormalizedEvent], chunk_size:
         except Exception:
             db.rollback()
             raise
+    try:
+        from app.core.cache import invalidate_prefix
+        for tid in {p.tenant_id for p in payloads}:
+            invalidate_prefix(f"kpis:{tid}:")        # new data must show on the dashboard now, not after the cache TTL
+    except Exception:
+        pass
     return results
 
 

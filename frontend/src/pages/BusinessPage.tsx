@@ -326,7 +326,7 @@ export function BusinessPage() {
     <Shell wide>
       {(tenant) => (
         <>
-          <h1 className="text-lg font-semibold tracking-tight">{t("biz.title")}</h1>
+          <h1 className="display text-3xl sm:text-4xl">{t("biz.title")}</h1>
           <HealthSection tenantId={tenant.id} cur={cur} days={days} setDays={setDays} />
           <QualitySection tenantId={tenant.id} days={days} />
           <DiscoverySection tenantId={tenant.id} isOwner={isOwner} />

@@ -1,13 +1,11 @@
 """
 Alert Engine (Sections 21-26) and Business Memory (Sections 36-41).
 """
-import uuid
 from datetime import datetime
 from sqlalchemy import (
     Column, String, DateTime, Numeric, Integer, Text, ForeignKey, JSON, Enum as SAEnum, Index, text
 )
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import declarative_base
 import enum
 
 from app.models.core import Base, gen_uuid

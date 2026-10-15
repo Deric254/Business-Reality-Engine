@@ -1,6 +1,6 @@
 import uuid
 import pytest
-from tests.conftest import ADMIN, SERVICE, register, bearer
+from tests.conftest import SERVICE, register, bearer
 
 USER_GETS = [
     "/api/alerts/?tenant_id={t}",

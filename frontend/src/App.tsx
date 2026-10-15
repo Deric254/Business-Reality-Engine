@@ -1,6 +1,7 @@
 import { Suspense, lazy, useSyncExternalStore, type ReactNode } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Dashboard } from "./pages/Dashboard";
+import { AlertsPage } from "./pages/AlertsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { getClaims, getTokens, isSignedIn, onSessionChange } from "./api/session";
 
@@ -37,6 +38,7 @@ export default function App() {
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/accept-invite" element={<ResetPasswordPage invite />} />
+        <Route path="/alerts" element={<RequireAuth><AlertsPage /></RequireAuth>} />
         <Route path="/business" element={<RequireAuth><BusinessPage /></RequireAuth>} />
         <Route path="/data" element={<RequireAuth><DataPage /></RequireAuth>} />
         <Route path="/accuracy" element={<RequireAuth><AccuracyPage /></RequireAuth>} />

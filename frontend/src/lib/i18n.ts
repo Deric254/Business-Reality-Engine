@@ -6,7 +6,7 @@ export type Lang = "en" | "sw";
 const KEY = "bre.lang";
 
 const en = {
-  "nav.alerts": "Alerts", "nav.business": "Business", "nav.data": "Data sources", "nav.accuracy": "Accuracy",
+  "nav.overview": "Overview", "nav.alerts": "Alerts", "nav.business": "Business", "nav.data": "Data sources", "nav.accuracy": "Accuracy",
   "nav.settings": "Settings", "nav.signout": "Sign out", "lang.label": "Language",
   "login.title": "Sign in to Business Reality", "login.email": "Email", "login.password": "Password",
   "login.submit": "Sign in", "login.forgot": "Forgot your password?",
@@ -33,7 +33,7 @@ const en = {
 } as const;
 
 const sw: Partial<Record<keyof typeof en, string>> = {
-  "nav.alerts": "Tahadhari", "nav.business": "Biashara", "nav.data": "Vyanzo vya data", "nav.accuracy": "Usahihi",
+  "nav.overview": "Muhtasari", "nav.alerts": "Tahadhari", "nav.business": "Biashara", "nav.data": "Vyanzo vya data", "nav.accuracy": "Usahihi",
   "nav.settings": "Mipangilio", "nav.signout": "Toka", "lang.label": "Lugha",
   "login.title": "Ingia kwenye Business Reality", "login.email": "Barua pepe", "login.password": "Nenosiri",
   "login.submit": "Ingia", "login.forgot": "Umesahau nenosiri?",

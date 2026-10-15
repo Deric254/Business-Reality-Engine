@@ -52,7 +52,7 @@ def test_expense_rise_is_a_problem_sale_rise_is_not(db, tid):
     weekly(db, tid, c.id, "expense", [1500, 1000, 1000, 1000, 1000])
     weekly(db, tid, c.id, "sale", [1500, 1000, 1000, 1000, 1000])
     exp = detect_historical_deviation(db, tid, "expense", "amount", now=NOW, direction="rise")
-    assert exp and "increase" in exp.title.lower() and exp.severity in (AlertSeverity.critical, AlertSeverity.high)
+    assert exp and "spending is up" in exp.title.lower() and exp.severity in (AlertSeverity.critical, AlertSeverity.high)
     assert detect_historical_deviation(db, tid, "sale", "amount", now=NOW, direction="drop") is None
 
 

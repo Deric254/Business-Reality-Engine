@@ -1,5 +1,41 @@
+import base64
+import hashlib
+import hmac
+import logging
 import os
 from functools import lru_cache
+
+logger = logging.getLogger("business_reality_engine")
+
+
+def normalize_database_url(url: str) -> str:
+    """Hosts (Render, Neon, Heroku, Supabase) hand out `postgres://...`; SQLAlchemy 2 only accepts `postgresql://`.
+    That one mismatch crashes the app at import time, so the service boots, dies and restarts in a loop."""
+    url = (url or "").strip().strip('"').strip("'")
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    return url
+
+
+def _derive(master: str, purpose: str) -> bytes:
+    return hmac.new(master.encode(), purpose.encode(), hashlib.sha256).digest()
+
+
+def derive_missing_secrets() -> None:
+    """One master secret is enough to run. If JWT_SECRET_KEY (or APP_SECRET) is set, any of API_KEY and
+    CONNECTOR_ENCRYPTION_KEY that was not set is derived from it, so a forgotten variable no longer stops the service
+    from booting. Set them explicitly if you want to rotate them independently. ADMIN_API_KEY is never derived."""
+    master = os.getenv("APP_SECRET") or os.getenv("JWT_SECRET_KEY") or ""
+    if len(master) < 32:
+        return
+    if not os.getenv("JWT_SECRET_KEY"):
+        os.environ["JWT_SECRET_KEY"] = base64.urlsafe_b64encode(_derive(master, "jwt")).decode().rstrip("=")
+    if not os.getenv("API_KEY"):
+        os.environ["API_KEY"] = base64.urlsafe_b64encode(_derive(master, "api-key")).decode().rstrip("=")
+        logger.warning("API_KEY was not set; derived from APP_SECRET/JWT_SECRET_KEY")
+    if not os.getenv("CONNECTOR_ENCRYPTION_KEY"):
+        os.environ["CONNECTOR_ENCRYPTION_KEY"] = base64.urlsafe_b64encode(_derive(master, "connector-encryption")).decode()
+        logger.warning("CONNECTOR_ENCRYPTION_KEY was not set; derived from APP_SECRET/JWT_SECRET_KEY")
 
 
 class Settings:
@@ -12,9 +48,9 @@ class Settings:
     """
     def __init__(self):
         self.APP_NAME: str = "Business Reality Engine"
-        self.DATABASE_URL: str = os.getenv(
+        self.DATABASE_URL: str = normalize_database_url(os.getenv(
             "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/business_reality"
-        )
+        ))
         self.ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
         self.ENV: str = os.getenv("ENV", "development")
 
@@ -55,9 +91,20 @@ class Settings:
         # is a hard requirement before any production/customer traffic — see SECURITY.md.
         self.API_KEY: str = os.getenv("API_KEY", "")
 
+        # Hosting: serve the built web app from this same service (one URL, no CORS, one thing to keep running).
+        self.SERVE_FRONTEND: bool = os.getenv("SERVE_FRONTEND", "true").lower() == "true"
+        self.FRONTEND_DIST: str = os.getenv("FRONTEND_DIST", "")
+        # Free hosts put idle services to sleep. This pings our own public URL so it stays awake (RENDER_EXTERNAL_URL
+        # is set by Render automatically; KEEPALIVE_URL overrides). 0 disables.
+        self.KEEPALIVE_MINUTES: int = int(os.getenv("KEEPALIVE_MINUTES", "10"))
+        self.KEEPALIVE_URL: str = os.getenv("KEEPALIVE_URL") or os.getenv("RENDER_EXTERNAL_URL", "")
+
 
 @lru_cache
 def get_settings() -> Settings:
+    derive_missing_secrets()
+    if not os.getenv("APP_BASE_URL") and os.getenv("RENDER_EXTERNAL_URL"):
+        os.environ["APP_BASE_URL"] = os.environ["RENDER_EXTERNAL_URL"]   # links in emails/invitations point at this service
     settings = Settings()
     if settings.ENV == "production":
         if not settings.API_KEY:

@@ -1,4 +1,4 @@
-import base64, hashlib, hmac, json, threading, time, uuid, datetime as dt
+import hashlib, hmac, json, threading, time, uuid, datetime as dt
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
@@ -7,8 +7,7 @@ from aiosmtpd.controller import Controller
 from app.core import notifications as N
 from app.core.db import SessionLocal
 from app.models.alerts import Alert, AlertSeverity
-from app.models.config import NotificationChannel, NotificationDelivery, MonitoredMetric
-from app.models.core import Tenant
+from app.models.config import NotificationChannel, NotificationDelivery
 from tests.conftest import ADMIN, bearer, register
 
 

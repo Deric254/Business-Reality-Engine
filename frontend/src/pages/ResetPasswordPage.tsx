@@ -36,7 +36,7 @@ export function ResetPasswordPage({ invite = false }: { invite?: boolean }) {
     <main className="min-h-screen flex flex-col items-center justify-center gap-6 px-4 py-10">
       <Logo size={32} />
       <form onSubmit={submit} className="w-full max-w-sm bg-panel border border-border rounded-sm p-7 space-y-4">
-        <h1 className="text-lg font-semibold tracking-tight">{invite ? t("invite.title") : t("reset.title")}</h1>
+        <h1 className="display text-2xl">{invite ? t("invite.title") : t("reset.title")}</h1>
         {!token ? (
           <p role="alert" className="text-sm text-critical">This link is incomplete. Open the link from your email again.</p>
         ) : done ? (

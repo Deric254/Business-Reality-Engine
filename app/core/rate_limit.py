@@ -29,7 +29,6 @@ import logging
 import os
 import time
 import threading
-from typing import Optional
 from fastapi import HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
@@ -131,6 +130,8 @@ def _client_ip(request: Request) -> str:
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Applies general_limiter to every request by source IP."""
     async def dispatch(self, request: Request, call_next):
+        if not request.url.path.startswith("/api"):      # web app files and the liveness probe are not API traffic
+            return await call_next(request)
         key = _client_ip(request)
         allowed, retry_after = general_limiter.check(key)
         if not allowed:

@@ -10,7 +10,6 @@ Security posture for anything accepting user-uploaded files:
   or trust arbitrary uploaded column names as if they were code/identifiers
 """
 import io
-from datetime import datetime
 from typing import Optional
 
 import pandas as pd
@@ -98,6 +97,31 @@ def to_number(val, where: str):
     if out != out or out in (float("inf"), float("-inf")):
         raise HTTPException(400, f"{where}: '{val}' is not a finite number")
     return out
+
+
+ROW_ID_COL = "__row_id"
+
+
+def add_row_ids(df: pd.DataFrame) -> pd.DataFrame:
+    """Give every row a stable id built from its content (+ its n-th occurrence, so two genuinely identical rows in one
+    file stay two rows). Re-uploading or re-pulling the same rows is then idempotent instead of double counting."""
+    import hashlib
+    seen: dict[str, int] = {}
+    ids = []
+    for rec in df.astype(str).itertuples(index=False, name=None):
+        h = hashlib.sha1("\x1f".join(rec).encode()).hexdigest()[:20]
+        seen[h] = seen.get(h, 0) + 1
+        ids.append(f"{h}-{seen[h]}")
+    out = df.copy()
+    out[ROW_ID_COL] = ids
+    return out
+
+
+def with_default_id(df: pd.DataFrame, mapping: "ColumnMapping") -> "ColumnMapping":
+    """If no unique-id column is mapped, map the generated one (the frame must have gone through add_row_ids)."""
+    if mapping.entity_id_col and mapping.entity_id_col in df.columns:
+        return mapping
+    return mapping.model_copy(update={"entity_id_col": ROW_ID_COL})
 
 
 def dataframe_to_normalized_events(

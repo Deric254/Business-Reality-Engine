@@ -28,7 +28,8 @@ from app.core import coverage as coverage_mod
 from app.core.alert_engine import post_process_tenant
 from app.core.business_memory import measure_due_cases
 from app.core.detection import (
-    ACTIVE_STATES, METRIC_FIELDS, _find_open_alert, _in_cooldown, _severity_for_change, _sum_metric,
+    _headline, _noun,
+    METRIC_FIELDS, _find_open_alert, _in_cooldown, _sum_metric,
     detect_historical_deviation, detect_threshold_breach, explain_deviation,
 )
 from app.models.alerts import Alert, AlertSeverity, AlertState
@@ -88,15 +89,14 @@ def detect_opportunity(
         db, tenant_id, entity, cur_start, now, now - timedelta(days=period_days * 2), now - timedelta(days=period_days),
         rising=rising,
     )
-    word = "up" if rising else "down"
     return _upsert(
         db, tenant_id, f"opportunity:{entity}:{field}:{period_days}d", now,
         {"metric": f"{entity}.{field}", "current": current, "baseline": round(avg, 2),
          "change_pct": round(change * 100, 2), "period_days": period_days, "direction": direction},
         dict(
-            severity=AlertSeverity.opportunity, title=f"{entity.capitalize()} {field} is {word} {abs(change)*100:.0f}%",
-            what_happened=(f"{entity.capitalize()} {field} is {abs(change)*100:.1f}% {'above' if rising else 'below'} the "
-                           f"{len(base)}-period baseline over the last {period_days} days, which is good news."),
+            severity=AlertSeverity.opportunity, title=_headline(entity, field, change, period_days),
+            what_happened=(f"{_noun(entity, field)} {'rose' if rising else 'fell'} {abs(change)*100:.0f}% over the last {period_days} days, "
+                           f"which is good news: {current:,.0f} against {avg:,.0f} in a typical {period_days} days."),
             magnitude=round(change, 4), period_start=cur_start, period_end=now,
             related_variables=related, possible_explanations=drivers, confidence=0.7 if len(base) >= 2 else 0.4,
             recommended_action="Find out what drove this and whether it can be repeated.",
@@ -124,7 +124,7 @@ def detect_sustained_trend(
 ) -> Optional[Alert]:
     """A steady slide (or climb, for costs) across several periods — slow erosion that a
     single period-vs-baseline comparison can miss."""
-    from app.core.forecasting import forecast_next_period, _least_squares
+    from app.core.forecasting import forecast_next_period
     now = now or datetime.utcnow()
     trend = forecast_next_period(db, tenant_id, entity, field, period_days, lookback_periods, now)
     vals = trend.historical_values

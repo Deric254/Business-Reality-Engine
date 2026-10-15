@@ -2,184 +2,132 @@ import { useEffect, useState } from "react";
 import { useParams, useSearchParams, Link } from "react-router-dom";
 import type { AlertDetail } from "../api/client";
 import { api } from "../api/client";
-import { SEVERITY_COLOR, SEVERITY_LABEL, timeAgo } from "../lib/severity";
+import { Shell } from "../components/Shell";
+import { Card, Skeleton } from "../components/ui";
+import { SEVERITY_COLOR, SEVERITY_LABEL, SEVERITY_TEXT, SEVERITY_TINT, timeAgo } from "../lib/severity";
 
 const ACTIONS = [
-  { state: "investigating", label: "Investigate" },
-  { state: "action_taken", label: "We're doing this" },
+  { state: "investigating", label: "I'm looking into it" },
+  { state: "action_taken", label: "We're acting on it" },
   { state: "resolved", label: "Already handled" },
-  { state: "dismissed", label: "Not doing this" },
+  { state: "dismissed", label: "Not relevant" },
 ];
 
-export function AlertDetailPage() {
-  const { alertId } = useParams<{ alertId: string }>();
-  const [searchParams] = useSearchParams();
-  const tenantId = searchParams.get("tenant") || "";
-
+function Body({ alertId, tenantId }: { alertId: string; tenantId: string }) {
   const [alert, setAlert] = useState<AlertDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
 
-  const load = () => {
-    if (!alertId || !tenantId) return;
-    api
-      .getAlertDetail(alertId, tenantId)
-      .then(setAlert)
-      .catch((e) => setError(e.message));
-  };
-
-  useEffect(load, [alertId, tenantId]);
+  const load = () => { api.getAlertDetail(alertId, tenantId).then(setAlert).catch((e) => setError(e.message)); };
+  useEffect(load, [alertId, tenantId]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const takeAction = async (state: string) => {
-    if (!alertId) return;
     setUpdating(true);
-    try {
-      await api.updateAlertState(alertId, tenantId, state);
-      load();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setUpdating(false);
-    }
+    try { await api.updateAlertState(alertId, tenantId, state); load(); }
+    catch (e) { setError((e as Error).message); }
+    finally { setUpdating(false); }
   };
 
-  if (error) {
-    return (
-      <div className="min-h-screen bg-ink flex items-center justify-center">
-        <div className="text-critical text-sm">{error}</div>
-      </div>
-    );
-  }
+  if (error) return <p role="alert" className="text-sm text-critical">{error}</p>;
+  if (!alert) return <div className="space-y-4"><Skeleton className="h-10 w-2/3" /><Skeleton className="h-24" /><Skeleton className="h-32" /></div>;
 
-  if (!alert) {
-    return (
-      <div className="min-h-screen bg-ink flex items-center justify-center">
-        <div className="text-ink-faint text-sm">Loading…</div>
-      </div>
-    );
-  }
-
-  const color = SEVERITY_COLOR[alert.severity];
-
+  const sev = alert.severity;
   return (
-    <div className="min-h-screen bg-ink">
-      <header className="px-6 py-4 border-b border-border">
-        <Link to="/" className="text-xs text-ink-muted hover:text-ink-text">
-          ← Back to alerts
-        </Link>
+    <article className="space-y-7 max-w-3xl">
+      <Link to="/alerts" className="text-sm font-medium text-info hover:underline">Back to all alerts</Link>
+
+      <header className="space-y-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="inline-flex items-center text-xs font-semibold rounded-full px-2.5 py-0.5" style={{ color: SEVERITY_TEXT[sev], backgroundColor: SEVERITY_TINT[sev] }}>{SEVERITY_LABEL[sev]}</span>
+          <span className="text-sm text-ink-muted">Detected {timeAgo(alert.created_at)}</span>
+          {alert.escalated && <span className="text-sm font-semibold text-high">Overdue: not acted on in time</span>}
+        </div>
+        <h1 className="display text-3xl sm:text-4xl" style={{ textDecorationColor: SEVERITY_COLOR[sev] }}>{alert.title}</h1>
+        <p className="text-lg text-ink-muted leading-relaxed">{alert.what_happened}</p>
+        {!!alert.correlated_alert_ids?.length && (
+          <p className="text-sm text-ink-muted">Related open alerts about the same records: {alert.correlated_alert_ids.map((id, i) => (
+            <span key={id}>{i > 0 && ", "}<Link className="text-info underline" to={`/alert/${id}?tenant=${tenantId}`}>view</Link></span>
+          ))}</p>
+        )}
       </header>
 
-      <main className="max-w-2xl mx-auto px-6 py-8">
-        <div className="flex items-center gap-2 mb-2">
-          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} aria-hidden />
-          <span className="text-xs" style={{ color }}>
-            {SEVERITY_LABEL[alert.severity]}
-          </span>
-          <span className="text-xs text-ink-faint">· {timeAgo(alert.created_at)}</span>
-          {alert.escalated && <span className="text-xs font-semibold text-high">· Overdue: not acted on in time</span>}
-        </div>
-        {!!alert.correlated_alert_ids?.length && (
-          <p className="text-xs text-ink-muted mb-3">
-            Related open alerts about the same records:{" "}
-            {alert.correlated_alert_ids.map((id, i) => (
-              <span key={id}>{i > 0 && ", "}<a className="text-info underline" href={`/alert/${id}?tenant=${new URLSearchParams(window.location.search).get("tenant") ?? ""}`}>view</a></span>
-            ))}
-          </p>
-        )}
+      {alert.recommended_action && (
+        <Card accent="#1b5a54" className="!bg-info-soft/50">
+          <div className="font-semibold">What to do next</div>
+          <p className="mt-1 text-ink-text">{alert.recommended_action}</p>
+        </Card>
+      )}
 
-        <h1 className="text-xl font-semibold text-ink-text mb-4">{alert.title}</h1>
+      {alert.ai_summary && (
+        <Card><div className="font-semibold mb-1">In plain words</div><p className="leading-relaxed">{alert.ai_summary}</p></Card>
+      )}
 
-        <p className="text-sm text-ink-muted leading-relaxed mb-6">{alert.what_happened}</p>
-
-        {alert.ai_summary && (
-          <div className="border-l-2 border-info bg-panel px-4 py-3 mb-6">
-            <div className="text-xs text-info mb-1">AI summary</div>
-            <p className="text-sm text-ink-text leading-relaxed">{alert.ai_summary}</p>
-          </div>
-        )}
-
-        {alert.possible_drivers.length > 0 && (
-          <div className="mb-6">
-            <div className="text-xs text-ink-muted mb-2">Possible drivers</div>
-            <div className="flex flex-col gap-2">
-              {alert.possible_drivers.map((d, i) => (
-                <div key={i} className="bg-panel px-3 py-2 border-l-2 border-high">
-                  <div className="text-sm text-ink-text">{d.driver}</div>
-                  <div className="text-xs text-ink-muted mt-0.5">{d.evidence}</div>
-                </div>
-              ))}
+      {alert.possible_drivers.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-xl font-semibold tracking-tight">What is likely behind it</h2>
+          {alert.possible_drivers.map((d, i) => (
+            <div key={i} className="bg-panel border border-border rounded-xl px-4 py-3" style={{ boxShadow: "inset 4px 0 0 #a8400a" }}>
+              <div className="font-semibold">{d.driver}</div>
+              <div className="text-sm text-ink-muted mt-0.5">{d.evidence}</div>
             </div>
-          </div>
-        )}
-
-        {alert.ruled_out.length > 0 && (
-          <div className="mb-6">
-            <div className="text-xs text-ink-muted mb-2">Ruled out</div>
-            <div className="flex flex-col gap-2">
-              {alert.ruled_out.map((d, i) => (
-                <div key={i} className="bg-panel px-3 py-2 border-l-2 border-ink-faint opacity-70">
-                  <div className="text-sm text-ink-text">{d.driver.replace(" (ruled out)", "")}</div>
-                  <div className="text-xs text-ink-muted mt-0.5">{d.evidence}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {alert.historical_experience.length > 0 && (
-          <div className="mb-6">
-            <div className="text-xs text-ink-muted mb-2">Last times this happened</div>
-            <div className="flex flex-col gap-2">
-              {alert.historical_experience.map((h) => (
-                <div key={h.case_id} className="bg-panel px-3 py-2 border-l-2 border-info">
-                  <div className="text-xs text-ink-faint">
-                    {new Date(h.when.endsWith("Z") ? h.when : h.when + "Z").toLocaleDateString()}
-                    {h.decision ? ` · ${h.decision.replace(/_/g, " ")}` : ""}
-                    {h.attribution_confidence ? ` · attribution ${h.attribution_confidence}` : ""}
-                  </div>
-                  {h.intervention && <div className="text-sm text-ink-text mt-0.5">{h.intervention}</div>}
-                  {h.outcome && <div className="text-xs text-ink-muted mt-0.5">{h.outcome}</div>}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="flex gap-6 mb-6 text-xs">
-          <div>
-            <div className="text-ink-faint">Confidence</div>
-            <div className="kpi-figure text-ink-text mt-0.5">
-              {alert.confidence !== null ? `${(alert.confidence * 100).toFixed(0)}%` : "—"}
-            </div>
-          </div>
-          <div>
-            <div className="text-ink-faint">Data coverage</div>
-            <div className="kpi-figure text-ink-text mt-0.5">
-              {alert.data_coverage_pct !== null ? `${alert.data_coverage_pct.toFixed(0)}%` : "—"}
-            </div>
-          </div>
-        </div>
-
-        {alert.recommended_action && (
-          <div className="mb-8">
-            <div className="text-xs text-ink-muted mb-1">Recommended</div>
-            <p className="text-sm text-ink-text">{alert.recommended_action}</p>
-          </div>
-        )}
-
-        <div className="flex gap-2 flex-wrap pt-4 border-t border-border">
-          {ACTIONS.map((a) => (
-            <button
-              key={a.state}
-              onClick={() => takeAction(a.state)}
-              disabled={updating || alert.state === a.state}
-              className="text-xs px-3 py-1.5 border border-border rounded-sm text-ink-text hover:border-info disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              {alert.state === a.state ? `✓ ${a.label}` : a.label}
-            </button>
           ))}
+        </section>
+      )}
+
+      {alert.ruled_out.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-xl font-semibold tracking-tight">What we checked and ruled out</h2>
+          {alert.ruled_out.map((d, i) => (
+            <div key={i} className="bg-panel/70 border border-border rounded-xl px-4 py-3">
+              <div className="font-medium">{d.driver.replace(" (ruled out)", "")}</div>
+              <div className="text-sm text-ink-muted mt-0.5">{d.evidence}</div>
+            </div>
+          ))}
+        </section>
+      )}
+
+      {alert.historical_experience.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-xl font-semibold tracking-tight">The last times this happened</h2>
+          {alert.historical_experience.map((h) => (
+            <div key={h.case_id} className="bg-panel border border-border rounded-xl px-4 py-3">
+              <div className="text-sm text-ink-muted">
+                {new Date(h.when.endsWith("Z") ? h.when : h.when + "Z").toLocaleDateString("en-KE", { day: "numeric", month: "long", year: "numeric" })}
+                {h.decision ? `: you chose to ${h.decision.replace(/_/g, " ")}` : ""}
+              </div>
+              {h.intervention && <div className="mt-0.5">{h.intervention}</div>}
+              {h.outcome && <div className="text-sm text-ink-muted mt-0.5">{h.outcome}{h.attribution_confidence ? ` (we can only say this is ${h.attribution_confidence} confidence that your action caused it)` : ""}</div>}
+            </div>
+          ))}
+        </section>
+      )}
+
+      <section className="grid grid-cols-2 gap-4 max-w-md">
+        <div><div className="text-sm text-ink-muted">How sure we are</div><div className="figure text-2xl">{alert.confidence !== null ? `${(alert.confidence * 100).toFixed(0)}%` : "n/a"}</div></div>
+        <div><div className="text-sm text-ink-muted">Data behind this</div><div className="figure text-2xl">{alert.data_coverage_pct !== null ? `${alert.data_coverage_pct.toFixed(0)}%` : "n/a"}</div></div>
+      </section>
+
+      <section className="space-y-2 border-t border-border pt-6">
+        <h2 className="text-xl font-semibold tracking-tight">Where are you with this?</h2>
+        <p className="text-sm text-ink-muted">Your answer is remembered, so next time something similar happens you can see what you did and what followed.</p>
+        <div className="flex gap-2 flex-wrap pt-1">
+          {ACTIONS.map((a) => {
+            const on = alert.state === a.state;
+            return (
+              <button key={a.state} onClick={() => takeAction(a.state)} disabled={updating || on}
+                className={`text-sm font-medium px-3.5 py-2 border rounded-sm transition-colors ${on ? "bg-info text-white border-info" : "bg-panel border-field hover:bg-panel-raised"} disabled:cursor-default`}>
+                {on ? `Marked: ${a.label}` : a.label}
+              </button>
+            );
+          })}
         </div>
-      </main>
-    </div>
+      </section>
+    </article>
   );
+}
+
+export function AlertDetailPage() {
+  const { alertId } = useParams<{ alertId: string }>();
+  const [sp] = useSearchParams();
+  return <Shell>{(tenant) => <Body alertId={alertId ?? ""} tenantId={sp.get("tenant") || tenant.id} />}</Shell>;
 }

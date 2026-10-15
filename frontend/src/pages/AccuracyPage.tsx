@@ -191,7 +191,7 @@ export function AccuracyPage() {
     <Shell wide>
       {(tenant) => (
         <>
-          <h1 className="text-lg font-semibold tracking-tight">{t("acc.title")}</h1>
+          <h1 className="display text-3xl sm:text-4xl">{t("acc.title")}</h1>
           <ReportSection tenantId={tenant.id} />
           <BacktestSection tenantId={tenant.id} isOwner={isOwner} />
           <TruthSection tenantId={tenant.id} isOwner={isOwner} />

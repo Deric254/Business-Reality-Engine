@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from zoneinfo import ZoneInfo, available_timezones
+from zoneinfo import available_timezones
 from fastapi import HTTPException
 from pydantic import EmailStr, Field
 from app.core.auth_users import hash_password

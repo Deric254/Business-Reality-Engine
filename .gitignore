@@ -7,3 +7,6 @@ venv/
 .pytest_cache/
 *.log
 .DS_Store
+node_modules/
+frontend/dist/
+frontend_dist/

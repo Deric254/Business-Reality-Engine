@@ -39,7 +39,7 @@ function Body({ tenantId }: { tenantId: string }) {
     <>
       <div>
         <p className="text-xs text-ink-muted">{t("wiz.step", { n: step, total: TOTAL })}</p>
-        <h1 className="text-lg font-semibold tracking-tight">{t("wiz.title")}</h1>
+        <h1 className="display text-3xl sm:text-4xl">{t("wiz.title")}</h1>
         <div className="h-1 bg-panel mt-2 rounded-sm"><div className="h-full bg-info rounded-sm transition-all" style={{ width: `${(step / TOTAL) * 100}%` }} /></div>
       </div>
       <Notice error={err} notice={notice} />

@@ -11,8 +11,8 @@ from app.core import notifications as N
 from app.core.db import SessionLocal
 from app.models.alerts import Alert, AlertSeverity
 from app.models.config import NotificationChannel, NotificationDelivery
-from app.models.core import PasswordResetToken, User
-from tests.conftest import ADMIN, bearer, register
+from app.models.core import PasswordResetToken
+from tests.conftest import bearer, register
 from tests.test_notifications import smtp, make_alert, dispatch, add_channel  # noqa: F401  (fixtures + helpers)
 
 
@@ -198,7 +198,7 @@ def _digest_channel(client, tok, tenant, **kw):
 
 def test_digest_groups_low_urgency_and_sends_urgent_immediately(client, tenant_a, smtp):
     tok = owner(client, tenant_a); smtp.messages.clear()
-    cid = _digest_channel(client, tok, tenant_a, target="digest@example.com")
+    _digest_channel(client, tok, tenant_a, target="digest@example.com")
     urgent = make_alert(tenant_a, AlertSeverity.critical, "Urgent thing")
     m1 = make_alert(tenant_a, AlertSeverity.medium, "Medium A"); m2 = make_alert(tenant_a, AlertSeverity.opportunity, "Opp B")
     st = dispatch()

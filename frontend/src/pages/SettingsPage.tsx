@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Shell } from "../components/Shell";
+import { PageTitle } from "../components/ui";
 import { api, settingsApi, usersApi, ApiError, type Channel, type Metric, type Tenant, type UserRow } from "../api/client";
 import { PasswordForm } from "../components/PasswordForm";
 import { getClaims } from "../api/session";
@@ -61,7 +62,7 @@ function errText(e: unknown) {
   return e instanceof ApiError ? e.message : "Something went wrong. Try again.";
 }
 
-export function SettingsPage() {
+function SettingsBody() {
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [metrics, setMetrics] = useState<Metric[]>([]);
@@ -167,12 +168,9 @@ export function SettingsPage() {
   const btn = "text-xs border border-border rounded-sm px-2 py-1 text-ink-muted hover:text-ink-text";
 
   return (
-    <div className="min-h-screen">
-      <header className="flex items-center justify-between px-6 py-4 border-b border-border">
-        <Link to="/" className="text-sm text-ink-muted hover:text-ink-text">← Back to alerts</Link>
-        <span className="text-sm font-semibold">{tenant?.name ?? ""} settings</span>
-      </header>
-      <main className="max-w-3xl mx-auto px-4 py-8 space-y-10">
+    <div className="space-y-10 max-w-3xl">
+      <PageTitle title="Settings" sub="Where alerts go, who can sign in, and what is watched." />
+      <div className="space-y-10">
         {error && <p role="alert" className="text-sm text-critical">{error}</p>}
         {notice && <p role="status" className="text-sm text-opportunity">{notice}</p>}
 
@@ -339,7 +337,11 @@ export function SettingsPage() {
             <button type="submit" className="bg-info text-white font-semibold hover:brightness-110 rounded-sm px-3 py-1.5 text-sm">Add metric</button>
           </form>
         </section>
-      </main>
+      </div>
     </div>
   );
+}
+
+export function SettingsPage() {
+  return <Shell>{() => <SettingsBody />}</Shell>;
 }

@@ -19,7 +19,7 @@ from app.connectors.file_connector import ColumnMapping, dataframe_to_normalized
 from app.core import sync as sync_mod
 from app.core.db import SessionLocal, engine
 from app.models.core import BusinessEvent, Connector
-from tests.conftest import ADMIN, _make_tenant, bearer, register
+from tests.conftest import _make_tenant, bearer, register
 
 _spec = importlib.util.spec_from_file_location("reality_agent", Path(__file__).resolve().parents[1] / "agent" / "reality_agent.py")
 agent = importlib.util.module_from_spec(_spec); sys.modules["reality_agent"] = agent; _spec.loader.exec_module(agent)

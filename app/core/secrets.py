@@ -44,7 +44,7 @@ def decrypt_secret(ciphertext: str) -> str:
 
 # Config keys that must always be encrypted before storage, never stored
 # plain. Any connector type's config passes through this list.
-SECRET_CONFIG_KEYS = {"password", "db_password", "api_secret", "private_key"}
+SECRET_CONFIG_KEYS = {"password", "db_password", "api_secret", "private_key", "auth_secret"}
 
 
 def encrypt_config_secrets(config: dict) -> dict:

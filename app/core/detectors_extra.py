@@ -7,7 +7,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.core import coverage as coverage_mod
-from app.core.detection import METRIC_FIELDS, _find_open_alert, _sum_metric
+from app.core.detection import _noun, METRIC_FIELDS, _find_open_alert, _sum_metric
 from app.core.detectors import _upsert, _r_squared
 from app.core.forecasting import _least_squares, forecast_next_period
 from app.models.alerts import Alert, AlertSeverity, AlertState
@@ -47,9 +47,9 @@ def detect_forecast_deviation(db: Session, tenant_id: str, entity: str, field: s
         {"metric": f"{entity}.{field}", "forecast": round(pred, 2), "actual": round(actual, 2),
          "history": [round(v, 2) for v in history], "period_days": period_days, "direction": direction,
          "method": "linear trend of prior periods"},
-        dict(kind="forecast", severity=sev, title=f"{entity.capitalize()} {field} {word} forecast",
-             what_happened=(f"The last {period_days} days of {entity} {field} came to {actual:,.0f}, {abs(rel)*100:.0f}% {word} "
-                            f"the {pred:,.0f} the recent trend predicted."),
+        dict(kind="forecast", severity=sev, title=f"{_noun(entity, field)} {'came in' } {abs(rel)*100:.0f}% {word} what was expected",
+             what_happened=(f"The last {period_days} days of {_noun(entity, field).lower()} came to {actual:,.0f}. Your recent trend pointed to "
+                            f"{pred:,.0f}, so this is {abs(rel)*100:.0f}% {word} expectation."),
              magnitude=round(rel, 4), period_start=now - timedelta(days=period_days), period_end=now,
              confidence=0.55, data_coverage_pct=coverage_mod.coverage_pct_for_entity(db, tenant_id, entity, now=now),
              recommended_action="Compare with the forecast's assumptions: did something change this period (price, stock, staffing, a one-off)?"),
