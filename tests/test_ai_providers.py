@@ -60,3 +60,23 @@ def test_fallback_uses_next_provider_and_tenant_rows_beat_env():
     assert p.generate_json("s", "u") == "OK"
     with pytest.raises(RuntimeError, match="All connected AI providers failed"):
         lp.FallbackProvider([_Boom(), _Boom()]).generate_json("s", "u")
+
+
+def test_model_list_reads_provider_and_strips_prefix(client, monkeypatch):
+    t, h = make_owner(client)
+
+    class R:
+        status_code = 200
+        def json(self):
+            return {"data": [{"id": "models/gemini-3.8-flash"}, {"id": "models/gemini-3.8-pro"}]}
+    seen = {}
+    def fake_get(url, **kw):
+        seen["url"], seen["auth"] = url, kw["headers"]["Authorization"]
+        return R()
+    monkeypatch.setattr("app.api.ai.httpx.get", fake_get)
+    r = client.post(f"/api/ai/models?tenant_id={t}", headers=h,
+                    json={"kind": "openai_compatible", "api_key": "abcdefgh1234", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/"})
+    assert r.status_code == 200 and r.json()["models"] == ["gemini-3.8-flash", "gemini-3.8-pro"]
+    assert seen["url"] == "https://generativelanguage.googleapis.com/v1beta/openai/models" and seen["auth"] == "Bearer abcdefgh1234"
+    bad = client.post(f"/api/ai/models?tenant_id={t}", headers=h, json={"kind": "openai_compatible", "api_key": "abcdefgh1234", "base_url": "http://x.com"})
+    assert bad.status_code == 400

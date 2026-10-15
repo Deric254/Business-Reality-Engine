@@ -1,6 +1,8 @@
 """AI providers a business connects in the app. Keys are encrypted at rest and never returned."""
 from typing import Optional
 from urllib.parse import urlparse
+
+import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -110,3 +112,40 @@ def remove_provider(provider_id: str, tenant_id: str, request: Request, db: Sess
                  detail={"label": row.label})
     db.commit()
     return {"removed": True}
+
+
+class ModelsIn(BaseModel):
+    kind: str
+    api_key: str = Field(min_length=8, max_length=500)
+    base_url: Optional[str] = Field(default=None, max_length=300)
+
+
+@router.post("/models")
+def list_models(tenant_id: str, body: ModelsIn, db: Session = Depends(get_db),
+                authorization: Optional[str] = Header(default=None)):
+    """Ask the provider which models this key can use, so the owner picks a name that exists today."""
+    _owner(authorization, tenant_id)
+    if body.kind not in KINDS:
+        raise HTTPException(400, f"type must be one of {sorted(KINDS)}")
+    key = body.api_key.strip()
+    if body.kind == "anthropic":
+        url, headers = "https://api.anthropic.com/v1/models?limit=100", {"x-api-key": key, "anthropic-version": "2023-06-01"}
+    else:
+        base = _clean_url(body.base_url) if body.kind == "openai_compatible" else "https://api.openai.com/v1"
+        if not base:
+            raise HTTPException(400, "A base URL is required for this provider")
+        url, headers = base.rstrip("/") + "/models", {"Authorization": f"Bearer {key}"}
+    try:
+        r = httpx.get(url, headers=headers, timeout=15, follow_redirects=False)
+    except httpx.HTTPError:
+        raise HTTPException(502, "Could not reach the provider. Check the base URL and try again.")
+    if r.status_code in (401, 403):
+        raise HTTPException(400, "The provider rejected this key.")
+    if r.status_code != 200:
+        raise HTTPException(502, f"The provider answered {r.status_code} when listing models. Type the model name instead.")
+    try:
+        items = r.json().get("data") or r.json().get("models") or []
+        ids = sorted({str(m.get("id") or m.get("name") or "").removeprefix("models/") for m in items if isinstance(m, dict)} - {""})
+    except ValueError:
+        raise HTTPException(502, "The provider's model list was not readable. Type the model name instead.")
+    return {"models": ids[:300]}

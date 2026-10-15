@@ -100,7 +100,7 @@ class FallbackProvider(LLMProvider):
 
 # Sensible current default per provider; a stored model or LLM_MODEL overrides it.
 _DEFAULT_MODELS = {
-    "anthropic": "claude-sonnet-5",
+    "anthropic": "claude-sonnet-5-5",
     "openai": "gpt-4o-mini",
     "openai_compatible": None,  # must be set explicitly: no safe default for an arbitrary endpoint
 }

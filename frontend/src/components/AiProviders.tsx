@@ -4,7 +4,7 @@ import { btnCls, inputCls, primaryCls } from "./ui";
 
 type Preset = { name: string; kind: string; base_url: string; model: string; keyUrl: string; free: string };
 const PRESETS: Preset[] = [
-  { name: "Google Gemini", kind: "openai_compatible", base_url: "https://generativelanguage.googleapis.com/v1beta/openai/", model: "gemini-2.5-flash", keyUrl: "https://aistudio.google.com/apikey", free: "Free tier" },
+  { name: "Google Gemini", kind: "openai_compatible", base_url: "https://generativelanguage.googleapis.com/v1beta/openai/", model: "gemini-3.8-flash", keyUrl: "https://aistudio.google.com/apikey", free: "Free tier" },
   { name: "Groq", kind: "openai_compatible", base_url: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile", keyUrl: "https://console.groq.com/keys", free: "Free tier" },
   { name: "NVIDIA", kind: "openai_compatible", base_url: "https://integrate.api.nvidia.com/v1", model: "meta/llama-3.3-70b-instruct", keyUrl: "https://build.nvidia.com", free: "Free credits" },
   { name: "OpenRouter", kind: "openai_compatible", base_url: "https://openrouter.ai/api/v1", model: "", keyUrl: "https://openrouter.ai/keys", free: "Has free models (name ends in :free)" },
@@ -23,6 +23,8 @@ export function AiProviders({ tenantId, isOwner }: { tenantId: string; isOwner: 
   const [model, setModel] = useState(PRESETS[0].model);
   const [baseUrl, setBaseUrl] = useState(PRESETS[0].base_url);
   const [busy, setBusy] = useState(false);
+  const [models, setModels] = useState<string[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const preset = PRESETS[pick];
@@ -32,7 +34,7 @@ export function AiProviders({ tenantId, isOwner }: { tenantId: string; isOwner: 
   useEffect(() => { load(); }, [load]);
 
   function choose(i: number) {
-    setPick(i); setModel(PRESETS[i].model); setBaseUrl(PRESETS[i].base_url); setErr(null); setOk(null);
+    setPick(i); setModels([]); setModel(PRESETS[i].model); setBaseUrl(PRESETS[i].base_url); setErr(null); setOk(null);
   }
 
   async function add(e: FormEvent) {
@@ -42,6 +44,16 @@ export function AiProviders({ tenantId, isOwner }: { tenantId: string; isOwner: 
       await aiApi.add(tenantId, { label: preset.name, kind: preset.kind, api_key: key, model, base_url: baseUrl || undefined });
       setKey(""); setOk(`${preset.name} is connected and answered a test request.`); load();
     } catch (x) { setErr(msg(x)); } finally { setBusy(false); }
+  }
+
+  async function loadModels() {
+    setLoadingModels(true); setErr(null); setOk(null);
+    try {
+      const r = await aiApi.models(tenantId, { kind: preset.kind, api_key: key, base_url: baseUrl || undefined });
+      setModels(r.models);
+      if (r.models.length && !r.models.includes(model)) setModel(r.models.find((m) => /flash|mini|instant|small|haiku/i.test(m)) ?? r.models[0]);
+      if (!r.models.length) setErr("The provider returned no models. Type the model name instead.");
+    } catch (x) { setErr(msg(x)); } finally { setLoadingModels(false); }
   }
 
   async function remove(r: AiProvider) {
@@ -80,9 +92,21 @@ export function AiProviders({ tenantId, isOwner }: { tenantId: string; isOwner: 
           <label className="block text-sm">API key
             <input className={`${inputCls} mt-1`} type="password" autoComplete="off" required minLength={8} value={key} onChange={(e) => setKey(e.target.value)} placeholder="Paste the key here" />
           </label>
-          <label className="block text-sm">Model {preset.kind === "anthropic" && <span className="text-ink-faint">(optional)</span>}
-            <input className={`${inputCls} mt-1`} value={model} required={preset.kind === "openai_compatible"} onChange={(e) => setModel(e.target.value)} placeholder="Copy the exact model name from the provider" />
-          </label>
+          <div className="block text-sm">
+            <div className="flex items-center justify-between gap-2">
+              <label htmlFor="ai-model">Model {preset.kind === "anthropic" && <span className="text-ink-faint">(optional)</span>}</label>
+              <button type="button" className="text-xs underline text-ink-muted disabled:opacity-50" disabled={loadingModels || key.length < 8} onClick={loadModels}>
+                {loadingModels ? "Loading…" : "Load the models my key can use"}
+              </button>
+            </div>
+            {models.length > 0 ? (
+              <select id="ai-model" className={`${inputCls} mt-1`} value={model} onChange={(e) => setModel(e.target.value)}>
+                {models.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            ) : (
+              <input id="ai-model" className={`${inputCls} mt-1`} value={model} required={preset.kind === "openai_compatible"} onChange={(e) => setModel(e.target.value)} placeholder="Model names change often. Use the button above to see current ones." />
+            )}
+          </div>
           {(custom || preset.kind === "openai_compatible") && (
             <label className="block text-sm">Base URL
               <input className={`${inputCls} mt-1`} type="url" required value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://..." readOnly={!custom} />

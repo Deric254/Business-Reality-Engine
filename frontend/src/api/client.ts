@@ -335,6 +335,8 @@ export const aiApi = {
   list: (t: string) => request<AiProvider[]>(`/api/ai/providers?tenant_id=${t}`),
   add: (t: string, b: { label: string; kind: string; api_key: string; model: string; base_url?: string }) =>
     request<AiProvider>(`/api/ai/providers?tenant_id=${t}`, { method: "POST", ...json(b) }),
+  models: (t: string, b: { kind: string; api_key: string; base_url?: string }) =>
+    request<{ models: string[] }>(`/api/ai/models?tenant_id=${t}`, { method: "POST", ...json(b) }),
   remove: (t: string, id: string) => requestVoid(`/api/ai/providers/${id}?tenant_id=${t}`, "DELETE"),
 };
 
