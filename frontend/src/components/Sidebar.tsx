@@ -52,7 +52,7 @@ export function Sidebar({ tenants, activeTenant, onTenantChange }: { tenants: Te
     `whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm ${isActive ? "bg-info text-white font-semibold" : "bg-panel text-ink-muted font-medium border border-border"}`;
 
   const business = tenants.length > 1 ? (
-    <select aria-label="Business" value={activeTenant?.id || ""} className="w-full text-sm bg-panel border border-field rounded-sm px-2 py-1.5 text-ink-text"
+    <select aria-label="Business" value={activeTenant?.id || ""} className="w-full text-sm bg-transparent text-ink-text font-medium -ml-1"
       onChange={(e) => { const x = tenants.find((y) => y.id === e.target.value); if (x) onTenantChange(x); }}>
       {tenants.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
     </select>
@@ -62,9 +62,9 @@ export function Sidebar({ tenants, activeTenant, onTenantChange }: { tenants: Te
     <>
       {/* Desktop rail */}
       <aside className="hidden lg:flex fixed inset-y-0 left-0 w-64 flex-col gap-6 border-r border-border bg-ink px-4 py-6">
-        <Link to="/" aria-label="DericBI home" className="flex justify-center"><Logo size={88} stacked /></Link>
-        <div className="px-2 space-y-1">
-          <div className="text-xs text-ink-faint">Business</div>
+        <Link to="/" aria-label="DericBI home" className="px-1 pt-1"><Logo size={60} /></Link>
+        <div className="rounded-lg border border-border bg-panel px-3 py-2.5">
+          <div className="text-xs text-ink-faint mb-0.5">Business</div>
           {business}
         </div>
         <nav aria-label="Main" className="flex flex-col gap-1">

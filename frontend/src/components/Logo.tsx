@@ -13,8 +13,8 @@ export function Logo({ size = 40, light = false, stacked = false }: { size?: num
     <span className="inline-flex items-center gap-2.5">
       <LogoMark size={size} />
       <span className="leading-tight">
-        <span className={`display block text-lg ${light ? "text-white" : "text-ink-text"}`}>{BRAND}</span>
-        <span className={`block text-xs ${light ? "text-white/80" : "text-ink-faint"}`}>{SLOGAN}</span>
+        <span className={`display block text-[1.35rem] leading-none ${light ? "text-white" : "text-ink-text"}`}>{BRAND}</span>
+        <span className={`block text-xs mt-1 ${light ? "text-white/80" : "text-ink-faint"}`}>{SLOGAN}</span>
       </span>
     </span>
   );
