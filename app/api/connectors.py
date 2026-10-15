@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header, Request
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -10,7 +11,7 @@ from app.core.ingestion import NormalizedEvent, ingest_events_bulk
 from app.connectors.file_connector import (
     ColumnMapping, validate_upload, parse_file_to_dataframe, dataframe_to_normalized_events, add_row_ids, with_default_id,
 )
-from app.connectors.inspect import describe
+from app.connectors.inspect import describe, mapping_provider
 from app.connectors import url_connector
 from app.connectors.webhook_connector import generate_webhook_token
 from app.connectors.database_connector import DRIVERS, _validate_read_only_query, driver_catalog
@@ -221,12 +222,14 @@ def sync_url_ep(connector_id: str, tenant_id: str, db: Session = Depends(get_db)
 
 
 @router.post("/inspect-file")
-async def inspect_file(tenant_id: str = Form(...), file: UploadFile = File(...), authorization: Optional[str] = Header(default=None)):
+async def inspect_file(tenant_id: str = Form(...), file: UploadFile = File(...), db: Session = Depends(get_db),
+                       authorization: Optional[str] = Header(default=None)):
     """Read an uploaded spreadsheet WITHOUT storing anything: returns its columns, a few rows and a suggested mapping."""
     authorize_tenant(authorization, tenant_id)
     content = await file.read()
     ext = validate_upload(file.filename or "", content)
-    return describe(parse_file_to_dataframe(content, ext))
+    df = parse_file_to_dataframe(content, ext)
+    return await run_in_threadpool(lambda: describe(df, mapping_provider(db, tenant_id)))     # the AI call is slow and blocking
 
 
 class InspectUrl(BaseModel):
@@ -235,12 +238,12 @@ class InspectUrl(BaseModel):
 
 
 @router.post("/inspect-url")
-def inspect_url(payload: InspectUrl, authorization: Optional[str] = Header(default=None)):
+def inspect_url(payload: InspectUrl, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
     """Test a web link / API (including its login) and show what it returns: columns, sample rows, suggested mapping.
     Nothing is saved, so this is the 'Test connection' button."""
     authorize_tenant(authorization, payload.tenant_id, require_role="owner")
     df = url_connector.fetch_dataframe(payload.config, max_pages=1)
-    return describe(df)
+    return describe(df, mapping_provider(db, payload.tenant_id))
 
 
 @router.post("/{connector_id}/sync-sftp")

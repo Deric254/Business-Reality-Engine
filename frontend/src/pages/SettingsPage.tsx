@@ -3,6 +3,7 @@ import { Shell } from "../components/Shell";
 import { PageTitle } from "../components/ui";
 import { api, settingsApi, usersApi, ApiError, type Channel, type Metric, type Tenant, type UserRow } from "../api/client";
 import { PasswordForm } from "../components/PasswordForm";
+import { SecurityQuestionsForm } from "../components/SecurityQuestionsForm";
 import { getClaims } from "../api/session";
 import { AiProviders } from "../components/AiProviders";
 
@@ -105,6 +106,8 @@ function SettingsBody() {
       }
     }).catch((e) => setError(errText(e)));
   }, [load]);
+
+  useEffect(() => { if (tenant && window.location.hash === "#sq") document.getElementById("sq")?.scrollIntoView(); }, [tenant]);
 
   async function run(action: () => Promise<unknown>, done?: string) {
     if (!tenant) return;
@@ -294,6 +297,12 @@ function SettingsBody() {
           <h2 id="pw" className="text-base font-semibold mb-1">Your password</h2>
           <p className="text-sm text-ink-muted mb-4">Changing it signs you out of every other device.</p>
           <PasswordForm />
+        </section>
+
+        <section aria-labelledby="sq">
+          <h2 id="sq" className="text-base font-semibold mb-1">Security questions</h2>
+          <p className="text-sm text-ink-muted mb-4">A way back into your account that works without email.</p>
+          <SecurityQuestionsForm />
         </section>
 
         <section aria-labelledby="mt">

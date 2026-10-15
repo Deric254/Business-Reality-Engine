@@ -86,6 +86,59 @@ def test_suggested_mapping_from_messy_headers():
     assert m["location_col"] == "Branch" and m["customer_id_col"] == "Customer" and m["entity"] == "sale"
 
 
+SWAHILI = "Tarehe,Mauzo,Duka,Maelezo\n2026-09-01,1500,Nairobi,Unga\n2026-09-02,2300,Mombasa,Sukari\n"
+
+
+class _FakeAI:
+    """Stands in for the AI provider; replies with whatever text it was given."""
+    name = "fake"
+    def __init__(self, reply): self.reply = reply
+    def generate_json(self, system_prompt, user_content, max_tokens=400):
+        self.sent = user_content
+        if isinstance(self.reply, Exception): raise self.reply
+        return self.reply
+
+
+def test_ai_maps_headers_the_rules_cannot_read_and_hallucinations_are_dropped():
+    import pandas as pd
+    from app.connectors.inspect import describe
+    df = pd.read_csv(io.StringIO(SWAHILI))
+    assert "amount_col" not in describe(df)["suggested_mapping"]                          # rules alone do not know "Mauzo"
+    ai = _FakeAI('Here you go: {"mapping": {"timestamp_col": "Tarehe", "amount_col": "Mauzo", "location_col": "Duka", '
+                 '"product_id_col": "Maelezo", "customer_id_col": "Client Name", "quantity_col": "Tarehe"}, '
+                 '"entity": "sale", "default_currency": "KES", "reasons": {"amount_col": "Mauzo means sales", "location_col": "Duka means shop"}}')
+    out = describe(df, ai)
+    m = out["suggested_mapping"]
+    assert out["source"] == "ai" and m["amount_col"] == "Mauzo" and m["location_col"] == "Duka" and m["timestamp_col"] == "Tarehe"
+    assert "customer_id_col" not in m and "quantity_col" not in m                          # invented column / column already used
+    assert m["default_currency"] == "KES" and m["event_type"] == "sale.created"
+    assert out["reasons"] == {"amount_col": "Mauzo means sales", "location_col": "Duka means shop"}
+    assert "Mauzo" in ai.sent and "1500" in ai.sent                                        # it saw the headers and sample rows
+
+
+@pytest.mark.parametrize("reply", ["not json at all", RuntimeError("provider down"), '{"mapping": 5}'])
+def test_unusable_ai_answer_falls_back_to_the_rules(reply):
+    import pandas as pd
+    from app.connectors.inspect import describe
+    out = describe(pd.read_csv(io.StringIO(CSV)), _FakeAI(reply))
+    assert out["source"] == "rules" and out["reasons"] == {} and out["suggested_mapping"]["amount_col"] == "Total (KES)"
+
+
+def test_ai_cannot_put_a_non_numeric_column_in_amount():
+    import pandas as pd
+    from app.connectors.inspect import describe
+    out = describe(pd.read_csv(io.StringIO(CSV)), _FakeAI('{"mapping": {"amount_col": "Branch"}}'))
+    assert out["suggested_mapping"]["amount_col"] == "Total (KES)"                          # the rule's answer stands
+
+
+def test_inspect_file_uses_the_business_ai_when_connected(client, monkeypatch):
+    t, h = make_owner(client, "ai1")
+    monkeypatch.setattr("app.connectors.inspect.get_provider", lambda db, tenant: _FakeAI(
+        '{"mapping": {"timestamp_col": "Tarehe", "amount_col": "Mauzo"}, "entity": "sale", "reasons": {"amount_col": "sales"}}'))
+    r = client.post("/api/connectors/inspect-file", data={"tenant_id": t}, files={"file": ("m.csv", SWAHILI.encode(), "text/csv")}, headers=h)
+    assert r.status_code == 200 and r.json()["source"] == "ai" and r.json()["suggested_mapping"]["amount_col"] == "Mauzo"
+
+
 def test_inspect_url_and_sync_csv_is_idempotent(client, server, db):
     t, h = make_owner(client, "url1")
     cfg = {"url": f"{server}/sales.csv"}

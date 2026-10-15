@@ -59,20 +59,20 @@ def email_allowed(email: str) -> bool:
     return kv.incr_ex(f"bre:recovery:{email.strip().lower()}", 3600) <= MAX_RESETS_PER_EMAIL_PER_HOUR
 
 
-def _link(path: str, token: str) -> str:
+def link(path: str, token: str) -> str:
     return f"{os.environ.get('APP_BASE_URL', 'http://localhost:5173').rstrip('/')}/{path}?token={token}"
 
 
 def send_reset_email(email: str, token: str) -> None:
     body = ("Someone asked to reset the password for your Business Reality Engine account.\n\n"
-            f"Choose a new password here (valid for 60 minutes, one use):\n{_link('reset-password', token)}\n\n"
+            f"Choose a new password here (valid for 60 minutes, one use):\n{link('reset-password', token)}\n\n"
             "If this was not you, ignore this email - your password has not changed.")
     _deliver(email, "Reset your password", body)
 
 
 def send_invite_email(email: str, token: str, business: str) -> None:
     body = (f"You have been invited to {business} on Business Reality Engine.\n\n"
-            f"Set your password and sign in (valid for 7 days, one use):\n{_link('accept-invite', token)}\n")
+            f"Set your password and sign in (valid for 7 days, one use):\n{link('accept-invite', token)}\n")
     _deliver(email, f"You're invited to {business}", body)
 
 

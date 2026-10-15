@@ -274,9 +274,19 @@ async function publicPost<T>(path: string, body: unknown): Promise<T> {
   if (!res.ok) throw await parseError(res);
   return res.json();
 }
-export const forgotPassword = (email: string) => publicPost<{ ok: boolean; message: string }>("/api/auth/forgot-password", { email });
+export const forgotPassword = (email: string) => publicPost<{ ok: boolean; email_enabled: boolean; message: string }>("/api/auth/forgot-password", { email });
 export const resetPassword = (token: string, newPassword: string) =>
   publicPost<{ ok: boolean }>("/api/auth/reset-password", { token, new_password: newPassword });
+export const recoveryQuestions = (email: string) => publicPost<{ questions: string[] }>("/api/auth/recovery-questions", { email });
+export const recoverWithAnswers = (email: string, answers: string[], newPassword: string) =>
+  publicPost<{ ok: boolean }>("/api/auth/recover-with-answers", { email, answers, new_password: newPassword });
+
+// ---- security questions (signed in) ----
+export const securityQuestionsApi = {
+  get: () => request<{ options: string[]; count: number; questions: string[] }>("/api/auth/security-questions"),
+  save: (currentPassword: string, items: { question: string; answer: string }[]) =>
+    request<{ questions: string[] }>("/api/auth/security-questions", { method: "PUT", ...json({ current_password: currentPassword, items }) }),
+};
 
 // ---- business picture ----
 export interface Health {
@@ -327,6 +337,12 @@ export const setupApi = {
     const res = await fetch(`${API_BASE}/api/system/tenants`, { method: "POST", headers: { "Content-Type": "application/json", "x-admin-key": setupKey }, body: JSON.stringify(b) });
     if (!res.ok) throw await parseError(res);
     return res.json() as Promise<{ id: string; name: string }>;
+  },
+  /** Reset link for an account when the server cannot send email. Needs the same setup key. */
+  resetLink: async (setupKey: string, email: string) => {
+    const res = await fetch(`${API_BASE}/api/system/reset-link`, { method: "POST", headers: { "Content-Type": "application/json", "x-admin-key": setupKey }, body: JSON.stringify({ email }) });
+    if (!res.ok) throw await parseError(res);
+    return res.json() as Promise<{ link: string; expires_in_minutes: number }>;
   },
 };
 
@@ -381,7 +397,7 @@ export interface ConnectorRow {
 }
 export interface DbType { db_type: string; available: boolean; verified: boolean; default_port: number | null; notes: string }
 
-export interface Inspection { columns: string[]; row_count: number; sample: Record<string, unknown>[]; suggested_mapping: Record<string, string> }
+export interface Inspection { columns: string[]; row_count: number; sample: Record<string, unknown>[]; suggested_mapping: Record<string, string>; source: "ai" | "rules"; reasons: Record<string, string> }
 
 export const connectorApi = {
   inspectUrl: (t: string, config: Record<string, unknown>) =>

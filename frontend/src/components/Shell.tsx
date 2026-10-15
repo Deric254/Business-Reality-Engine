@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { api, ApiError, type Tenant } from "../api/client";
 import { cache } from "../api/cache";
 import { Sidebar } from "./Sidebar";
+import { RecoveryNudge } from "./RecoveryNudge";
 import { Skeleton, SlowHint, useSlow } from "./ui";
 
 /** Page frame: loads the caller's business(es), shows the navigation, and renders the page once a business is known. */
@@ -29,6 +30,7 @@ export function Shell({ children, wide = false }: { children: (tenant: Tenant) =
       <main className="lg:pl-64">
         <div className={`${wide ? "max-w-6xl" : "max-w-4xl"} mx-auto px-4 sm:px-8 py-8 lg:py-10 space-y-9`}>
           {error && <p role="alert" className="text-sm text-critical">{error}</p>}
+          <RecoveryNudge />
           {loading && !error && (
             <div className="space-y-4" aria-busy="true">
               <Skeleton className="h-10 w-2/3" />

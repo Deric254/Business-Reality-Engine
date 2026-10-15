@@ -12,6 +12,7 @@ const DataPage = lazy(() => import("./pages/DataPage").then((m) => ({ default: m
 const AccuracyPage = lazy(() => import("./pages/AccuracyPage").then((m) => ({ default: m.AccuracyPage })));
 const SetupWizardPage = lazy(() => import("./pages/SetupWizardPage").then((m) => ({ default: m.SetupWizardPage })));
 const ForgotPasswordPage = lazy(() => import("./pages/ForgotPasswordPage").then((m) => ({ default: m.ForgotPasswordPage })));
+const RecoverPage = lazy(() => import("./pages/RecoverPage").then((m) => ({ default: m.RecoverPage })));
 const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage").then((m) => ({ default: m.ResetPasswordPage })));
 const ChangePasswordPage = lazy(() => import("./pages/ChangePasswordPage").then((m) => ({ default: m.ChangePasswordPage })));
 
@@ -36,6 +37,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={signedIn ? <Navigate to="/" replace /> : <LoginPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/recover" element={<RecoverPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/accept-invite" element={<ResetPasswordPage invite />} />
         <Route path="/alerts" element={<RequireAuth><AlertsPage /></RequireAuth>} />

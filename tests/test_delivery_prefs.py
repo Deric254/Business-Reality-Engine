@@ -12,7 +12,7 @@ from app.core.db import SessionLocal
 from app.models.alerts import Alert, AlertSeverity
 from app.models.config import NotificationChannel, NotificationDelivery
 from app.models.core import PasswordResetToken
-from tests.conftest import bearer, register
+from tests.conftest import ADMIN, bearer, register
 from tests.test_notifications import smtp, make_alert, dispatch, add_channel  # noqa: F401  (fixtures + helpers)
 
 
@@ -312,6 +312,29 @@ def test_forgot_password_end_to_end(client, tenant_a, smtp):
     assert client.post("/api/auth/login", json={"email": email, "password": pw}).status_code == 401
     assert client.post("/api/auth/login", json={"email": email, "password": "brand-new-pass-9"}).status_code == 200
     assert client.get("/api/tenants/me", headers=bearer(tok)).status_code == 401                  # old session revoked
+
+
+def test_forgot_password_says_whether_email_can_be_sent(client, tenant_a, smtp, monkeypatch):
+    email, _, _ = register(client, tenant_a, "owner")
+    assert client.post("/api/auth/forgot-password", json={"email": email}).json()["email_enabled"] is True
+    monkeypatch.delenv("SMTP_HOST")
+    assert client.post("/api/auth/forgot-password", json={"email": email}).json()["email_enabled"] is False
+
+
+def test_admin_reset_link_recovers_an_account_without_email(client, tenant_a, monkeypatch):
+    email, pw, tok = register(client, tenant_a, "owner")
+    monkeypatch.delenv("SMTP_HOST", raising=False)
+    body = {"email": email}
+    assert client.post("/api/system/reset-link", json=body).status_code == 401                                   # no key
+    assert client.post("/api/system/reset-link", json=body, headers={"x-admin-key": "wrong"}).status_code == 401
+    assert client.post("/api/system/reset-link", json=body, headers=bearer(tok)).status_code == 401              # a user's token is not the key
+    assert client.post("/api/system/reset-link", json={"email": "nobody@example.com"}, headers=ADMIN).status_code == 404
+    r = client.post("/api/system/reset-link", json=body, headers=ADMIN)
+    assert r.status_code == 200 and r.json()["expires_in_minutes"] == 60
+    token = re.search(r"/reset-password\?token=([\w-]+)", r.json()["link"]).group(1)
+    assert client.post("/api/auth/reset-password", json={"token": token, "new_password": "brand-new-pass-9"}).status_code == 200
+    assert client.post("/api/auth/reset-password", json={"token": token, "new_password": "another-pass-10"}).status_code == 400   # single use
+    assert client.post("/api/auth/login", json={"email": email, "password": "brand-new-pass-9"}).status_code == 200
 
 
 def test_reset_token_expiry_and_supersession(client, tenant_a, smtp):

@@ -35,13 +35,13 @@ function Field({ label, value, onChange, type = "text", required, placeholder, h
 }
 
 const MAP_FIELDS: { key: string; label: string; required?: boolean; help?: string }[] = [
-  { key: "timestamp", label: "When it happened", required: true },
-  { key: "amount", label: "Amount" },
-  { key: "quantity", label: "Quantity" },
-  { key: "currency", label: "Currency" },
-  { key: "location", label: "Branch or location" },
-  { key: "customer_id", label: "Customer" },
-  { key: "product_id", label: "Product" },
+  { key: "timestamp", label: "When it happened", required: true, help: "The date, and time if there is one, of each sale or expense." },
+  { key: "amount", label: "Amount", help: "The money value of each row." },
+  { key: "quantity", label: "Quantity", help: "How many units, if your data has it." },
+  { key: "currency", label: "Currency", help: "Only if each row carries its own currency. Otherwise use the currency box above." },
+  { key: "location", label: "Branch or location", help: "The shop or branch, so locations can be compared." },
+  { key: "customer_id", label: "Customer", help: "Who bought, if you record it." },
+  { key: "product_id", label: "Product", help: "What was sold, if you record it." },
   { key: "entity_id", label: "Unique record number", help: "Receipt or order number. If you leave it empty, repeated rows are still recognised so nothing counts twice." },
 ];
 
@@ -51,14 +51,16 @@ function Mapper({ f, set, info, webhook }: { f: F; set: (k: string, v: string) =
   return (
     <fieldset className="space-y-3">
       <legend className="font-semibold">{cols ? "Check what each column means" : webhook ? "Where to find each value in what you send" : "What do your columns mean?"}</legend>
-      {cols && <p className="text-sm text-ink-muted">We matched these from your column names. Change any that are wrong.</p>}
+      {cols && info?.source === "ai" && <p className="text-sm text-ink-muted">Your AI read the column names and a few sample rows (not the whole file) and suggested these. Change any that are wrong.</p>}
+      {cols && info?.source === "rules" && <p className="text-sm text-ink-muted">We matched these from your column names. Change any that are wrong. Connect an AI key in Settings for smarter matching.</p>}
       {webhook && <p className="text-sm text-ink-muted">Use the path into your JSON, for example <code className="bg-ink px-1 rounded">data.amount</code>.</p>}
       <div className="grid sm:grid-cols-2 gap-3">
         <label className="block text-sm text-ink-muted">Each row is a
           <select className={`${inputCls} mt-1`} value={f.entity} onChange={(e) => { set("entity", e.target.value); set("event_type", `${e.target.value}.created`); }}>
             <option value="sale">Sale (money in)</option><option value="expense">Expense (money out)</option>
-          </select></label>
-        <Field label="Currency, if the data has none" value={f.default_currency} onChange={(v) => set("default_currency", v.toUpperCase())} />
+          </select>
+          <span className="block text-xs text-ink-faint mt-1">Pick Expense if the rows are money you paid out.</span></label>
+        <Field label="Currency, if the data has none" value={f.default_currency} onChange={(v) => set("default_currency", v.toUpperCase())} help="Three letters, such as KES. Used for rows without their own currency." />
         {MAP_FIELDS.map((m) => {
           const k = m.key === "timestamp" ? `timestamp${suffix}` : `${m.key}${suffix}`;
           return (
@@ -69,6 +71,7 @@ function Mapper({ f, set, info, webhook }: { f: F; set: (k: string, v: string) =
                   {cols.map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
               ) : <input className={`${inputCls} mt-1`} value={f[k] ?? ""} onChange={(e) => set(k, e.target.value)} required={m.required && !webhook} placeholder={webhook ? "data.amount" : "Column name"} />}
+              {info?.reasons[k] && <span className="block text-xs text-info mt-1">Why: {info.reasons[k]}</span>}
               {m.help && <span className="block text-xs text-ink-faint mt-1">{m.help}</span>}
             </label>
           );

@@ -249,6 +249,8 @@ class User(Base):
     tokens_valid_after_ms = Column(BigInteger, nullable=False, default=0, server_default="0")
     # True while the password is one an owner generated: the account can do nothing but change it.
     must_change_password = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    # Chosen security questions with hashed answers, [{"q": ..., "h": ...}]; None until the person sets them.
+    security_questions = Column(JSON, nullable=True)
 
     __table_args__ = (Index("ix_users_email", "email", unique=True),)
 

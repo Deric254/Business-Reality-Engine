@@ -7,9 +7,9 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.auth_users import (
     hash_password, verify_password, create_access_token, create_refresh_token, decode_token,
-    authorize_tenant, MAX_PASSWORD_BYTES,
+    authorize_tenant, get_current_user, MAX_PASSWORD_BYTES, CurrentUser,
 )
-from app.core import audit, lockout, recovery, revocation
+from app.core import audit, lockout, recovery, revocation, security_questions as sq
 from app.core.auth import require_admin_key
 from app.core.rate_limit import auth_limiter, _client_ip
 
@@ -239,14 +239,16 @@ class ResetRequest(BaseModel):
 
 @router.post("/forgot-password")
 def forgot_password(payload: ForgotRequest, request: Request, background: BackgroundTasks, db: Session = Depends(get_db)):
-    """Always answers the same way, whether or not the address is registered."""
+    """Answers the same way whether or not the address is registered. `email_enabled` is a property of the
+    server, not of the account, so it leaks nothing; it lets the page say so when no mail can be sent."""
     _throttle(request)
+    email_enabled = recovery.mail_enabled()
     user = db.query(User).filter(User.email == payload.email).first()
-    if user and recovery.mail_enabled() and recovery.email_allowed(payload.email):
+    if user and email_enabled and recovery.email_allowed(payload.email):
         token = recovery.issue_token(db, user, "reset")
         background.add_task(recovery.send_reset_email, user.email, token)
         audit.record(db, "auth.forgot_password", request=request, tenant_id=user.tenant_id, target=user.id)
-    return {"ok": True, "message": "If that address has an account, a reset link is on its way."}
+    return {"ok": True, "email_enabled": email_enabled, "message": "If that address has an account, a reset link is on its way."}
 
 
 @router.post("/reset-password")
@@ -269,4 +271,92 @@ def reset_password(payload: ResetRequest, request: Request, db: Session = Depend
     lockout.record_success(user.email)
     audit.record(db, "auth.reset_password" if purpose == "reset" else "auth.accept_invite", request=request,
                  tenant_id=user.tenant_id, actor_user_id=user.id, target=user.id)
+    return {"ok": True}
+
+
+class QuestionAnswer(BaseModel):
+    question: str
+    answer: str
+
+
+class SecurityQuestionsRequest(BaseModel):
+    current_password: str
+    items: list[QuestionAnswer]
+
+
+class RecoveryEmail(BaseModel):
+    email: EmailStr
+
+
+class RecoverRequest(BaseModel):
+    email: EmailStr
+    answers: list[str]
+    new_password: str
+
+
+@router.get("/security-questions")
+def get_security_questions(me: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The list to choose from, and which questions this account has chosen (never the answers)."""
+    user = db.query(User).filter(User.id == me.user_id).first()
+    chosen = [row["q"] for row in (user.security_questions or [])] if user else []
+    return {"options": sq.QUESTIONS, "count": sq.QUESTION_COUNT, "questions": chosen}
+
+
+@router.put("/security-questions")
+def set_security_questions(payload: SecurityQuestionsRequest, request: Request, me: CurrentUser = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    """Needs the current password, like a password change: a stolen session must not be able to rewrite recovery."""
+    _throttle(request)
+    user = db.query(User).filter(User.id == me.user_id).first()
+    if not user:
+        raise HTTPException(401, "User no longer exists")
+    lockout.check_not_locked(user.email)
+    if not verify_password(payload.current_password, user.password_hash):
+        locked = lockout.record_failure(user.email)
+        audit.record(db, "auth.security_questions_failed", request=request, tenant_id=user.tenant_id, actor_user_id=user.id,
+                     success=False, detail={"locked": locked})
+        raise HTTPException(401, "Current password is incorrect")
+    items = [(i.question, i.answer) for i in payload.items]
+    problem = sq.validate_choice(items)
+    if problem:
+        raise HTTPException(400, problem)
+    user.security_questions = sq.hash_answers(items)
+    db.commit()
+    lockout.record_success(user.email)
+    audit.record(db, "auth.security_questions_set", request=request, tenant_id=user.tenant_id, actor_user_id=user.id)
+    return {"questions": [q for q, _ in items]}
+
+
+@router.post("/recovery-questions")
+def recovery_questions(payload: RecoveryEmail, request: Request, db: Session = Depends(get_db)):
+    """The questions to answer. An unknown email, or one with no questions set, gets the same kind of reply
+    (a repeatable decoy), so this cannot be used to find out who has an account."""
+    _throttle(request)
+    user = db.query(User).filter(User.email == payload.email).first()
+    if user and user.security_questions and len(user.security_questions) == sq.QUESTION_COUNT:
+        return {"questions": [row["q"] for row in user.security_questions]}
+    return {"questions": sq.decoy_questions(payload.email)}
+
+
+@router.post("/recover-with-answers")
+def recover_with_answers(payload: RecoverRequest, request: Request, db: Session = Depends(get_db)):
+    """Sets a new password when every security answer is right. Failures are locked per email, separately from sign-in."""
+    _throttle(request)
+    _check_new_password(payload.new_password)
+    lock_key = f"recovery:{payload.email}"
+    lockout.check_not_locked(lock_key)
+    user = db.query(User).filter(User.email == payload.email).first()
+    if not sq.answers_match(user.security_questions if user else None, payload.answers):
+        locked = lockout.record_failure(lock_key)
+        if user:
+            audit.record(db, "auth.recover_with_answers_failed", request=request, tenant_id=user.tenant_id, target=user.id,
+                         success=False, detail={"locked": locked})
+        raise HTTPException(401, "Those answers don't match, or this account has no security questions set.")
+    user.password_hash = hash_password(payload.new_password)
+    user.must_change_password = False
+    revocation.revoke_user_tokens(db, user.id)
+    db.commit()
+    lockout.record_success(lock_key)
+    lockout.record_success(user.email)
+    audit.record(db, "auth.recover_with_answers", request=request, tenant_id=user.tenant_id, actor_user_id=user.id, target=user.id)
     return {"ok": True}

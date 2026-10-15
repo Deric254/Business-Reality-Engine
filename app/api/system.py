@@ -8,7 +8,7 @@ history. Not something a business's own users should see.
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, Request
-from app.core import audit
+from app.core import audit, recovery
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -95,3 +95,19 @@ def create_tenant(payload: TenantCreate, request: Request, db: Session = Depends
                  detail={"name": tenant.name, "owner_created": bool(payload.owner_email)})
     return {"id": tenant.id, "name": tenant.name, "timezone": tenant.timezone,
             "base_currency": tenant.base_currency, "owner_created": bool(payload.owner_email)}
+
+
+class ResetLinkRequest(BaseModel):
+    email: EmailStr
+
+
+@router.post("/reset-link")
+def reset_link(payload: ResetLinkRequest, request: Request, db: Session = Depends(get_db)):
+    """Password recovery for servers where email cannot be sent: the holder of the admin key gets a
+    single-use reset link (same token as the emailed one) to open themselves. Admin key only."""
+    user = db.query(User).filter(User.email == payload.email).first()
+    if not user:
+        raise HTTPException(404, "No account with that email")
+    token = recovery.issue_token(db, user, "reset")
+    audit.record(db, "auth.admin_reset_link", request=request, tenant_id=user.tenant_id, actor_type="admin", target=user.id)
+    return {"link": recovery.link("reset-password", token), "expires_in_minutes": int(recovery.RESET_TTL.total_seconds() // 60)}
