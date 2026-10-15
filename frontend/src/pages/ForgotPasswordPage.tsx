@@ -24,7 +24,7 @@ export function ForgotPasswordPage() {
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center gap-6 px-4 py-10">
-      <Logo size={96} stacked />
+      <Logo size={72} stacked />
       <form onSubmit={submit} className="w-full max-w-sm bg-panel border border-border rounded-sm p-7 space-y-4">
         <h1 className="display text-2xl">{t("forgot.title")}</h1>
         {sent ? (

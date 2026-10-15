@@ -62,7 +62,7 @@ export function Sidebar({ tenants, activeTenant, onTenantChange }: { tenants: Te
     <>
       {/* Desktop rail */}
       <aside className="hidden lg:flex fixed inset-y-0 left-0 w-64 flex-col gap-6 border-r border-border bg-ink px-4 py-6">
-        <Link to="/" aria-label="DericBI home" className="flex justify-center pt-2"><Logo size={148} stacked /></Link>
+        <Link to="/" aria-label="DericBI home" className="flex justify-center"><Logo size={88} stacked /></Link>
         <div className="px-2 space-y-1">
           <div className="text-xs text-ink-faint">Business</div>
           {business}
@@ -88,7 +88,7 @@ export function Sidebar({ tenants, activeTenant, onTenantChange }: { tenants: Te
       {/* Mobile / tablet top bar */}
       <header className="lg:hidden bg-ink border-b border-border sticky top-0 z-20">
         <div className="flex items-center justify-between gap-3 px-4 py-3">
-          <Link to="/" aria-label="DericBI home"><Logo size={44} /></Link>
+          <Link to="/" aria-label="DericBI home"><Logo size={36} /></Link>
           <div className="flex items-center gap-3">
             <select aria-label={t("lang.label")} value={getLang()} onChange={(e) => setLang(e.target.value as Lang)} className="text-sm bg-panel border border-field rounded-sm px-2 py-1">
               <option value="en">EN</option><option value="sw">SW</option>

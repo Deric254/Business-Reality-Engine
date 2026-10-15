@@ -8,14 +8,7 @@ export function LogoMark({ size = 40 }: { size?: number }) {
 
 /** `stacked` = big badge with the slogan underneath (sidebar, sign-in). Default = compact badge beside the name. */
 export function Logo({ size = 40, light = false, stacked = false }: { size?: number; light?: boolean; stacked?: boolean }) {
-  if (stacked) {
-    return (
-      <span className="inline-flex flex-col items-center gap-2 text-center">
-        <LogoMark size={size} />
-        <span className={`display text-base ${light ? "text-white/90" : "text-ink-text"}`}>{SLOGAN}</span>
-      </span>
-    );
-  }
+  if (stacked) return <LogoMark size={size} />;
   return (
     <span className="inline-flex items-center gap-2.5">
       <LogoMark size={size} />

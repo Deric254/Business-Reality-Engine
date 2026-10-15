@@ -9,7 +9,7 @@ function Frame({ children }: { children: ReactNode }) {
   return (
     <main className="min-h-screen grid lg:grid-cols-[1.1fr_1fr]">
       <section className="hidden lg:flex flex-col justify-between bg-info text-white p-12">
-        <Logo size={200} light stacked />
+        <Logo size={110} light stacked />
         <div className="max-w-md space-y-6">
           <h2 className="display text-5xl text-white">Know what is really happening in your business.</h2>
           <ul className="space-y-3 text-lg text-white/85">
@@ -21,7 +21,7 @@ function Frame({ children }: { children: ReactNode }) {
         <p className="text-sm text-white/70">Your data stays yours. Every business is kept completely separate.</p>
       </section>
       <section className="flex flex-col items-center justify-center gap-6 px-5 py-10">
-        <div className="lg:hidden"><Logo size={120} stacked /></div>
+        <div className="lg:hidden"><Logo size={84} stacked /></div>
         {children}
       </section>
     </main>
