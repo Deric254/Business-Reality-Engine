@@ -79,33 +79,69 @@ class OpenAIProvider(LLMProvider):
         return response.choices[0].message.content or ""
 
 
-# Sensible current default per provider — callers can still override via
-# LLM_MODEL in settings.
+class FallbackProvider(LLMProvider):
+    """Tries each provider in order; the first one that answers wins. Raises the last error if all fail."""
+    def __init__(self, providers: list[LLMProvider]):
+        self._providers = providers
+
+    @property
+    def name(self) -> str:
+        return "+".join(p.name for p in self._providers)
+
+    def generate_json(self, system_prompt: str, user_content: str, max_tokens: int = 400) -> str:
+        last: Exception | None = None
+        for p in self._providers:
+            try:
+                return p.generate_json(system_prompt, user_content, max_tokens)
+            except Exception as exc:  # rate limit, outage, bad model name: move on to the next provider
+                last = exc
+        raise RuntimeError(f"All connected AI providers failed: {last}")
+
+
+# Sensible current default per provider; a stored model or LLM_MODEL overrides it.
 _DEFAULT_MODELS = {
     "anthropic": "claude-sonnet-5",
     "openai": "gpt-4o-mini",
-    "openai_compatible": None,  # must be set explicitly — no safe default for an arbitrary endpoint
+    "openai_compatible": None,  # must be set explicitly: no safe default for an arbitrary endpoint
 }
 
 
-def get_provider() -> LLMProvider:
-    settings = get_settings()
-    provider_name = (settings.LLM_PROVIDER or "anthropic").lower()
-    model = settings.LLM_MODEL or _DEFAULT_MODELS.get(provider_name)
-
-    if provider_name == "anthropic":
-        return AnthropicProvider(api_key=settings.ANTHROPIC_API_KEY, model=model)
-
-    if provider_name == "openai":
-        return OpenAIProvider(api_key=settings.OPENAI_API_KEY, model=model)
-
-    if provider_name == "openai_compatible":
+def build_provider(kind: str, api_key: str, model: str | None, base_url: str | None = None) -> LLMProvider:
+    kind = (kind or "").lower()
+    model = model or _DEFAULT_MODELS.get(kind)
+    if kind == "anthropic":
+        return AnthropicProvider(api_key=api_key, model=model)
+    if kind == "openai":
+        return OpenAIProvider(api_key=api_key, model=model)
+    if kind == "openai_compatible":
         if not model:
-            raise RuntimeError("LLM_MODEL must be set when LLM_PROVIDER=openai_compatible")
-        if not settings.LLM_BASE_URL:
-            raise RuntimeError("LLM_BASE_URL must be set when LLM_PROVIDER=openai_compatible")
-        return OpenAIProvider(api_key=settings.LLM_API_KEY, model=model, base_url=settings.LLM_BASE_URL)
+            raise RuntimeError("A model name is required for this provider")
+        if not base_url:
+            raise RuntimeError("A base URL is required for this provider")
+        return OpenAIProvider(api_key=api_key, model=model, base_url=base_url)
+    raise RuntimeError(f"Unknown provider type '{kind}'. Supported: anthropic, openai, openai_compatible")
 
-    raise RuntimeError(
-        f"Unknown LLM_PROVIDER '{provider_name}'. Supported: anthropic, openai, openai_compatible"
-    )
+
+def _env_provider() -> LLMProvider:
+    s = get_settings()
+    kind = (s.LLM_PROVIDER or "anthropic").lower()
+    key = {"anthropic": s.ANTHROPIC_API_KEY, "openai": s.OPENAI_API_KEY}.get(kind, s.LLM_API_KEY)
+    return build_provider(kind, key, s.LLM_MODEL, s.LLM_BASE_URL or None)
+
+
+def get_provider(db=None, tenant_id: str | None = None) -> LLMProvider:
+    """The business's own connected providers (tried in priority order), else the server's env settings."""
+    if db is not None and tenant_id:
+        from app.core.secrets import decrypt_secret
+        from app.models.config import AIProvider
+        rows = (db.query(AIProvider).filter(AIProvider.tenant_id == tenant_id, AIProvider.is_active.is_(True))
+                .order_by(AIProvider.priority, AIProvider.created_at).all())
+        built = []
+        for r in rows:
+            try:
+                built.append(build_provider(r.kind, decrypt_secret(r.api_key), r.model, r.base_url))
+            except Exception:
+                continue  # an unreadable row must not take the others down
+        if built:
+            return built[0] if len(built) == 1 else FallbackProvider(built)
+    return _env_provider()

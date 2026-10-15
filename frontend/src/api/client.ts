@@ -330,6 +330,14 @@ export const setupApi = {
   },
 };
 
+export type AiProvider = { id: string; label: string; kind: string; model: string; base_url: string | null; priority: number; is_active: boolean };
+export const aiApi = {
+  list: (t: string) => request<AiProvider[]>(`/api/ai/providers?tenant_id=${t}`),
+  add: (t: string, b: { label: string; kind: string; api_key: string; model: string; base_url?: string }) =>
+    request<AiProvider>(`/api/ai/providers?tenant_id=${t}`, { method: "POST", ...json(b) }),
+  remove: (t: string, id: string) => requestVoid(`/api/ai/providers/${id}?tenant_id=${t}`, "DELETE"),
+};
+
 export const businessApi = {
   trend: (t: string, days = 30) => request<Trend>(`/api/business/trend?tenant_id=${t}&days=${days}`),
   loadDemo: (t: string) => request<{ events: number; alerts: number }>(`/api/business/demo-data?tenant_id=${t}`, { method: "POST" }),

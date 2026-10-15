@@ -4,6 +4,7 @@ import { PageTitle } from "../components/ui";
 import { api, settingsApi, usersApi, ApiError, type Channel, type Metric, type Tenant, type UserRow } from "../api/client";
 import { PasswordForm } from "../components/PasswordForm";
 import { getClaims } from "../api/session";
+import { AiProviders } from "../components/AiProviders";
 
 const SEVERITIES = ["critical", "high", "medium", "informational"];
 const TARGET_LABEL: Record<string, string> = {
@@ -173,6 +174,14 @@ function SettingsBody() {
       <div className="space-y-10">
         {error && <p role="alert" className="text-sm text-critical">{error}</p>}
         {notice && <p role="status" className="text-sm text-opportunity">{notice}</p>}
+
+        {tenant && (
+          <section aria-labelledby="ai">
+            <h2 id="ai" className="text-base font-semibold mb-1">AI assistant</h2>
+            <p className="text-sm text-ink-muted mb-4">Powers the Ask box and the plain-language explanations on alerts. Add one or more keys; you can use free providers.</p>
+            <AiProviders tenantId={tenant.id} isOwner={isOwner} />
+          </section>
+        )}
 
         <section aria-labelledby="ch">
           <h2 id="ch" className="text-base font-semibold mb-1">Where alerts are sent</h2>

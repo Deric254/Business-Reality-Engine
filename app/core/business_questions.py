@@ -122,7 +122,7 @@ def answer_question(db: Session, tenant_id: str, question: str, period_days: int
     if routed is None and classify(question) is None:
         # No keyword matched: let a configured model pick an intent (classification only; numbers stay in SQL).
         try:
-            guessed = classify_with_llm(question, get_provider())
+            guessed = classify_with_llm(question, get_provider(db, tenant_id))
         except Exception:
             guessed = None
         if guessed:
@@ -142,7 +142,7 @@ def answer_question(db: Session, tenant_id: str, question: str, period_days: int
     days = routed["period_days"]
     evidence = compute_profit_breakdown(db, tenant_id, period_days=days)
     try:
-        provider = get_provider()
+        provider = get_provider(db, tenant_id)
         answer_text = provider.generate_json(
             system_prompt=SYSTEM_PROMPT + (f"\nWrite the answer in {language_name(lang)}." if lang != "en" else ""),
             user_content=f"Question: {question}\n\nEvidence: {evidence}",

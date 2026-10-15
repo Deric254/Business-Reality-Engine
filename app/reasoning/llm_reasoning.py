@@ -91,7 +91,7 @@ def reason_about_alert(db: Session, alert: Alert, force: bool = False) -> dict:
         "confidence": float(alert.confidence) if alert.confidence is not None else None,
     }
 
-    provider = get_provider()  # raises RuntimeError with a clear message if misconfigured — caller maps to 502
+    provider = get_provider(db, alert.tenant_id)  # raises RuntimeError with a clear message if misconfigured — caller maps to 502
     try:
         raw_text = provider.generate_json(
             system_prompt=SYSTEM_PROMPT + (f"\n- Write the narrative and recommended_action in {language_name(lang)}; keep the JSON keys in English." if lang != "en" else ""),

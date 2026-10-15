@@ -356,7 +356,7 @@ def test_llm_intent_fallback_only_accepts_known_intents(db, monkeypatch, reply, 
     t = _make_tenant("llm"); c = mk_conn(db, t)
     add(db, t, c, "sale", dt.datetime.utcnow() - dt.timedelta(days=1), 100); db.commit()
     fake = FakeProvider(reply)
-    monkeypatch.setattr(bq, "get_provider", lambda: fake)
+    monkeypatch.setattr(bq, "get_provider", lambda *a, **k: fake)
     out = bq.answer_question(db, t, "bei ya mauzo ikoje wiki hii")
     assert out["answered"] is answered and out["advisory"]
     assert fake.calls and "Do not answer the question" in fake.calls[0][0]
@@ -368,11 +368,11 @@ def test_llm_fallback_failure_and_no_call_when_rules_match(db, monkeypatch):
     from app.core import business_questions as bq
     t = _make_tenant("llm2")
     boom = FakeProvider(raises=True)
-    monkeypatch.setattr(bq, "get_provider", lambda: boom)
+    monkeypatch.setattr(bq, "get_provider", lambda *a, **k: boom)
     out = bq.answer_question(db, t, "what is the weather")
     assert out["answered"] is False and out["suggestions"]
     ok = FakeProvider("expenses")
-    monkeypatch.setattr(bq, "get_provider", lambda: ok)
+    monkeypatch.setattr(bq, "get_provider", lambda *a, **k: ok)
     r = bq.answer_question(db, t, "how are sales this month?")
     assert r["classified_by"] == "rules" and ok.calls == []              # keyword hit: the model is never consulted
 
@@ -382,13 +382,13 @@ def test_profit_answer_and_narrative_use_tenant_language(db, monkeypatch):
     from app.reasoning import llm_reasoning as lr
     t = _make_tenant("lang"); db.get(Tenant, t).language = "sw"; db.commit()
     fake = FakeProvider("Faida imeshuka.")
-    monkeypatch.setattr(bq, "get_provider", lambda: fake)
+    monkeypatch.setattr(bq, "get_provider", lambda *a, **k: fake)
     out = bq.answer_question(db, t, "why did profit fall?")
     assert "Swahili" in fake.calls[0][0] and out["advisory"].startswith("Hii ni msaada")
     a = Alert(tenant_id=t, severity=AlertSeverity.high, state=AlertState.detected, title="x", what_happened="y", evidence={"k": 1})
     db.add(a); db.commit()
     nar = FakeProvider('{"narrative": "n", "recommended_action": "r"}')
-    monkeypatch.setattr(lr, "get_provider", lambda: nar)
+    monkeypatch.setattr(lr, "get_provider", lambda *a, **k: nar)
     lr.reason_about_alert(db, a)
     assert "Swahili" in nar.calls[0][0] and a.ai_evidence_hash.endswith(":sw")
     db.get(Tenant, t).language = "en"; db.commit()

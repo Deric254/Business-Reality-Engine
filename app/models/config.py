@@ -173,3 +173,20 @@ class BacktestRun(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (Index("ix_backtest_runs_tenant", "tenant_id", "created_at"),)
+
+
+class AIProvider(Base):
+    """An AI service a business has connected (key stored encrypted). Providers are tried in priority order;
+    if one fails (rate limit, outage) the next is used. A tenant with none falls back to the server's env settings."""
+    __tablename__ = "ai_providers"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    tenant_id = Column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False, index=True)
+    label = Column(String, nullable=False)                        # "Gemini", "Groq", ...
+    kind = Column(String, nullable=False)                         # anthropic | openai | openai_compatible
+    base_url = Column(String, nullable=True)
+    model = Column(String, nullable=False)
+    api_key = Column(Text, nullable=False)                        # Fernet-encrypted
+    priority = Column(Integer, nullable=False, default=100)       # lower = tried first
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

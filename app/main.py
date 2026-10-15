@@ -11,7 +11,7 @@ from app.core.scheduler import start_scheduler, stop_scheduler
 from app.core.keepalive import start_keepalive, stop_keepalive
 from app.spa import mount_spa, SPA_CSP
 from app.core.rate_limit import RateLimitMiddleware
-from app.api import health, connectors, events, alerts, entities, detection, coverage, cases, questions, tenants, forecasting, simulation, webhooks, system, auth, notifications, monitoring, audit as audit_api, users, business, accuracy as accuracy_api, capture
+from app.api import health, connectors, events, alerts, entities, detection, coverage, cases, questions, tenants, forecasting, simulation, webhooks, system, auth, notifications, monitoring, audit as audit_api, users, business, accuracy as accuracy_api, capture, ai as ai_api
 
 # Without this, every logger.info() call in the app is silently dropped —
 # Python's root logger defaults to WARNING with no handler configured.
@@ -152,6 +152,7 @@ app.include_router(
     auth.router, prefix="/api/auth", tags=["auth"],
 )
 app.include_router(audit_api.router, prefix="/api/audit", tags=["audit"])
+app.include_router(ai_api.router, prefix="/api/ai", tags=["ai"])
 app.include_router(users.router, prefix="/api/users", tags=["users"])
 
 
