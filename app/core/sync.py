@@ -49,9 +49,10 @@ def _ingest_frame(db, connector, mapping, content, filename):
     ext = validate_upload(filename, content)
     df = add_row_ids(parse_file_to_dataframe(content, ext))
     mapping = with_default_id(df, mapping)
-    raw = dataframe_to_normalized_events(df, mapping, tenant_id=connector.tenant_id, connector_id=connector.id, source=connector.name)
-    results = ingest_events_bulk(db, [NormalizedEvent(**e) for e in raw])
-    return {"rows_processed": len(results), "failed": sum(1 for r in results if r["errors"])}
+    parsed = dataframe_to_normalized_events(df, mapping, tenant_id=connector.tenant_id, connector_id=connector.id, source=connector.name)
+    results = ingest_events_bulk(db, [NormalizedEvent(**e) for e in parsed.events])
+    return {"rows_processed": len(results), "failed": sum(1 for r in results if r["errors"]),
+            "skipped": len(parsed.skipped), "skipped_examples": parsed.skipped[:3]}
 
 
 def sync_database(db: Session, connector: Connector) -> dict:
@@ -139,11 +140,12 @@ def sync_url(db: Session, connector: Connector) -> dict:
     except HTTPException as e:
         record_sync_failure(db, connector, e)
     mapping = with_default_id(df, mapping)
-    raw = dataframe_to_normalized_events(df, mapping, tenant_id=connector.tenant_id, connector_id=connector.id, source=connector.name)
-    results = ingest_events_bulk(db, [NormalizedEvent(**e) for e in raw])
+    parsed = dataframe_to_normalized_events(df, mapping, tenant_id=connector.tenant_id, connector_id=connector.id, source=connector.name)
+    results = ingest_events_bulk(db, [NormalizedEvent(**e) for e in parsed.events])
     new = sum(1 for r in results if not r["duplicate"])
     return {"rows_fetched": len(df), "rows_processed": len(results), "new_rows": new,
-            "duplicates": len(results) - new, "failed": sum(1 for r in results if r["errors"])}
+            "duplicates": len(results) - new, "failed": sum(1 for r in results if r["errors"]),
+            "skipped": len(parsed.skipped), "skipped_examples": parsed.skipped[:3]}
 
 
 SYNCERS: dict[str, Callable[[Session, Connector], dict]] = {

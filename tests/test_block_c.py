@@ -125,7 +125,8 @@ def test_txt_latin1_and_errors():
             parsers.parse_txt(bad)
 
 
-@pytest.mark.parametrize("val,expected", [("1,234.50", 1234.5), (" 12 ", 12.0), (7, 7.0), (None, None), ("", None), ("1 000", 1000.0)])
+@pytest.mark.parametrize("val,expected", [("1,234.50", 1234.5), (" 12 ", 12.0), (7, 7.0), (None, None), ("", None), ("1 000", 1000.0),
+    ("KES 1,500", 1500.0), ("Ksh1500", 1500.0), ("1,500/=", 1500.0), ("$ 20", 20.0), ("(1,500)", -1500.0), ("-", None), ("N/A", None)])
 def test_to_number_ok(val, expected):
     assert to_number(val, "x") == expected
 
@@ -139,7 +140,7 @@ def test_to_number_rejects(val):
 
 def test_text_amounts_flow_through_mapping_not_500():
     df = parse_file_to_dataframe(b"id,amt,ts\n1,\"1,200\",2026-01-01\n", ".txt")
-    ev = dataframe_to_normalized_events(df, ColumnMapping(**{**MAP}), "t", "c", "s")
+    ev = dataframe_to_normalized_events(df, ColumnMapping(**{**MAP}), "t", "c", "s").events
     assert ev[0]["amount"] == 1200.0
     bad = parse_file_to_dataframe(b"id,amt,ts\n1,twelve,2026-01-01\n", ".txt")
     with pytest.raises(HTTPException) as e:

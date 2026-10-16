@@ -393,6 +393,11 @@ export interface ConnectorRow {
   expected_frequency: string | null; sync_interval_minutes: number | null; last_attempt_at: string | null;
   webhook_url?: string | null; webhook_token?: string | null;
 }
+/** What an import or sync reports back. Rows it could not read are skipped and named, never silently dropped. */
+export interface ImportResult { new_rows?: number; rows_processed?: number; failed?: number; skipped?: number; skipped_examples?: string[] }
+export const skippedNote = (r: ImportResult) =>
+  r.skipped ? ` ${r.skipped} row${r.skipped === 1 ? "" : "s"} skipped (${(r.skipped_examples ?? []).join("; ")}${r.skipped > (r.skipped_examples?.length ?? 0) ? "; …" : ""}).` : "";
+
 /** What one source adds to the shared dataset. */
 export interface Contribution { counted: number; matched: number; rejected: number }
 export interface DbType { db_type: string; available: boolean; verified: boolean; default_port: number | null; notes: string }

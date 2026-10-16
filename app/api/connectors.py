@@ -199,13 +199,13 @@ async def upload_file(
     ext = validate_upload(file.filename, content)
     df = add_row_ids(parse_file_to_dataframe(content, ext))
     mapping = with_default_id(df, mapping)
-    raw_events = dataframe_to_normalized_events(
+    parsed = dataframe_to_normalized_events(
         df, mapping, tenant_id=tenant_id, connector_id=connector_id, source=connector.name
     )
 
-    results = ingest_events_bulk(db, [NormalizedEvent(**e) for e in raw_events])
+    results = ingest_events_bulk(db, [NormalizedEvent(**e) for e in parsed.events])
     failed = sum(1 for r in results if r["errors"])
-    return {"rows_processed": len(results), "failed": failed, "results": results}
+    return {"rows_processed": len(results), "failed": failed, "skipped": len(parsed.skipped), "skipped_examples": parsed.skipped[:3], "results": results}
 
 
 def _sync_endpoint(connector_id, tenant_id, db, authorization, expected_type):

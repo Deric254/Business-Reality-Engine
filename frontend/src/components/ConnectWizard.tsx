@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, connectorApi, tenantApi, type ConnectorRow, type DbType, type Inspection } from "../api/client";
+import { ApiError, connectorApi, skippedNote, tenantApi, type ConnectorRow, type DbType, type ImportResult, type Inspection } from "../api/client";
 import { API_BASE } from "../api/client";
 import { Card, Notice, btnCls, inputCls, primaryCls } from "./ui";
 
@@ -170,12 +170,17 @@ export function ConnectWizard({ tenantId, onClose, onDone }: { tenantId: string;
         sync_interval_minutes: pull && interval ? Number(interval) : null,
       });
       let summary: string | null = null;
-      if (kind === "file" && file) {
-        const r = await connectorApi.upload(tenantId, created.id, file) as { rows_processed?: number; failed?: number };
-        summary = `Imported ${r.rows_processed ?? 0} rows${r.failed ? `, ${r.failed} had problems` : ""}.`;
-      } else if (entry!.type === "url") {
-        const r = await connectorApi.sync(tenantId, created.id, "url") as { new_rows?: number; failed?: number };
-        summary = `Imported ${r.new_rows ?? 0} rows${r.failed ? `, ${r.failed} had problems` : ""}.`;
+      try {
+        if (kind === "file" && file) {
+          const r = await connectorApi.upload(tenantId, created.id, file) as ImportResult;
+          summary = `Imported ${r.rows_processed ?? 0} rows${r.failed ? `, ${r.failed} had problems` : ""}.${skippedNote(r)}`;
+        } else if (entry!.type === "url") {
+          const r = await connectorApi.sync(tenantId, created.id, "url") as ImportResult;
+          summary = `Imported ${r.new_rows ?? 0} rows${r.failed ? `, ${r.failed} had problems` : ""}.${skippedNote(r)}`;
+        }
+      } catch (x) {
+        await connectorApi.disconnect(tenantId, created.id).catch(() => undefined);     // nothing came in, so do not leave an empty source behind
+        throw x;
       }
       onDone(created, summary);
     } catch (x) { setErr(errText(x)); } finally { setBusy(false); }

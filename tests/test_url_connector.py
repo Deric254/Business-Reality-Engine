@@ -14,6 +14,8 @@ from app.models.core import BusinessEvent
 from tests.test_block_c import make_owner, mk, events_for  # noqa: F401  (fixtures/helpers)
 
 CSV = "Date,Receipt No,Branch,Customer,Total (KES)\n2026-01-01 09:00,R1,Meru,Alice,100\n2026-01-02 10:00,R2,Meru,Bob,250.5\n"
+_D = [(dt.datetime.utcnow() - dt.timedelta(days=n)).strftime("%d/%m/%Y") for n in (1, 2, 3)]
+MESSY = f"Date,Receipt,Amount\n{_D[0]},A1,\"KES 1,000\"\n,,\n{_D[1]},A2,500\n{_D[2]},A3,-\nTOTAL,,1500\n"
 ORDERS = [{"id": i, "date_created": f"2026-01-{(i % 9) + 1:02d}T10:00:00", "total": str(10 * i), "currency": "KES",
            "billing": {"first_name": f"C{i}"}} for i in range(1, 8)]
 
@@ -27,6 +29,8 @@ class _H(BaseHTTPRequestHandler):
         u = urlparse(self.path); q = parse_qs(u.query)
         if u.path == "/sales.csv":
             body, ct = CSV.encode(), "text/csv"
+        elif u.path == "/messy.csv":
+            body, ct = MESSY.encode(), "text/csv"
         elif u.path == "/orders":
             if self.headers.get("X-Key") != "secret":
                 self.send_response(401); self.end_headers(); return
@@ -201,6 +205,21 @@ def test_upload_twice_does_not_double_count(client, db):
         r = client.post(f"/api/connectors/{cid}/upload", data={"tenant_id": t}, files={"file": ("s.csv", CSV.encode(), "text/csv")}, headers=h)
         assert r.status_code == 200, r.text
     assert len(events_for(db, cid)) == 2
+
+
+def test_messy_sheet_link_imports_every_readable_row_on_the_right_days(client, server):
+    t, h = make_owner(client, "messy")
+    cfg = {"url": f"{server}/messy.csv", "auth_type": "none", "entity": "sale", "event_type": "sale.created", "timestamp_col": "Date",
+           "amount_col": "Amount", "entity_id_col": "Receipt"}
+    cid = mk(client, t, h, connector_type="url", config=cfg).json()["id"]
+    r = client.post(f"/api/connectors/{cid}/sync-url?tenant_id={t}", headers=h)
+    assert r.status_code == 200 and r.json()["new_rows"] == 3 and r.json()["skipped"] == 1, r.text
+    assert r.json()["skipped_examples"] == ["Row 6: 'TOTAL' is not a date"]
+    assert _revenue_30(client, t, h) == 1500                                                       # all three land in the last 30 days
+
+
+def _revenue_30(client, t, h):
+    return client.get(f"/api/questions/kpis?tenant_id={t}&period_days=30", headers=h).json()["revenue"]["current"]
 
 
 def test_inspect_file_stores_nothing(client, db):

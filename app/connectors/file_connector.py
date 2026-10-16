@@ -10,7 +10,8 @@ Security posture for anything accepting user-uploaded files:
   or trust arbitrary uploaded column names as if they were code/identifiers
 """
 import io
-from typing import Optional
+import re
+from typing import NamedTuple, Optional
 
 import pandas as pd
 from fastapi import HTTPException
@@ -81,22 +82,29 @@ def parse_file_to_dataframe(content: bytes, ext: str) -> pd.DataFrame:
     return df
 
 
+_CURRENCY_MARK = re.compile(r"^(?:kes|ksh[s.]*|ush|usd|eur|gbp|[$€£])\s*|\s*(?:kes|ksh[s.]*|/=)$", re.I)
+_NO_VALUE = {"", "-", "–", "—", "n/a", "na", "null", "none"}
+
+
 def to_number(val, where: str):
-    """Numbers from text sources: tolerate thousands separators and surrounding spaces, refuse anything else loudly."""
+    """Numbers from text sources: tolerate thousands separators, currency marks (KES 1,500, Ksh 1500, 1,500/=),
+    accounting negatives (1,500) and a dash for 'nothing'; refuse anything else loudly."""
     if val is None:
         return None
     if isinstance(val, (int, float)):
         return float(val)
-    txt = str(val).strip().replace(",", "").replace(" ", "")
-    if txt == "":
+    txt = str(val).strip()
+    if txt.casefold() in _NO_VALUE:
         return None
+    negative = txt.startswith("(") and txt.endswith(")")
+    txt = _CURRENCY_MARK.sub("", txt.strip("()").strip()).replace(",", "").replace(" ", "")
     try:
         out = float(txt)
     except ValueError:
         raise HTTPException(400, f"{where}: '{val}' is not a number")
     if out != out or out in (float("inf"), float("-inf")):
         raise HTTPException(400, f"{where}: '{val}' is not a finite number")
-    return out
+    return -out if negative else out
 
 
 ROW_ID_COL = "__row_id"
@@ -124,27 +132,41 @@ def with_default_id(df: pd.DataFrame, mapping: "ColumnMapping") -> "ColumnMappin
     return mapping.model_copy(update={"entity_id_col": ROW_ID_COL})
 
 
+class ParsedRows(NamedTuple):
+    events: list[dict]
+    skipped: list[str]      # why each unreadable row was left out, e.g. "Row 14: 'TOTAL' is not a date"
+
+
+_DAY_MONTH_YEAR = r"^\s*(\d{1,2})[/.\-](\d{1,2})[/.\-]\d{2,4}"
+
+
+def _day_first(dates: pd.Series) -> bool:
+    """Dates like 03/09/2026 mean 3 September unless the column proves otherwise (a middle number above 12)."""
+    middle = dates.dropna().astype(str).str.extract(_DAY_MONTH_YEAR)[1].dropna().astype(int)
+    return not (middle > 12).any()
+
+
 def dataframe_to_normalized_events(
     df: pd.DataFrame, mapping: ColumnMapping, tenant_id: str, connector_id: str, source: str
-) -> list[dict]:
+) -> ParsedRows:
     """
     Turns rows into Universal Data Contract dicts (matching NormalizedEvent shape).
-    Missing mapped columns fail loudly rather than silently producing null data —
-    a wrong mapping should surface at ingest time, not corrupt the business model.
+    A wrong mapping fails loudly (a missing column, or most rows unreadable). A few stray rows (a TOTAL line, a
+    note, a dash instead of a number) are skipped and reported, never allowed to throw away the whole sheet;
+    blank rows are ignored.
     """
-    required = [mapping.timestamp_col]
-    for col in required:
-        if col not in df.columns:
-            raise HTTPException(
-                400, f"Configured column '{col}' not found in file. File columns: {list(df.columns)}"
-            )
-
-    events = []
+    if mapping.timestamp_col not in df.columns:
+        raise HTTPException(
+            400, f"Configured column '{mapping.timestamp_col}' not found in file. File columns: {list(df.columns)}"
+        )
+    stamps = pd.to_datetime(df[mapping.timestamp_col], errors="coerce", dayfirst=_day_first(df[mapping.timestamp_col]), format="mixed")
+    blank = df.drop(columns=[ROW_ID_COL], errors="ignore").apply(lambda col: col.isna() | col.astype(str).str.strip().eq("")).all(axis=1)
+    events, skipped, nonblank = [], [], 0
     for idx, row in df.iterrows():
-        try:
-            timestamp = pd.to_datetime(row[mapping.timestamp_col]).to_pydatetime()
-        except Exception:
-            raise HTTPException(400, f"Row {idx}: unparseable timestamp '{row[mapping.timestamp_col]}'")
+        if blank[idx]:
+            continue
+        nonblank += 1
+        where = f"Row {idx + 2}"                 # as the sheet shows it: row 1 is the header
 
         def _get(col_attr: str):
             col = getattr(mapping, col_attr)
@@ -153,6 +175,13 @@ def dataframe_to_normalized_events(
             val = row[col]
             return None if pd.isna(val) else val
 
+        try:
+            if pd.isna(stamps[idx]):
+                raise HTTPException(400, f"{where}: '{row[mapping.timestamp_col]}' is not a date")
+            amount, quantity = to_number(_get("amount_col"), f"{where} amount"), to_number(_get("quantity_col"), f"{where} quantity")
+        except HTTPException as e:
+            skipped.append(e.detail)
+            continue
         events.append({
             "tenant_id": tenant_id,
             "connector_id": connector_id,
@@ -160,13 +189,15 @@ def dataframe_to_normalized_events(
             "entity": mapping.entity,
             "entity_id": str(_get("entity_id_col")) if _get("entity_id_col") is not None else None,
             "event_type": mapping.event_type,
-            "timestamp": timestamp,
-            "amount": to_number(_get("amount_col"), f"Row {idx} amount"),
-            "quantity": to_number(_get("quantity_col"), f"Row {idx} quantity"),
+            "timestamp": stamps[idx].to_pydatetime(),
+            "amount": amount,
+            "quantity": quantity,
             "currency": str(_get("currency_col")) if _get("currency_col") is not None else mapping.default_currency,
             "location": str(_get("location_col")) if _get("location_col") is not None else None,
             "customer_id": str(_get("customer_id_col")) if _get("customer_id_col") is not None else None,
             "product_id": str(_get("product_id_col")) if _get("product_id_col") is not None else None,
             "metadata_json": {},
         })
-    return events
+    if skipped and len(skipped) * 2 > nonblank:
+        raise HTTPException(400, f"Most rows could not be read, so the column mapping is probably wrong. First problem: {skipped[0]}")
+    return ParsedRows(events, skipped)

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { ApiError, captureApi, connectorApi, type CaptureEntry, type ConnectorRow, type Contribution } from "../api/client";
+import { ApiError, captureApi, connectorApi, skippedNote, type CaptureEntry, type ConnectorRow, type Contribution, type ImportResult } from "../api/client";
 import { getClaims } from "../api/session";
 import { Shell } from "../components/Shell";
 import { ConnectWizard, SecretOnce } from "../components/ConnectWizard";
@@ -45,8 +45,9 @@ function ConnectorList({ tenantId, rows, contributions, isOwner, reload, setNoti
     try { const r = await fn(); setNotice(done(r)); reload(); } catch (e) { setError(errText(e)); reload(); } finally { setBusy(null); }
   }
   const summarize = (r: unknown) => {
-    const x = (r ?? {}) as Record<string, number>;
-    return x.new_rows != null ? `Sync finished: ${x.new_rows} new rows, ${x.duplicates ?? 0} already seen.` : x.rows_processed != null ? `Done: ${x.rows_processed} rows.` : "Sync finished.";
+    const x = (r ?? {}) as ImportResult & { duplicates?: number };
+    const head = x.new_rows != null ? `Sync finished: ${x.new_rows} new rows, ${x.duplicates ?? 0} already seen.` : x.rows_processed != null ? `Done: ${x.rows_processed} rows.` : "Sync finished.";
+    return head + skippedNote(x);
   };
   return (
     <>
