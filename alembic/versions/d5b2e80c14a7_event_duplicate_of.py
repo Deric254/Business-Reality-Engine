@@ -25,3 +25,6 @@ def upgrade():
 
 def downgrade():
     op.drop_index('ix_events_duplicate_of', table_name='business_events')
+    op.drop_index('ix_events_tenant_entity_id', table_name='business_events')
+    op.drop_constraint('fk_events_duplicate_of', 'business_events', type_='foreignkey')
+    op.drop_column('business_events', 'duplicate_of')
