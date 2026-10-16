@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { ApiError, captureApi, connectorApi, type CaptureEntry, type ConnectorRow } from "../api/client";
+import { ApiError, captureApi, connectorApi, type CaptureEntry, type ConnectorRow, type Contribution } from "../api/client";
 import { getClaims } from "../api/session";
 import { Shell } from "../components/Shell";
 import { ConnectWizard, SecretOnce } from "../components/ConnectWizard";
@@ -27,8 +27,15 @@ function statusOf(c: ConnectorRow): [string, string] {
   return ["Waiting for data", "#d4a017"];
 }
 
-function ConnectorList({ tenantId, rows, isOwner, reload, setNotice, setError }: {
-  tenantId: string; rows: ConnectorRow[]; isOwner: boolean; reload: () => void; setNotice: (s: string | null) => void; setError: (s: string | null) => void;
+function contributionText(c: Contribution) {
+  const parts = [`${c.counted.toLocaleString()} record${c.counted === 1 ? "" : "s"} counted`];
+  if (c.matched) parts.push(`${c.matched.toLocaleString()} also in another source (counted once)`);
+  if (c.rejected) parts.push(`${c.rejected.toLocaleString()} rejected`);
+  return parts.join(", ");
+}
+
+function ConnectorList({ tenantId, rows, contributions, isOwner, reload, setNotice, setError }: {
+  tenantId: string; rows: ConnectorRow[]; contributions: Record<string, Contribution>; isOwner: boolean; reload: () => void; setNotice: (s: string | null) => void; setError: (s: string | null) => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadFor, setUploadFor] = useState<string | null>(null);
@@ -57,12 +64,18 @@ function ConnectorList({ tenantId, rows, isOwner, reload, setNotice, setError }:
                   {c.sync_interval_minutes ? `, checked every ${c.sync_interval_minutes >= 60 ? `${c.sync_interval_minutes / 60} h` : `${c.sync_interval_minutes} min`}` : ""}
                   {c.last_sync_at ? `, last data ${timeAgo(c.last_sync_at)}` : ""}
                 </div>
+                {contributions[c.id] && <div className="text-sm text-ink-muted">{contributionText(contributions[c.id])}</div>}
               </div>
               <span className="text-sm flex items-center gap-2"><span className="w-2 h-2 rounded-full" style={{ background: color }} aria-hidden />{label}</span>
               <div className="flex gap-2">
                 {c.connector_type === "file" && <button className={btnCls} disabled={busy === c.id} onClick={() => { setUploadFor(c.id); fileRef.current?.click(); }}>Upload file</button>}
                 {PULL.includes(c.connector_type) && <button className={btnCls} disabled={busy === c.id} onClick={() => run(c.id, () => connectorApi.sync(tenantId, c.id, c.connector_type), summarize)}>{busy === c.id ? "Syncing…" : "Sync now"}</button>}
                 {isOwner && <button className={btnCls} onClick={() => run(c.id, () => connectorApi.update(tenantId, c.id, { is_active: !c.is_active }), () => (c.is_active ? "Paused." : "Resumed."))}>{c.is_active ? "Pause" : "Resume"}</button>}
+                {isOwner && <button className={btnCls} disabled={busy === c.id} onClick={() => {
+                  const n = contributions[c.id] ? contributions[c.id].counted + contributions[c.id].matched + contributions[c.id].rejected : 0;
+                  if (window.confirm(`Disconnect ${c.name} and delete the ${n} record${n === 1 ? "" : "s"} it brought in? This cannot be undone. To only stop it for now, use Pause.`))
+                    run(c.id, () => connectorApi.disconnect(tenantId, c.id), (r) => `Disconnected ${c.name}. ${(r as { removed_records: number }).removed_records} records removed.`);
+                }}>Disconnect</button>}
               </div>
             </li>
           );
@@ -115,7 +128,9 @@ function DataBody({ tenantId, isOwner }: { tenantId: string; isOwner: boolean })
   const [notice, setNotice] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [created, setCreated] = useState<ConnectorRow | null>(null);
-  const load = useCallback(() => connectorApi.list(tenantId).then(setRows).catch((e) => setErr(errText(e))), [tenantId]);
+  const [contributions, setContributions] = useState<Record<string, Contribution>>({});
+  const load = useCallback(() => Promise.all([connectorApi.list(tenantId), connectorApi.contributions(tenantId)])
+    .then(([r, c]) => { setRows(r); setContributions(c); }).catch((e) => setErr(errText(e))), [tenantId]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { if (window.location.hash === "#entry") document.getElementById("entry")?.scrollIntoView(); }, [rows]);
   return (
@@ -128,7 +143,7 @@ function DataBody({ tenantId, isOwner }: { tenantId: string; isOwner: boolean })
       <Section title="Connected sources">
         {rows.length === 0 && !adding
           ? <Empty action={isOwner ? <button className={primaryCls} onClick={() => setAdding(true)}>{t("data.add")}</button> : undefined}>No data source connected yet. Connect one, or add entries by hand below.</Empty>
-          : <ConnectorList tenantId={tenantId} rows={rows} isOwner={isOwner} reload={load} setNotice={setNotice} setError={setErr} />}
+          : <ConnectorList tenantId={tenantId} rows={rows} contributions={contributions} isOwner={isOwner} reload={load} setNotice={setNotice} setError={setErr} />}
       </Section>
       <div id="entry" />
       <Section title={t("data.capture")} hint="For a business with no system yet: one-off sales and expenses. Retrying a save never double-counts.">

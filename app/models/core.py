@@ -112,8 +112,11 @@ class BusinessEvent(Base):
 
     # Section 11: provenance / ingestion tracking
     imported_at = Column(DateTime, default=datetime.utcnow)
-    validation_status = Column(String, default="pending")  # pending | validated | failed
+    validation_status = Column(String, default="pending")  # pending | validated | failed | duplicate
     validation_errors = Column(JSON, nullable=True)
+    # "duplicate" = the same record (same id, amount, day) is already counted from ANOTHER source. The row is kept for
+    # provenance but excluded from every total; this points at the copy that is counted.
+    duplicate_of = Column(UUID(as_uuid=False), ForeignKey("business_events.id", ondelete="SET NULL"), nullable=True)
 
     __table_args__ = (
         # FK-referencing columns need indexes: deleting/merging a resolved entity
@@ -126,6 +129,8 @@ class BusinessEvent(Base):
         Index("ix_events_tenant_ts", "tenant_id", "timestamp"),
         Index("ix_events_tenant_entity", "tenant_id", "entity"),
         Index("ix_events_source_entity_id", "source", "entity_id"),
+        Index("ix_events_tenant_entity_id", "tenant_id", "entity_id", postgresql_where=entity_id.isnot(None)),
+        Index("ix_events_duplicate_of", "duplicate_of", postgresql_where=text("duplicate_of IS NOT NULL")),
         # Idempotent ingestion (Section 11): the same source record, re-sent
         # by the same connector, must never create a second row. Partial
         # (WHERE entity_id IS NOT NULL) because a source system with no

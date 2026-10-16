@@ -28,9 +28,16 @@ createdb business_reality && alembic upgrade head
 uvicorn app.main:app --reload                # API on :8000
 
 cd frontend && npm install && npm run dev    # UI on :5173 (set VITE_API_BASE if the API is elsewhere)
-python scripts/seed_demo.py --api http://localhost:8000 --admin-key "$ADMIN_API_KEY"   # a demo business with a sales slump
 python -m pytest tests -q -W ignore          # 357 tests; needs Postgres at DATABASE_URL
 ```
+
+## One shared dataset
+Every source (file, sheet, link, database, webhook, typed entries) is normalised into the same event table, so every total, alert and chart reads one place.
+- **No double counting across sources.** If a second source brings a record with the same id (a receipt or order number), the same amount and the same day as one already counted, it is kept for provenance, marked `duplicate`, and left out of every total. Records without a shared id are never merged, because two real sales cannot be told apart safely.
+- **One spelling per place.** "nairobi", "Nairobi " and "NAIROBI" are one location; the spelling already in the business wins.
+- **One currency.** Amounts are converted to the business's base currency on the way in.
+- **Disconnect removes a source and its data** (`DELETE /api/connectors/{id}`, owner only, audit-logged). A record that another source also held stays counted. Use Pause to stop a source without deleting anything.
+- The Data page shows, per source, how many records are counted, how many were already counted from another source, and how many were rejected (`GET /api/connectors/contributions`).
 
 ## Who calls what
 

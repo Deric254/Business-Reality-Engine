@@ -7,10 +7,10 @@ each connector re-implementing (and potentially drifting on) the checks.
 """
 import uuid
 from types import SimpleNamespace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import HTTPException
-from sqlalchemy import tuple_
+from sqlalchemy import func, tuple_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -87,6 +87,48 @@ def _check_connectors(db: Session, payloads: list[NormalizedEvent]) -> dict[str,
     return connectors
 
 
+def _squash(value: str) -> str:
+    return " ".join(value.split())
+
+
+def _canonical_locations(db: Session, chunk: list[NormalizedEvent]) -> dict[tuple, str]:
+    """One spelling per place, so "nairobi", "Nairobi " and "NAIROBI" from different sources are one location. The
+    spelling already in the business wins; otherwise the first one seen."""
+    wanted = {(p.tenant_id, _squash(p.location).casefold()): _squash(p.location) for p in reversed(chunk) if p.location and p.location.strip()}
+    canon: dict[tuple, str] = {}
+    for tenant_id in {t for t, _ in wanted}:
+        keys = [k for t, k in wanted if t == tenant_id]
+        for (spelling,) in db.query(BusinessEvent.location).filter(
+                BusinessEvent.tenant_id == tenant_id, func.lower(func.btrim(BusinessEvent.location)).in_(keys)).distinct().order_by(BusinessEvent.location):
+            canon.setdefault((tenant_id, _squash(spelling).casefold()), spelling)
+    return {**wanted, **canon}
+
+
+def _same_amount(a, b) -> bool:
+    return (a is None and b is None) or (a is not None and b is not None and abs(float(a) - float(b)) < 0.005)
+
+
+def _find_cross_source_duplicates(db: Session, chunk: list[NormalizedEvent], rows: list[dict]) -> None:
+    """Mark rows that are the same record as one ALREADY counted from a different source: same entity and id, same
+    amount, within a day of each other. Needs a shared id (a receipt or order number); without one there is no safe
+    way to tell two real sales apart, so those rows are never merged."""
+    keys = {(p.tenant_id, p.entity, p.entity_id) for p in chunk if p.entity_id}
+    if not keys:
+        return
+    originals: dict[tuple, list] = {}
+    for ev in db.query(BusinessEvent).filter(
+            BusinessEvent.tenant_id.in_({k[0] for k in keys}), BusinessEvent.validation_status == "validated",
+            tuple_(BusinessEvent.entity, BusinessEvent.entity_id).in_({(k[1], k[2]) for k in keys})):
+        originals.setdefault((ev.tenant_id, ev.entity, ev.entity_id), []).append(ev)
+    for p, row in zip(chunk, rows):
+        if row["validation_status"] != "validated" or not p.entity_id:
+            continue
+        for ev in originals.get((p.tenant_id, p.entity, p.entity_id), []):
+            if ev.connector_id != p.connector_id and _same_amount(ev.amount, row["amount"]) and abs(ev.timestamp - row["timestamp"]) < timedelta(days=1):
+                row["validation_status"], row["duplicate_of"] = "duplicate", ev.id
+                break
+
+
 def _ingest_chunk(db: Session, chunk: list[NormalizedEvent], connectors: dict[str, Connector]) -> list[dict]:
     """One transaction: resolve entities (each distinct value once), bulk
     INSERT ... ON CONFLICT DO NOTHING, commit. Duplicates are detected by the
@@ -119,9 +161,12 @@ def _ingest_chunk(db: Session, chunk: list[NormalizedEvent], connectors: dict[st
     rows, errors_by_idx = [], []
     bases = {t.id: t.base_currency for t in db.query(Tenant).filter(Tenant.id.in_({p.tenant_id for p in chunk}))}
     fx_cache: dict = {}
+    places = _canonical_locations(db, chunk)
     for i, p in enumerate(chunk):
         data = p.model_dump()
         data["timestamp"] = _naive_utc(p.timestamp)
+        if p.location and p.location.strip():
+            data["location"] = places[(p.tenant_id, _squash(p.location).casefold())]
         errors = _validate_event(SimpleNamespace(**data))
         # Section 57: convert to the tenant's base currency (or flag when no rate exists).
         amt, cur, meta, fx_err = convert_event_fields(
@@ -137,6 +182,7 @@ def _ingest_chunk(db: Session, chunk: list[NormalizedEvent], connectors: dict[st
             "validation_status": "failed" if errors else "validated",
             "validation_errors": errors or None,
         })
+    _find_cross_source_duplicates(db, chunk, rows)
     # Uniform keys across rows (required for executemany).
     all_keys = {k for r in rows for k in r}
     for r in rows:
@@ -170,6 +216,7 @@ def _ingest_chunk(db: Session, chunk: list[NormalizedEvent], connectors: dict[st
             results.append({
                 "id": rows[i]["id"], "validation_status": rows[i]["validation_status"],
                 "errors": errors_by_idx[i], "entity_review_flags": flags_by_idx[i], "duplicate": False,
+                "merged": rows[i]["validation_status"] == "duplicate",
             })
             touched[p.connector_id] = touched.get(p.connector_id, False) or bool(errors_by_idx[i])
         else:
@@ -178,7 +225,7 @@ def _ingest_chunk(db: Session, chunk: list[NormalizedEvent], connectors: dict[st
                 raise RuntimeError("insert skipped but no existing row found")
             results.append({
                 "id": ev.id, "validation_status": ev.validation_status,
-                "errors": ev.validation_errors or [], "entity_review_flags": [], "duplicate": True,
+                "errors": ev.validation_errors or [], "entity_review_flags": [], "duplicate": True, "merged": False,
             })
 
     now = datetime.utcnow()

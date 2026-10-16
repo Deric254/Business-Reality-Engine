@@ -12,7 +12,6 @@ from app.core.auth_users import authorize_tenant, decode_token, ensure_active
 from app.core.business_health import discover, health_summary, quality_report
 from app.core.context import KINDS, sync_holidays
 from app.core.db import get_db
-from app.core import demo as demo_mod
 from app.core.relationships import relationships_for
 from app.models.config import ExternalContext, FxRate
 
@@ -146,24 +145,11 @@ def reprocess(tenant_id: str, db: Session = Depends(get_db), authorization: Opti
     return fx_mod.reprocess_unconverted(db, tenant_id)
 
 
-# ---- sample data: see the product working before connecting real data ----
-@router.post("/demo-data")
-def load_demo(tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
-    _tenant_user(authorization, tenant_id, need_owner=True)
-    return demo_mod.load_sample(db, tenant_id)
-
-
-@router.delete("/demo-data")
-def remove_demo(tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
-    _tenant_user(authorization, tenant_id, need_owner=True)
-    return demo_mod.clear_sample(db, tenant_id)
-
-
 @router.get("/trend")
 def trend(tenant_id: str, days: int = Query(30, ge=7, le=180), db: Session = Depends(get_db),
           authorization: Optional[str] = Header(default=None)):
     """Daily sales and expenses for the last `days` days (zero-filled), plus the same length of time before it, for the
-    dashboard chart. Events that failed validation are excluded, exactly as in every other total."""
+    dashboard chart. Only validated events count, exactly as in every other total."""
     from datetime import datetime, timedelta
     from sqlalchemy import func
     from app.models.core import BusinessEvent as E
@@ -171,7 +157,7 @@ def trend(tenant_id: str, days: int = Query(30, ge=7, le=180), db: Session = Dep
     today = datetime.utcnow().date()
     start = today - timedelta(days=2 * days - 1)
     rows = (db.query(func.date(E.timestamp), E.entity, func.coalesce(func.sum(E.amount), 0))
-            .filter(E.tenant_id == tenant_id, E.entity.in_(("sale", "expense")), E.validation_status != "failed",
+            .filter(E.tenant_id == tenant_id, E.entity.in_(("sale", "expense")), E.validation_status == "validated",
                     E.timestamp >= datetime.combine(start, datetime.min.time()))
             .group_by(func.date(E.timestamp), E.entity).all())
     cell: dict = {}

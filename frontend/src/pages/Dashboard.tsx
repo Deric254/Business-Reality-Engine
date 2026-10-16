@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, businessApi, connectorApi, type Alert, type ConnectorRow, type Health, type KpiBreakdown, type Trend } from "../api/client";
-import { getClaims } from "../api/session";
 import { Shell } from "../components/Shell";
 import { AskBox } from "../components/AskBox";
 import { AlertRow } from "../components/AlertRow";
@@ -54,22 +53,14 @@ function SourcesStrip({ rows }: { rows: ConnectorRow[] }) {
   );
 }
 
-function GetStarted({ tenant, isOwner, onLoaded }: { tenant: Tenant; isOwner: boolean; onLoaded: () => void }) {
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  async function sample() {
-    setBusy(true); setErr(null);
-    try { await businessApi.loadDemo(tenant.id); onLoaded(); }
-    catch (e) { setErr(e instanceof Error ? e.message : "Could not load sample data."); }
-    finally { setBusy(false); }
-  }
+function GetStarted() {
   return (
     <Card className="!p-6 sm:!p-8">
-      <h2 className="display text-2xl">Three ways to get your numbers in</h2>
-      <div className="grid md:grid-cols-3 gap-4 mt-5">
+      <h2 className="display text-2xl">Two ways to get your numbers in</h2>
+      <div className="grid md:grid-cols-2 gap-4 mt-5">
         <div className="space-y-2">
           <div className="font-semibold">Connect where your data lives</div>
-          <p className="text-sm text-ink-muted">Google Sheets, an Excel or CSV export, a shop system with an API, a database. We detect your columns for you.</p>
+          <p className="text-sm text-ink-muted">Google Sheets, an Excel or CSV export, a shop system with an API, a database. We detect your columns for you. Disconnect any time and its data goes with it.</p>
           <Link to="/data" className={`${primaryCls} inline-block`}>Connect data</Link>
         </div>
         <div className="space-y-2">
@@ -77,20 +68,13 @@ function GetStarted({ tenant, isOwner, onLoaded }: { tenant: Tenant; isOwner: bo
           <p className="text-sm text-ink-muted">No system yet? Add sales and expenses by hand and the engine starts watching them.</p>
           <Link to="/data#entry" className={`${btnCls} inline-block`}>Add entries</Link>
         </div>
-        <div className="space-y-2">
-          <div className="font-semibold">Look around with sample data</div>
-          <p className="text-sm text-ink-muted">100 days of a small shop's numbers, ending in a sales slump. Remove it any time.</p>
-          {isOwner && <button className={btnCls} onClick={sample} disabled={busy}>{busy ? "Loading…" : "Load sample data"}</button>}
-        </div>
       </div>
-      <div className="mt-3"><Notice error={err} /></div>
     </Card>
   );
 }
 
 function OverviewBody({ tenant }: { tenant: Tenant }) {
   const t = useT();
-  const isOwner = getClaims().role === "owner";
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [kpis, setKpis] = useState<KpiBreakdown | null>(null);
   const [trend, setTrend] = useState<Trend | null>(null);
@@ -118,7 +102,7 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
 
   let headline = "Nothing needs your attention right now.";
   let sub = health?.headline ?? "Your numbers are being watched. We'll flag anything that moves.";
-  if (noData) { headline = "Let's get your numbers in."; sub = "Connect a source or load sample data and this page becomes your daily briefing."; }
+  if (noData) { headline = "Let's get your numbers in."; sub = "Connect a source or add entries by hand and this page becomes your daily briefing."; }
   else if (urgent.length && top) {
     headline = top.title;
     sub = urgent.length > 1 ? `${t(urgent.length === 1 ? "dash.high.one" : "dash.high.many", { n: urgent.length })} ${top.what_happened}` : top.what_happened;
@@ -143,7 +127,7 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
 
       {error && <Notice error={`Couldn't load your data: ${error}`} />}
 
-      {noData && <GetStarted tenant={tenant} isOwner={isOwner} onLoaded={load} />}
+      {noData && <GetStarted />}
 
       {kpis && !noData && (
         <Card className="!p-5 sm:!p-7 space-y-6">

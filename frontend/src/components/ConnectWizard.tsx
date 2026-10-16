@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, connectorApi, type ConnectorRow, type DbType, type Inspection } from "../api/client";
+import { ApiError, connectorApi, tenantApi, type ConnectorRow, type DbType, type Inspection } from "../api/client";
 import { API_BASE } from "../api/client";
 import { Card, Notice, btnCls, inputCls, primaryCls } from "./ui";
 
@@ -101,8 +101,9 @@ export function ConnectWizard({ tenantId, onClose, onDone }: { tenantId: string;
   const [kind, setKind] = useState<Kind | null>(null);
   const [f, setF] = useState<F>({ entity: "sale", event_type: "sale.created", default_currency: "KES", db_type: "postgres", mailbox: "INBOX", file_pattern: "*", use_ssl: "true", auth_type: "none" });
   const [name, setName] = useState("");
-  const [interval, setIntervalMin] = useState("");
+  const [interval, setIntervalMin] = useState("60");        // hourly unless changed: a connected source should keep itself current
   const [info, setInfo] = useState<Inspection | null>(null);
+  useEffect(() => { tenantApi.me().then((t) => setF((p) => ({ ...p, default_currency: t.base_currency }))).catch(() => {}); }, []);   // the business's own currency, not a guess
   const [file, setFile] = useState<File | null>(null);
   const [dbTypes, setDbTypes] = useState<DbType[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -307,9 +308,10 @@ export function ConnectWizard({ tenantId, onClose, onDone }: { tenantId: string;
 
         {mapped && (
           <div className="grid sm:grid-cols-2 gap-3 border-t border-border pt-5">
-            <Field label="Name this source" value={name} onChange={setName} required placeholder="Main till" />
+            <Field label="Name this source" value={name} onChange={setName} required placeholder="Main till" help="How it appears in your list of sources. Use a name you'll recognise." />
             {pull && <label className="block text-sm text-ink-muted">Check for new data
-              <select className={`${inputCls} mt-1`} value={interval} onChange={(e) => setIntervalMin(e.target.value)}>{INTERVALS.map((i) => <option key={i.v} value={i.v}>{i.l}</option>)}</select></label>}
+              <select className={`${inputCls} mt-1`} value={interval} onChange={(e) => setIntervalMin(e.target.value)}>{INTERVALS.map((i) => <option key={i.v} value={i.v}>{i.l}</option>)}</select>
+              <span className="block text-xs text-ink-faint mt-1">Every hour is a good start. New rows are added; rows already seen, or already counted from another source, are not counted twice.</span></label>}
           </div>
         )}
         <Notice error={err} />

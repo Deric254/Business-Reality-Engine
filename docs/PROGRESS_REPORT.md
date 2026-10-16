@@ -10,7 +10,7 @@ Honest scope note: verified in a sandbox with real Postgres, Redis, OpenSSH, Dov
 - Ingestion: universal `NormalizedEvent`, idempotent bulk path, batched entity resolution, FX conversion, coverage tracking.
 - Intelligence: deviation (direction-aware), opportunity, trend, daily anomaly, silence, threshold, forecast-miss, profit-risk and unknown-unknown detectors; correlation, ranking, escalation; business memory; forecasting and simulation; health score; model versioning; backtesting and calibration; LLM narrative layer (Anthropic / OpenAI / any OpenAI-compatible URL).
 - Delivery: email, webhook, Slack, Teams, SMS, WhatsApp; quiet hours, digests, filters; password reset and invitations.
-- Frontend: React + TS + Vite + Tailwind v4. Pages: alerts, alert detail, Business (health ring, KPIs, data quality, discovery, relationships, context, FX), Data sources (connector setup + manual capture), Accuracy (report, backtest, incidents, model changes), Settings (channels with preferences, people, metrics, password), first-run wizard, forgot/reset/accept-invite, English/Kiswahili. Verified in headless Chromium; `scripts/seed_demo.py` builds a demo business.
+- Frontend: React + TS + Vite + Tailwind v4. Pages: alerts, alert detail, Business (health ring, KPIs, data quality, discovery, relationships, context, FX), Data sources (connector setup + manual capture), Accuracy (report, backtest, incidents, model changes), Settings (channels with preferences, people, metrics, password), first-run wizard, forgot/reset/accept-invite, English/Kiswahili. Verified in headless Chromium.
 - Ops: scheduler with run log, Redis-shared limits and locks, admin system endpoints, audit log, CI workflow, backup/restore scripts, runbook.
 
 ## Part 2 — Section status

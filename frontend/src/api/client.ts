@@ -358,8 +358,6 @@ export const aiApi = {
 
 export const businessApi = {
   trend: (t: string, days = 30) => request<Trend>(`/api/business/trend?tenant_id=${t}&days=${days}`),
-  loadDemo: (t: string) => request<{ events: number; alerts: number }>(`/api/business/demo-data?tenant_id=${t}`, { method: "POST" }),
-  clearDemo: (t: string) => request<{ removed: boolean }>(`/api/business/demo-data?tenant_id=${t}`, { method: "DELETE" }),
   health: (t: string, days = 30) => request<Health>(`/api/business/health?tenant_id=${t}&days=${days}`),
   quality: (t: string, days = 30) => request<Quality>(`/api/business/quality?tenant_id=${t}&days=${days}`),
   discovery: (t: string) => request<Discovery>(`/api/business/discovery?tenant_id=${t}`),
@@ -395,6 +393,8 @@ export interface ConnectorRow {
   expected_frequency: string | null; sync_interval_minutes: number | null; last_attempt_at: string | null;
   webhook_url?: string | null; webhook_token?: string | null;
 }
+/** What one source adds to the shared dataset. */
+export interface Contribution { counted: number; matched: number; rejected: number }
 export interface DbType { db_type: string; available: boolean; verified: boolean; default_port: number | null; notes: string }
 
 export interface Inspection { columns: string[]; row_count: number; sample: Record<string, unknown>[]; suggested_mapping: Record<string, string>; source: "ai" | "rules"; reasons: Record<string, string> }
@@ -416,6 +416,8 @@ export const connectorApi = {
     request<ConnectorRow>("/api/connectors/", { method: "POST", ...json(body) }),
   update: (t: string, id: string, patch: { is_active?: boolean; sync_interval_minutes?: number | null; clear_sync_interval?: boolean }) =>
     request<ConnectorRow>(`/api/connectors/${id}?tenant_id=${t}`, { method: "PATCH", ...json(patch) }),
+  contributions: (t: string) => request<Record<string, Contribution>>(`/api/connectors/contributions?tenant_id=${t}`),
+  disconnect: (t: string, id: string) => request<{ removed_records: number }>(`/api/connectors/${id}?tenant_id=${t}`, { method: "DELETE" }),
   dbTypes: (t: string) => request<DbType[]>(`/api/connectors/meta/database-types?tenant_id=${t}`),
   sync: (t: string, id: string, type: string) =>
     request<Record<string, unknown>>(`/api/connectors/${id}/sync-${type === "shared_folder" ? "folder" : type}?tenant_id=${t}`, { method: "POST" }),

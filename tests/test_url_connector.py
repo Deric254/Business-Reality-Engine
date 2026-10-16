@@ -210,16 +210,6 @@ def test_inspect_file_stores_nothing(client, db):
     assert db.query(BusinessEvent).filter(BusinessEvent.tenant_id == t).count() == 0
 
 
-def test_sample_data_load_and_clear(client, db):
-    t, h = make_owner(client, "demo")
-    r = client.post(f"/api/business/demo-data?tenant_id={t}", headers=h)
-    assert r.status_code == 200 and r.json()["events"] > 1000, r.text
-    assert client.post(f"/api/business/demo-data?tenant_id={t}", headers=h).status_code == 409        # not twice
-    assert client.get(f"/api/alerts/?tenant_id={t}", headers=h).status_code == 200
-    assert client.delete(f"/api/business/demo-data?tenant_id={t}", headers=h).status_code == 200
-    assert db.query(BusinessEvent).filter(BusinessEvent.tenant_id == t).count() == 0
-
-
 def test_setup_status_is_public(client):
     r = client.get("/api/health/setup")
     assert r.status_code == 200 and r.json()["has_business"] is True
@@ -227,7 +217,9 @@ def test_setup_status_is_public(client):
 
 def test_trend_series_zero_filled(client):
     t, h = make_owner(client, "trend")
-    assert client.post(f"/api/business/demo-data?tenant_id={t}", headers=h).status_code == 200
+    cid = mk(client, t, h, connector_type="file", config={"entity": "sale", "event_type": "sale.created", "timestamp_col": "Date", "amount_col": "Total"}).json()["id"]
+    rows = "".join(f"{dt.datetime.utcnow() - dt.timedelta(days=d):%Y-%m-%d} 10:00,{100 + d}\n" for d in range(1, 55))
+    assert client.post(f"/api/connectors/{cid}/upload", data={"tenant_id": t}, files={"file": ("s.csv", ("Date,Total\n" + rows).encode(), "text/csv")}, headers=h).status_code == 200
     r = client.get(f"/api/business/trend?tenant_id={t}&days=30", headers=h).json()
     assert len(r["current"]) == 30 and len(r["previous"]) == 30
     assert sum(x["sales"] for x in r["previous"]) > 0 and r["current"][-1]["date"] == dt.datetime.utcnow().date().isoformat()

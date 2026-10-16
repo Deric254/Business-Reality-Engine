@@ -5,7 +5,7 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.core import audit
+from app.core import audit, sources
 from app.core.db import get_db
 from app.core.ingestion import NormalizedEvent, ingest_events_bulk
 from app.connectors.file_connector import (
@@ -155,6 +155,13 @@ def create_connector(payload: ConnectorCreate, request: Request, db: Session = D
 def list_connectors(tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
     authorize_tenant(authorization, tenant_id)
     return db.query(Connector).filter(Connector.tenant_id == tenant_id).all()
+
+
+@router.get("/contributions")
+def source_contributions(tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+    """What each source adds to the shared dataset: counted, matched to another source's copy, rejected."""
+    authorize_tenant(authorization, tenant_id)
+    return sources.contributions(db, tenant_id)
 
 
 @router.get("/{connector_id}", response_model=ConnectorOut)
@@ -313,3 +320,16 @@ def update_connector(connector_id: str, tenant_id: str, payload: ConnectorUpdate
     audit.record(db, "connector.update", request=request, tenant_id=tenant_id, actor_user_id=me.user_id, target=c.id,
                  detail={"fields": sorted(k for k in data if k != "config") + (["config"] if "config" in data else [])})
     return c
+
+
+@router.delete("/{connector_id}")
+def disconnect_connector(connector_id: str, tenant_id: str, request: Request, db: Session = Depends(get_db),
+                         authorization: Optional[str] = Header(default=None)):
+    """Disconnect a source and delete everything it brought in. Pause (PATCH is_active) stops it without deleting."""
+    me = authorize_tenant(authorization, tenant_id, require_role="owner")
+    c = _get_owned_connector(db, connector_id, tenant_id)
+    name, kind = c.name, c.connector_type
+    result = sources.remove_source(db, c)
+    audit.record(db, "connector.disconnect", request=request, tenant_id=tenant_id, actor_user_id=me.user_id, target=connector_id,
+                 detail={"name": name, "type": kind, **result})
+    return result
