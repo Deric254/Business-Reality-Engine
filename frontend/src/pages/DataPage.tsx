@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { Reconcile } from "../components/Reconcile";
 import { ApiError, captureApi, connectorApi, skippedNote, type CaptureEntry, type ConnectorRow, type Contribution, type ImportResult } from "../api/client";
 import { getClaims } from "../api/session";
 import { Shell } from "../components/Shell";
@@ -146,6 +147,7 @@ function DataBody({ tenantId, isOwner }: { tenantId: string; isOwner: boolean })
           ? <Empty action={isOwner ? <button className={primaryCls} onClick={() => setAdding(true)}>{t("data.add")}</button> : undefined}>No data source connected yet. Connect one, or add entries by hand below.</Empty>
           : <ConnectorList tenantId={tenantId} rows={rows} contributions={contributions} isOwner={isOwner} reload={load} setNotice={setNotice} setError={setErr} />}
       </Section>
+      <Reconcile tenantId={tenantId} isOwner={isOwner} rows={rows} onChanged={load} setNotice={setNotice} setError={setErr} />
       <div id="entry" />
       <Section title={t("data.capture")} hint="For a business with no system yet: one-off sales and expenses. Retrying a save never double-counts.">
         <Card><CaptureForm tenantId={tenantId} /></Card>

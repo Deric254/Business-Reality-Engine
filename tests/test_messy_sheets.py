@@ -45,3 +45,9 @@ def test_a_wrong_mapping_still_fails_loudly():
     assert e.value.status_code == 400 and "mapping is probably wrong" in e.value.detail and "Meru" in e.value.detail
     with pytest.raises(HTTPException):
         _parse("Date,Amount\n2026-09-03,twelve\n")                                  # the only row is bad
+
+
+def test_rows_are_numbered_even_when_the_parser_left_a_text_index():
+    df = pd.DataFrame({"Date": ["2026-09-03", "TOTAL"], "Amount": [1, 2], "__row_id": ["a", "b"]}, index=["x", "y"])
+    p = dataframe_to_normalized_events(df, MAP, "t", "c", "s")
+    assert len(p.events) == 1 and p.skipped == ["Row 3: 'TOTAL' is not a date"]

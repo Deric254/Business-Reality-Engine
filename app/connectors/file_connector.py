@@ -9,6 +9,7 @@ Security posture for anything accepting user-uploaded files:
 - column mapping is explicit and configured per-connector — we never guess
   or trust arbitrary uploaded column names as if they were code/identifiers
 """
+import csv
 import io
 import re
 from typing import NamedTuple, Optional
@@ -38,6 +39,12 @@ class ColumnMapping(BaseModel):
     customer_id_col: Optional[str] = None
     product_id_col: Optional[str] = None
     entity_id_col: Optional[str] = None
+    # Statements and ledgers: separate money-in and money-out columns instead of one Amount (M-Pesa, bank, debit/credit).
+    # A row with money in is a sale, a row with money out is an expense; the constants above are then not used.
+    amount_in_col: Optional[str] = None
+    amount_out_col: Optional[str] = None
+    price_col: Optional[str] = None      # unit price, used when there is no total: amount = quantity x price
+    type_col: Optional[str] = None       # a column saying whether each row is a sale or an expense
     default_currency: str = "KES"
 
 
@@ -53,8 +60,33 @@ def validate_upload(filename: str, content: bytes) -> str:
     return ext
 
 
+_HEADER_SCAN_ROWS = 25
+
+
+def _is_value(cell: str) -> bool:
+    """A number or a date, as opposed to a text label."""
+    try:
+        float(CURRENCY_MARK.sub("", cell.strip("() ")).replace(",", "").replace(" ", ""))
+        return True
+    except ValueError:
+        return bool(re.search(r"\d", cell)) and pd.notna(pd.to_datetime(cell, errors="coerce", format="mixed"))
+
+
+def _header_offset(rows: list[list]) -> int:
+    """Reports often start with a title, the business name or a date range above the real header. Returns how many
+    rows to skip: the first row that is about as wide as the widest row and made of distinct text labels."""
+    filled = [[str(c).strip() for c in r if c is not None and str(c).strip() and str(c).strip().lower() != "nan"] for r in rows]
+    width = max((len(r) for r in filled), default=0)
+    for i, cells in enumerate(filled):
+        if len(cells) >= 2 and len(cells) >= 0.6 * width and len({c.casefold() for c in cells}) == len(cells) \
+                and sum(not _is_value(c) for c in cells) >= 0.8 * len(cells):
+            return i
+    return 0
+
+
 def parse_file_to_dataframe(content: bytes, ext: str) -> pd.DataFrame:
     buf = io.BytesIO(content)
+    offset = 0                                 # rows above the header (only csv and xlsx can have them)
     try:
         if ext in (".json", ".jsonl"):
             from app.connectors.parsers import parse_json
@@ -66,10 +98,13 @@ def parse_file_to_dataframe(content: bytes, ext: str) -> pd.DataFrame:
             from app.connectors.parsers import parse_txt
             df = parse_txt(content)
         elif ext == ".csv":
-            df = pd.read_csv(buf)
+            preview = csv.reader(io.StringIO(content[:200_000].decode("utf-8-sig", errors="replace")))
+            offset = _header_offset([r for _, r in zip(range(_HEADER_SCAN_ROWS), preview)])
+            df = pd.read_csv(buf, skiprows=offset)
         else:  # .xlsx
             # data_only reads cached computed values, not formulas — no formula execution
-            df = pd.read_excel(buf, engine="openpyxl")
+            offset = _header_offset(pd.read_excel(io.BytesIO(content), engine="openpyxl", header=None, nrows=_HEADER_SCAN_ROWS).values.tolist())
+            df = pd.read_excel(buf, engine="openpyxl", skiprows=offset)
     except HTTPException:
         raise
     except Exception as e:
@@ -79,11 +114,12 @@ def parse_file_to_dataframe(content: bytes, ext: str) -> pd.DataFrame:
         raise HTTPException(413, f"File has {len(df)} rows, exceeds cap of {MAX_ROWS}")
     if len(df) == 0:
         raise HTTPException(400, "File has no data rows")
+    df.attrs["header_row"] = offset + 1        # where the header sits in the sheet, for row numbers
     return df
 
 
-_CURRENCY_MARK = re.compile(r"^(?:kes|ksh[s.]*|ush|usd|eur|gbp|[$€£])\s*|\s*(?:kes|ksh[s.]*|/=)$", re.I)
-_NO_VALUE = {"", "-", "–", "—", "n/a", "na", "null", "none"}
+CURRENCY_MARK = re.compile(r"^(?:kes|ksh[s.]*|ush|usd|eur|gbp|[$€£])\s*|\s*(?:kes|ksh[s.]*|/=)$", re.I)
+NO_VALUE = {"", "-", "–", "—", "n/a", "na", "null", "none"}
 
 
 def to_number(val, where: str):
@@ -94,10 +130,10 @@ def to_number(val, where: str):
     if isinstance(val, (int, float)):
         return float(val)
     txt = str(val).strip()
-    if txt.casefold() in _NO_VALUE:
+    if txt.casefold() in NO_VALUE:
         return None
     negative = txt.startswith("(") and txt.endswith(")")
-    txt = _CURRENCY_MARK.sub("", txt.strip("()").strip()).replace(",", "").replace(" ", "")
+    txt = CURRENCY_MARK.sub("", txt.strip("()").strip()).replace(",", "").replace(" ", "")
     try:
         out = float(txt)
     except ValueError:
@@ -132,6 +168,30 @@ def with_default_id(df: pd.DataFrame, mapping: "ColumnMapping") -> "ColumnMappin
     return mapping.model_copy(update={"entity_id_col": ROW_ID_COL})
 
 
+_EXPENSE_WORD = re.compile(r"expense|purchase|cost|withdraw|paid out|payment out|debit|bill|outflow", re.I)
+
+
+def _row_money(mapping: ColumnMapping, get, where: str) -> tuple[str, str, Optional[float], Optional[float]]:
+    """(entity, event_type, amount, quantity) for one row, whatever shape the business keeps its money in:
+    one Amount column, separate money-in / money-out columns, a Type column, or quantity x unit price."""
+    quantity = to_number(get("quantity_col"), f"{where} quantity")
+    if mapping.amount_in_col or mapping.amount_out_col:
+        money_in, money_out = to_number(get("amount_in_col"), f"{where} money in"), to_number(get("amount_out_col"), f"{where} money out")
+        if money_in:                                                  # nothing or zero means no money came in
+            return "sale", "sale.created", money_in, quantity
+        if money_out:
+            return "expense", "expense.created", abs(money_out), quantity
+        raise HTTPException(400, f"{where}: no money in or out")
+    entity, event_type = mapping.entity, mapping.event_type
+    kind = get("type_col")
+    if kind is not None:
+        entity, event_type = ("expense", "expense.created") if _EXPENSE_WORD.search(str(kind)) else ("sale", "sale.created")
+    amount, price = to_number(get("amount_col"), f"{where} amount"), to_number(get("price_col"), f"{where} price")
+    if amount is None and price is not None and quantity is not None:
+        amount = price * quantity
+    return entity, event_type, amount, quantity
+
+
 class ParsedRows(NamedTuple):
     events: list[dict]
     skipped: list[str]      # why each unreadable row was left out, e.g. "Row 14: 'TOTAL' is not a date"
@@ -159,6 +219,8 @@ def dataframe_to_normalized_events(
         raise HTTPException(
             400, f"Configured column '{mapping.timestamp_col}' not found in file. File columns: {list(df.columns)}"
         )
+    header_row = df.attrs.get("header_row", 1)
+    df = df.reset_index(drop=True)               # row numbers below must be 0, 1, 2... whatever index the parser produced
     stamps = pd.to_datetime(df[mapping.timestamp_col], errors="coerce", dayfirst=_day_first(df[mapping.timestamp_col]), format="mixed")
     blank = df.drop(columns=[ROW_ID_COL], errors="ignore").apply(lambda col: col.isna() | col.astype(str).str.strip().eq("")).all(axis=1)
     events, skipped, nonblank = [], [], 0
@@ -166,7 +228,7 @@ def dataframe_to_normalized_events(
         if blank[idx]:
             continue
         nonblank += 1
-        where = f"Row {idx + 2}"                 # as the sheet shows it: row 1 is the header
+        where = f"Row {idx + header_row + 1}"    # as the sheet shows it
 
         def _get(col_attr: str):
             col = getattr(mapping, col_attr)
@@ -178,7 +240,7 @@ def dataframe_to_normalized_events(
         try:
             if pd.isna(stamps[idx]):
                 raise HTTPException(400, f"{where}: '{row[mapping.timestamp_col]}' is not a date")
-            amount, quantity = to_number(_get("amount_col"), f"{where} amount"), to_number(_get("quantity_col"), f"{where} quantity")
+            entity, event_type, amount, quantity = _row_money(mapping, _get, where)
         except HTTPException as e:
             skipped.append(e.detail)
             continue
@@ -186,9 +248,9 @@ def dataframe_to_normalized_events(
             "tenant_id": tenant_id,
             "connector_id": connector_id,
             "source": source,
-            "entity": mapping.entity,
+            "entity": entity,
             "entity_id": str(_get("entity_id_col")) if _get("entity_id_col") is not None else None,
-            "event_type": mapping.event_type,
+            "event_type": event_type,
             "timestamp": stamps[idx].to_pydatetime(),
             "amount": amount,
             "quantity": quantity,

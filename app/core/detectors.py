@@ -20,6 +20,7 @@ import statistics
 from datetime import datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
+from app.core.tenant_time import tenant_zone
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -33,7 +34,7 @@ from app.core.detection import (
     detect_historical_deviation, detect_threshold_breach, explain_deviation,
 )
 from app.models.alerts import Alert, AlertSeverity, AlertState
-from app.models.core import BusinessEvent, Connector, Tenant
+from app.models.core import BusinessEvent, Connector
 
 logger = logging.getLogger("business_reality_engine")
 
@@ -157,14 +158,6 @@ def detect_sustained_trend(
 
 # ---------------- daily anomaly (weekday seasonality) ----------------
 
-def _tenant_tz(db: Session, tenant_id: str) -> ZoneInfo:
-    t = db.get(Tenant, tenant_id)
-    try:
-        return ZoneInfo(t.timezone if t and t.timezone else "UTC")
-    except Exception:
-        return ZoneInfo("UTC")
-
-
 def detect_daily_anomaly(
     db: Session, tenant_id: str, entity: str = "sale", field: str = "amount", direction: str = "drop",
     lookback_weeks: int = 8, min_z: float = 3.0, min_rel: float = 0.25, now: Optional[datetime] = None,
@@ -174,7 +167,7 @@ def detect_daily_anomaly(
     if field not in METRIC_FIELDS:
         raise ValueError(f"field must be one of {METRIC_FIELDS}")
     now = now or datetime.utcnow()
-    tz = _tenant_tz(db, tenant_id)
+    tz = tenant_zone(db, tenant_id)
     utc = ZoneInfo("UTC")
     local_today = now.replace(tzinfo=utc).astimezone(tz).date()
     target = local_today - timedelta(days=1)

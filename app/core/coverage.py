@@ -45,8 +45,16 @@ STATUS_TO_PCT = {
 def _status_for_connector(connector: Connector, last_data_at: Optional[datetime], now: datetime) -> DataCoverageStatus:
     if last_data_at is None:
         return DataCoverageStatus.not_connected
+    if connector.sync_interval_minutes:
+        # A source we pull is current while the pulling works, whether or not the shop sold anything since:
+        # a quiet Sunday is not a broken connection.
+        grace = max(timedelta(minutes=connector.sync_interval_minutes) * 3, timedelta(hours=1))
+        pulled = connector.last_attempt_at and connector.last_sync_status != "failed" and now - connector.last_attempt_at <= grace
+        return DataCoverageStatus.live if pulled else DataCoverageStatus.stale
+    if connector.expected_frequency is None:
+        return DataCoverageStatus.recent        # uploaded or typed by hand: nothing is expected on a schedule
     age = now - last_data_at
-    freq = connector.expected_frequency or "periodic"
+    freq = connector.expected_frequency
     if age <= _LIVE_WITHIN.get(freq, timedelta(hours=2)):
         return DataCoverageStatus.live
     if age <= _STALE_AFTER.get(freq, _DEFAULT_STALE_AFTER):

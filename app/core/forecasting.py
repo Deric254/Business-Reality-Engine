@@ -16,12 +16,17 @@ Two forecasts:
    a safety threshold is crossed. Returns None if the trend isn't headed
    toward the threshold at all — never fabricates a countdown that isn't real.
 """
+import math
+from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.detection import _sum_metric
+from app.core.tenant_time import local_midnight_utc, tenant_zone
+from app.models.core import BusinessEvent
 
 
 def _least_squares(xs: list[float], ys: list[float]) -> tuple[float, float]:
@@ -74,6 +79,83 @@ def forecast_next_period(
         period_days=period_days, historical_values=values, slope=round(slope, 2),
         forecast_next=round(max(forecast_next, 0), 2), direction=direction,
     )
+
+
+LOOKBACK_DAYS, MIN_DAYS, MIN_ACTIVE_DAYS = 84, 28, 12   # twelve weeks at most; four to see a weekly pattern, on 12+ days with sales
+_Z80 = 1.2816                               # a band that about eight in ten outcomes fall inside, if the pattern holds
+_WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+@dataclass
+class DayForecast:
+    day: date
+    weekday: str
+    expected: float
+    low: float
+    high: float
+
+
+@dataclass
+class SeasonalForecast:
+    horizon_days: int
+    days: list[DayForecast]
+    total: float
+    low: float
+    high: float
+    weeks_of_history: int
+    busiest: str
+    quietest: str
+    trend_pct: float                        # change in the seasonally adjusted level across the history
+
+
+def _daily_totals(db: Session, tenant_id: str, entity: str, first: date, last: date, tz) -> dict[date, float]:
+    local = func.timezone(tz.key, func.timezone("UTC", BusinessEvent.timestamp))
+    rows = (db.query(func.date(local), func.sum(BusinessEvent.amount))
+            .filter(BusinessEvent.tenant_id == tenant_id, BusinessEvent.entity == entity, BusinessEvent.validation_status == "validated",
+                    BusinessEvent.amount.isnot(None), BusinessEvent.timestamp >= local_midnight_utc(first, tz),
+                    BusinessEvent.timestamp < local_midnight_utc(last + timedelta(days=1), tz))
+            .group_by(func.date(local)).all())
+    return {d: float(v) for d, v in rows}
+
+
+def forecast_days(db: Session, tenant_id: str, entity: str, horizon_days: int = 7, now: Optional[datetime] = None) -> Optional[SeasonalForecast]:
+    """The next `horizon_days` days (from tomorrow), day by day, using the business's own weekly pattern: how much
+    stronger a Saturday is than a Tuesday, a straight-line trend on what is left once that pattern is removed, and a
+    range from how far past days missed it. Closed weekdays stay at zero. None when there is less than four weeks of
+    history, or too few days with records to show a pattern (weekly totals are not a daily rhythm): nothing is invented."""
+    now = now or datetime.utcnow()
+    tz = tenant_zone(db, tenant_id)
+    today = now.replace(tzinfo=timezone.utc).astimezone(tz).date()
+    yesterday = today - timedelta(days=1)                       # today is still incomplete, so it is not history
+    totals = _daily_totals(db, tenant_id, entity, today - timedelta(days=LOOKBACK_DAYS), yesterday, tz)
+    if len(totals) < MIN_ACTIVE_DAYS or (yesterday - min(totals)).days + 1 < MIN_DAYS:
+        return None
+    days = [min(totals) + timedelta(days=i) for i in range((yesterday - min(totals)).days + 1)]
+    values = [totals.get(d, 0.0) for d in days]
+    mean = sum(values) / len(values)
+    if mean <= 0:
+        return None
+    by_weekday = defaultdict(list)
+    for d, v in zip(days, values):
+        by_weekday[d.weekday()].append(v)
+    factor = {w: (sum(vs) / len(vs)) / mean for w, vs in by_weekday.items()}
+    adjusted = [(i, v / factor[d.weekday()]) for i, (d, v) in enumerate(zip(days, values)) if factor[d.weekday()] > 0]
+    slope, intercept = _least_squares([float(i) for i, _ in adjusted], [y for _, y in adjusted])
+    recent = [y for _, y in adjusted[-28:]]
+    recent_level, last_i = sum(recent) / len(recent), len(days) - 1
+    level = lambda k: min(max(intercept + slope * (last_i + k), 0.6 * recent_level), 1.4 * recent_level)   # no runaway trends
+    residuals = [v - (intercept + slope * i) * factor[d.weekday()] for i, (d, v) in enumerate(zip(days, values))]
+    sigma = math.sqrt(sum(r * r for r in residuals) / max(1, len(residuals) - 2))
+    out = []
+    for j in range(1, horizon_days + 1):
+        day = today + timedelta(days=j)
+        expected = level((day - yesterday).days) * factor[day.weekday()]
+        out.append(DayForecast(day, _WEEKDAYS[day.weekday()], round(expected, 2), round(max(0.0, expected - _Z80 * sigma), 2), round(expected + _Z80 * sigma, 2)))
+    total, spread = sum(d.expected for d in out), _Z80 * sigma * math.sqrt(horizon_days)
+    strongest, weakest = max(factor, key=factor.get), min(factor, key=factor.get)
+    return SeasonalForecast(
+        horizon_days, out, round(total, 2), round(max(0.0, total - spread), 2), round(total + spread, 2), len(days) // 7,
+        _WEEKDAYS[strongest], _WEEKDAYS[weakest], round((slope * last_i) / intercept * 100, 1) if intercept > 0 else 0.0)
 
 
 @dataclass

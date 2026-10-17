@@ -37,6 +37,10 @@ function Field({ label, value, onChange, type = "text", required, placeholder, h
 const MAP_FIELDS: { key: string; label: string; required?: boolean; help?: string }[] = [
   { key: "timestamp", label: "When it happened", required: true, help: "The date, and time if there is one, of each sale or expense." },
   { key: "amount", label: "Amount", help: "The money value of each row." },
+  { key: "amount_in", label: "Money in", help: "Use Money in and Money out instead of Amount when your sheet keeps them in separate columns (M-Pesa, bank, debit and credit). Money in counts as sales." },
+  { key: "amount_out", label: "Money out", help: "Money paid out. Rows with money out count as expenses." },
+  { key: "price", label: "Unit price", help: "Only when there is no total: the amount is worked out as quantity × price." },
+  { key: "type", label: "Type of row", help: "A column saying sale or expense. Words like Expense, Purchase or Withdrawal count as expenses." },
   { key: "quantity", label: "Quantity", help: "How many units, if your data has it." },
   { key: "currency", label: "Currency", help: "Only if each row carries its own currency. Otherwise use the currency box above." },
   { key: "location", label: "Branch or location", help: "The shop or branch, so locations can be compared." },
@@ -64,7 +68,7 @@ function Mapper({ f, set, info, webhook }: { f: F; set: (k: string, v: string) =
         {MAP_FIELDS.map((m) => {
           const k = m.key === "timestamp" ? `timestamp${suffix}` : `${m.key}${suffix}`;
           return (
-            <label key={k} className="block text-sm text-ink-muted">{m.label}{m.required && !webhook ? " *" : ""}
+            <label key={k} className="block text-sm text-ink-muted">{m.key === "product_id" && f.entity === "expense" ? "Category" : m.label}{m.required && !webhook ? " *" : ""}
               {cols ? (
                 <select className={`${inputCls} mt-1`} value={f[k] ?? ""} onChange={(e) => set(k, e.target.value)} required={m.required}>
                   <option value="">{m.required ? "Choose a column" : "Not in my data"}</option>
@@ -72,7 +76,7 @@ function Mapper({ f, set, info, webhook }: { f: F; set: (k: string, v: string) =
                 </select>
               ) : <input className={`${inputCls} mt-1`} value={f[k] ?? ""} onChange={(e) => set(k, e.target.value)} required={m.required && !webhook} placeholder={webhook ? "data.amount" : "Column name"} />}
               {info?.reasons[k] && <span className="block text-xs text-info mt-1">Why: {info.reasons[k]}</span>}
-              {m.help && <span className="block text-xs text-ink-faint mt-1">{m.help}</span>}
+              {m.help && <span className="block text-xs text-ink-faint mt-1">{m.key === "product_id" && f.entity === "expense" ? "What the money was spent on, such as Wages or Transport." : m.help}</span>}
             </label>
           );
         })}
@@ -166,7 +170,7 @@ export function ConnectWizard({ tenantId, onClose, onDone }: { tenantId: string;
       const config = { ...sourceConfig(), ...(entry!.type === "webhook" || entry!.type === "local_agent" ? {} : {}), ...mappingConfig() };
       const created = await connectorApi.create({
         tenant_id: tenantId, name: name.trim() || entry!.title, connector_type: entry!.type, config,
-        expected_frequency: entry!.type === "webhook" ? "realtime" : interval ? "periodic" : null,
+        expected_frequency: entry!.type === "webhook" ? "realtime" : pull && interval ? "periodic" : null,
         sync_interval_minutes: pull && interval ? Number(interval) : null,
       });
       let summary: string | null = null;

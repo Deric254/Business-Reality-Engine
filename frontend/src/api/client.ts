@@ -398,6 +398,17 @@ export interface ImportResult { new_rows?: number; rows_processed?: number; fail
 export const skippedNote = (r: ImportResult) =>
   r.skipped ? ` ${r.skipped} row${r.skipped === 1 ? "" : "s"} skipped (${(r.skipped_examples ?? []).join("; ")}${r.skipped > (r.skipped_examples?.length ?? 0) ? "; …" : ""}).` : "";
 
+/** Two sources that look like the same records (a POS and an M-Pesa statement), and confirmed merges. */
+export interface OverlapSuggestion {
+  entity: string; matched: number; share: number; window: string;
+  keep: { id: string; name: string; records: number }; other: { id: string; name: string; records: number };
+}
+export interface OnlyHere { count: number; amount: number; recent: { timestamp: string; amount: number }[] }
+export interface MergedPair {
+  entity: string; counted_once: number;
+  keep: { id: string; name: string; only_here: OnlyHere }; other: { id: string; name: string; only_here: OnlyHere };
+}
+
 /** What one source adds to the shared dataset. */
 export interface Contribution { counted: number; matched: number; rejected: number }
 export interface DbType { db_type: string; available: boolean; verified: boolean; default_port: number | null; notes: string }
@@ -422,6 +433,9 @@ export const connectorApi = {
   update: (t: string, id: string, patch: { is_active?: boolean; sync_interval_minutes?: number | null; clear_sync_interval?: boolean }) =>
     request<ConnectorRow>(`/api/connectors/${id}?tenant_id=${t}`, { method: "PATCH", ...json(patch) }),
   contributions: (t: string) => request<Record<string, Contribution>>(`/api/connectors/contributions?tenant_id=${t}`),
+  overlaps: (t: string) => request<{ suggestions: OverlapSuggestion[]; merged: MergedPair[] }>(`/api/connectors/overlaps?tenant_id=${t}`),
+  merge: (t: string, otherId: string, keepId: string) => request<{ counted_once: number }>(`/api/connectors/${otherId}/merge-into/${keepId}?tenant_id=${t}`, { method: "POST" }),
+  unmerge: (t: string, otherId: string) => request<{ restored: number }>(`/api/connectors/${otherId}/merge?tenant_id=${t}`, { method: "DELETE" }),
   disconnect: (t: string, id: string) => request<{ removed_records: number }>(`/api/connectors/${id}?tenant_id=${t}`, { method: "DELETE" }),
   dbTypes: (t: string) => request<DbType[]>(`/api/connectors/meta/database-types?tenant_id=${t}`),
   sync: (t: string, id: string, type: string) =>

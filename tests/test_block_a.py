@@ -359,7 +359,7 @@ def test_llm_intent_fallback_only_accepts_known_intents(db, monkeypatch, reply, 
     monkeypatch.setattr(bq, "get_provider", lambda *a, **k: fake)
     out = bq.answer_question(db, t, "bei ya mauzo ikoje wiki hii")
     assert out["answered"] is answered and out["advisory"]
-    assert fake.calls and "Do not answer the question" in fake.calls[0][0]
+    assert any("Do not answer the question" in system for system, _ in fake.calls)       # the planner is asked first, then the classifier
     if answered and reply.strip(" .\n").lower() == "sales":
         assert out["intent"] == "sales" and out["classified_by"] == "llm" and out["answer_source"] == "deterministic"
 

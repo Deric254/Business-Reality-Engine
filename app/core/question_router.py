@@ -15,15 +15,15 @@ from sqlalchemy.orm import Session
 
 from app.core import coverage as coverage_mod
 from app.core.alert_engine import ACTIVE
-from app.core.detection import _sum_metric
-from app.core.forecasting import forecast_next_period
+from app.core.detection import _by_dimension, _sum_metric, dimension_movers
+from app.core.forecasting import forecast_days, forecast_next_period
 from app.models.alerts import Alert
 from app.models.core import BusinessEvent, ResolvedEntity
 
 _UNITS = {"day": 1, "week": 7, "month": 30, "quarter": 90, "year": 365}
 SUGGESTIONS = [
     "Why did profit fall?", "How are sales this month?", "What are my expenses this week?",
-    "Who are my top customers?", "What are my best selling products?", "What will sales be next week?",
+    "Which branch is doing worst?", "Which day of the week is my best?", "Who are my top customers?", "What are my best selling products?", "What will sales be next week?",
     "What needs my attention?", "Is my data up to date?",
 ]
 
@@ -48,6 +48,8 @@ _RULES: list[tuple[str, re.Pattern]] = [
     ("top_customers", re.compile(r"\b(top|best|biggest|largest|main|key)\b.*\bcustomers?\b|\bcustomers?\b.*\b(top|best|biggest)\b|\bwho (buys|are my)\b.*\bcustomers?\b")),
     ("top_products", re.compile(r"\b(top|best|biggest|selling|popular)\b.*\b(products?|items?)\b|\b(products?|items?)\b.*\b(top|best|selling)\b|\bbest sellers?\b")),
     ("top_suppliers", re.compile(r"\b(top|biggest|largest|main)\b.*\bsuppliers?\b|\bsuppliers?\b.*\b(most|top|biggest)\b|\bwho do i (pay|spend)\b")),
+    ("weekdays", re.compile(r"\b(day of (the )?week|weekdays?|busiest day|slowest day|quietest day|best day|worst day|which days?)\b")),
+    ("branches", re.compile(r"\b(branch(es)?|locations?|shops?|outlets?|stores?)\b")),
     ("profit", re.compile(r"\b(profit|margin|earnings|net income|bottom line)\b")),
     ("sales", re.compile(r"\b(sales?|revenue|income|turnover|selling|sold|takings)\b")),
     ("expenses", re.compile(r"\b(expenses?|costs?|spend(ing)?|spent|outgoings?)\b")),
@@ -75,14 +77,50 @@ def _change(cur: float, prev: float) -> tuple[Optional[float], str]:
     return round(pct, 1), f"{'up' if pct >= 0 else 'down'} {abs(pct):.1f}% from {_money(prev)} in the period before"
 
 
+def _movers(db, tenant_id, entity, days, now, rising):
+    """The branches and products behind a change in the total, as a sentence plus the structured detail."""
+    cur, prev = (now - timedelta(days=days), now), (now - timedelta(days=days * 2), now - timedelta(days=days))
+    found = {label: m for column, label in (("location", "branch"), ("product_id", "category" if entity == "expense" else "product"))
+             if (m := dimension_movers(db, tenant_id, entity, column, cur, prev, rising))}
+    text = "".join(f" {label.capitalize()} {m['value']} {'up' if rising else 'down'} {abs(m['change_pct'])}% ({_money(m['before'])} to {_money(m['after'])})."
+                   for label, ms in found.items() for m in ms)
+    return (" Where it moved:" + text if text else ""), found
+
+
 def _metric_answer(db, tenant_id, entity, noun, days, label, now):
     cur = _sum_metric(db, tenant_id, entity, "amount", now - timedelta(days=days), now)
     prev = _sum_metric(db, tenant_id, entity, "amount", now - timedelta(days=days * 2), now - timedelta(days=days))
     if not cur and not prev:
         return {"answer": f"There is no {noun} data in {label} or the period before it.", "evidence": {"current": 0, "previous": 0}}
     pct, phrase = _change(cur, prev)
-    return {"answer": f"{noun.capitalize()} over {label} were {_money(cur)}, {phrase}.",
-            "evidence": {"period_days": days, "current": cur, "previous": prev, "change_pct": pct}}
+    where, found = _movers(db, tenant_id, entity, days, now, rising=cur > prev) if cur != prev else ("", {})
+    return {"answer": f"{noun.capitalize()} over {label} were {_money(cur)}, {phrase}.{where}",
+            "evidence": {"period_days": days, "current": cur, "previous": prev, "change_pct": pct, "movers": found}}
+
+
+def _weekdays(db, tenant_id, q, days, label, now):
+    from app.core import query_plan                      # imported here: query_plan itself builds on this module
+    measure = "expenses" if re.search(r"\b(expenses?|costs?|spend(ing)?|spent)\b", q) else "revenue"
+    out = query_plan.run_last_days(db, tenant_id, measure, "weekday", days, now)
+    return {"answer": out["answer"], "evidence": out["evidence"]}
+
+
+def _branches(db, tenant_id, q, days, label, now):
+    cur = _by_dimension(db, tenant_id, "sale", "location", now - timedelta(days=days), now)
+    prev = _by_dimension(db, tenant_id, "sale", "location", now - timedelta(days=days * 2), now - timedelta(days=days))
+    if len(cur) < 2:
+        seen = f"only one branch ({next(iter(cur))})" if cur else "no branch"
+        return {"answer": f"Your sales records name {seen} in {label}, so there is nothing to compare. "
+                          "Include a branch or location column when you connect a source.", "evidence": {"branches": []}}
+    rows = sorted(({"name": n, "amount": a, "previous": prev.get(n, 0.0),
+                    "change_pct": round((a - prev[n]) / prev[n] * 100, 1) if prev.get(n) else None} for n, a in cur.items()),
+                  key=lambda r: -r["amount"])
+    show = lambda r: _money(r["amount"]) + (f", {r['change_pct']:+.0f}% on the period before" if r["change_pct"] is not None else "")
+    answer = f"Over {label}, {rows[0]['name']} sold the most ({show(rows[0])}) and {rows[-1]['name']} the least ({show(rows[-1])})."
+    falling = min((r for r in rows if r["change_pct"] is not None), key=lambda r: r["change_pct"], default=None)
+    if falling and falling["change_pct"] <= -10:
+        answer += f" Biggest fall: {falling['name']}, down {abs(falling['change_pct']):.0f}% from {_money(falling['previous'])} to {_money(falling['amount'])}."
+    return {"answer": answer, "evidence": {"period_days": days, "branches": rows}}
 
 
 def _ranked(db, tenant_id, entity, fk_col, days, now, limit=5):
@@ -115,6 +153,16 @@ def _ranking_answer(kind, entity, fk, verb):
 def _forecast(db, tenant_id, q, days, label, now):
     entity, noun = ("expense", "expenses") if re.search(r"\b(expenses?|costs?|spend)", q) else ("sale", "sales")
     period = 30 if re.search(r"month", q) else 7
+    f = forecast_days(db, tenant_id, entity, period, now)
+    if f:
+        trend = "flat" if abs(f.trend_pct) < 2 else f"{'up' if f.trend_pct > 0 else 'down'} {abs(f.trend_pct):.0f}%"
+        return {"answer": (f"If your weekly pattern holds, {noun} over the next {period} days will be about {_money(f.total)} "
+                           f"(likely between {_money(f.low)} and {_money(f.high)}). Strongest day: {f.busiest}; quietest: {f.quietest}. "
+                           f"Based on the last {f.weeks_of_history} weeks, with the underlying trend {trend} over that time. "
+                           "Holidays and paydays are not modelled, so treat this as a guide, not a promise."),
+                "evidence": {"period_days": period, "method": "weekly pattern + trend", "weeks_of_history": f.weeks_of_history,
+                             "forecast_total": f.total, "low": f.low, "high": f.high, "trend_pct": f.trend_pct,
+                             "days": [{"date": d.day.isoformat(), "weekday": d.weekday, "expected": d.expected, "low": d.low, "high": d.high} for d in f.days]}}
     t = forecast_next_period(db, tenant_id, entity, "amount", period, 6, now)
     vals = t.historical_values
     if sum(1 for v in vals if v > 0) < 3:
@@ -158,7 +206,7 @@ HANDLERS: dict[str, Callable] = {
     "top_customers": _ranking_answer("customers", "sale", "resolved_customer_id", "sales"),
     "top_products": _ranking_answer("products", "sale", "resolved_product_id", "sales"),
     "top_suppliers": _ranking_answer("suppliers", "expense", "resolved_supplier_id", "spend"),
-    "forecast": _forecast, "attention": _attention, "data_health": _data_health,
+    "weekdays": _weekdays, "branches": _branches, "forecast": _forecast, "attention": _attention, "data_health": _data_health,
 }
 
 

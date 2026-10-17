@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.models.core import BusinessEvent, Connector, Tenant
+from app.core import reconcile
 from app.core.fx import convert_event_fields
 from app.core.entity_resolution import resolve_entities_bulk
 
@@ -261,6 +262,11 @@ def ingest_events_bulk(db: Session, payloads: list[NormalizedEvent], chunk_size:
         except Exception:
             db.rollback()
             raise
+    try:
+        reconcile.reapply(db, {p.connector_id for p in payloads})       # pair new records under any confirmed merge
+    except Exception:
+        db.rollback()
+        raise
     try:
         from app.core.cache import invalidate_prefix
         for tid in {p.tenant_id for p in payloads}:

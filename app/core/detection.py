@@ -169,6 +169,43 @@ def _period_stats(db: Session, tenant_id: str, entity: str, start: datetime, end
     }
 
 
+def _by_dimension(db: Session, tenant_id: str, entity: str, column: str, start: datetime, end: datetime) -> dict[str, float]:
+    col = getattr(BusinessEvent, column)
+    rows = (
+        db.query(col, func.coalesce(func.sum(BusinessEvent.amount), 0))
+        .filter(BusinessEvent.tenant_id == tenant_id, BusinessEvent.entity == entity,
+                BusinessEvent.timestamp >= start, BusinessEvent.timestamp < end,
+                BusinessEvent.validation_status == "validated", col.isnot(None))
+        .group_by(col).all()
+    )
+    return {value: float(amount) for value, amount in rows}
+
+
+def dimension_movers(
+    db: Session, tenant_id: str, entity: str, column: str, current: tuple[datetime, datetime],
+    baseline: tuple[datetime, datetime], rising: bool, notable: float = 0.10, limit: int = 3,
+) -> list[dict]:
+    """Which branches (column="location") or products (column="product_id") moved the total, biggest first.
+    Only values that moved the same way as the total, by a notable amount, and that carry a real share (15%+)
+    of all movement that way; a value with no earlier period cannot be compared and is left out."""
+    now_t, before_t = _by_dimension(db, tenant_id, entity, column, *current), _by_dimension(db, tenant_id, entity, column, *baseline)
+    values = set(now_t) | set(before_t)
+    if len(values) < 2:
+        return []                                       # one branch or product: nothing to compare against
+    moved = {v: d for v in values if (d := now_t.get(v, 0.0) - before_t.get(v, 0.0)) and (d > 0) == rising}
+    total = sum(abs(d) for d in moved.values())
+    out = []
+    for value, d in sorted(moved.items(), key=lambda kv: -abs(kv[1])):
+        before = before_t.get(value, 0.0)
+        if not before or abs(d) / before < notable or abs(d) / total < 0.15:
+            continue
+        out.append({"value": value, "before": before, "after": now_t.get(value, 0.0),
+                    "change_pct": round(d / before * 100), "share_pct": round(abs(d) / total * 100)})
+        if len(out) == limit:
+            break
+    return out
+
+
 def _pct_change(current: float, baseline: float) -> Optional[float]:
     if not baseline:
         return None
@@ -206,6 +243,16 @@ def explain_deviation(
     # For cost-like metrics the bad move is UP, so drivers are named by increases.
     sign = -1 if rising else 1
     word = "rose" if rising else "fell"
+
+    # Where it happened comes first: a branch or product the owner can act on beats a generic "volume fell".
+    product_label = ("Category", "categories") if entity == "expense" else ("Product", "products")      # what a cost was spent on
+    for column, (label, plural) in (("location", ("Branch", "branches")), ("product_id", product_label)):
+        for m in dimension_movers(db, tenant_id, entity, column, (current_start, current_end), (baseline_start, baseline_end), rising, NOTABLE):
+            explanations.append({
+                "driver": f"{label}: {m['value']} {word}",
+                "evidence": f"{m['value']}: {m['before']:,.0f} -> {m['after']:,.0f} ({m['change_pct']:+d}%), "
+                            f"{m['share_pct']}% of the {'rise' if rising else 'fall'} across the {plural} that {word}.",
+            })
 
     if txn_change is not None and sign * txn_change <= -NOTABLE:
         explanations.append({

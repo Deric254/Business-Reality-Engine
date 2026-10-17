@@ -63,6 +63,9 @@ class Connector(Base):
     last_sync_status = Column(String, nullable=True)     # success | failed | partial
     sync_interval_minutes = Column(Integer, nullable=True)   # Section 17: pull-type connectors sync on this schedule (NULL = manual only)
     last_attempt_at = Column(DateTime, nullable=True)         # last scheduled/manual sync attempt, successful or not
+    # Set once the owner confirms that this source records the SAME sales or expenses as another one (a POS and an
+    # M-Pesa statement) without sharing an id: matching records are then counted once, in the source named here.
+    merge_into = Column(UUID(as_uuid=False), ForeignKey("connectors.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (Index("ix_connectors_tenant", "tenant_id"),)

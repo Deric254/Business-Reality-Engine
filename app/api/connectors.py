@@ -5,7 +5,8 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.core import audit, sources
+from app.core import audit, reconcile, sources
+from app.core.cache import invalidate_prefix
 from app.core.db import get_db
 from app.core.ingestion import NormalizedEvent, ingest_events_bulk
 from app.connectors.file_connector import (
@@ -78,6 +79,7 @@ class ConnectorOut(BaseModel):
     expected_frequency: Optional[str] = None
     sync_interval_minutes: Optional[int] = None
     last_attempt_at: Optional[datetime] = None
+    merge_into: Optional[str] = None        # set when the owner confirmed it records the same things as that source
     webhook_url: Optional[str] = None       # only populated once, at creation
     webhook_token: Optional[str] = None      # RAW token — shown exactly once, never again
 
@@ -162,6 +164,45 @@ def source_contributions(tenant_id: str, db: Session = Depends(get_db), authoriz
     """What each source adds to the shared dataset: counted, matched to another source's copy, rejected."""
     authorize_tenant(authorization, tenant_id)
     return sources.contributions(db, tenant_id)
+
+
+@router.get("/overlaps")
+def source_overlaps(tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+    """Sources that look like the same records (to confirm) and, for confirmed merges, what exists in only one source."""
+    authorize_tenant(authorization, tenant_id)
+    return {"suggestions": reconcile.suggestions(db, tenant_id), "merged": reconcile.merged_pairs(db, tenant_id)}
+
+
+@router.post("/{other_id}/merge-into/{keep_id}")
+def merge_sources(other_id: str, keep_id: str, tenant_id: str, request: Request, db: Session = Depends(get_db),
+                  authorization: Optional[str] = Header(default=None)):
+    """Owner confirms two sources record the same things: matching records are counted once, in `keep_id`."""
+    me = authorize_tenant(authorization, tenant_id, require_role="owner")
+    if other_id == keep_id:
+        raise HTTPException(400, "A source cannot be merged into itself")
+    other, keep = _get_owned_connector(db, other_id, tenant_id), _get_owned_connector(db, keep_id, tenant_id)
+    if keep.merge_into or db.query(Connector.id).filter(Connector.merge_into == other.id).first():
+        raise HTTPException(400, "One of these sources is already merged with another. Undo that first.")
+    paired = reconcile.merge(db, other, keep)
+    invalidate_prefix(f"kpis:{tenant_id}:")
+    audit.record(db, "connector.merge", request=request, tenant_id=tenant_id, actor_user_id=me.user_id, target=other_id,
+                 detail={"into": keep_id, "counted_once": paired})
+    return {"counted_once": paired}
+
+
+@router.delete("/{other_id}/merge")
+def unmerge_source(other_id: str, tenant_id: str, request: Request, db: Session = Depends(get_db),
+                   authorization: Optional[str] = Header(default=None)):
+    """Undo a merge: every record it hid counts again."""
+    me = authorize_tenant(authorization, tenant_id, require_role="owner")
+    other = _get_owned_connector(db, other_id, tenant_id)
+    if not other.merge_into:
+        raise HTTPException(400, "This source is not merged with another")
+    restored = reconcile.unmerge(db, other)
+    invalidate_prefix(f"kpis:{tenant_id}:")
+    audit.record(db, "connector.unmerge", request=request, tenant_id=tenant_id, actor_user_id=me.user_id, target=other_id,
+                 detail={"restored": restored})
+    return {"restored": restored}
 
 
 @router.get("/{connector_id}", response_model=ConnectorOut)

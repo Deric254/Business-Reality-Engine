@@ -109,9 +109,13 @@ def _deterministic_fallback(evidence: dict) -> str:
     return " ".join(parts)
 
 
+PLANNABLE = {"sales", "expenses", "branches", "weekdays", "top_customers", "top_products", "top_suppliers"}
+
+
 def answer_question(db: Session, tenant_id: str, question: str, period_days: int = 30) -> dict:
     """Section 45: route the question to the analytics that can answer it. Profit questions keep the
     optional LLM phrasing; everything else is deterministic. Unplaceable questions are said so."""
+    from app.core import query_plan
     from app.core.question_router import route, SUGGESTIONS
     from app.core.advisory import advisory_text, language_name
     from app.core.question_router import classify, classify_with_llm
@@ -119,6 +123,18 @@ def answer_question(db: Session, tenant_id: str, question: str, period_days: int
     tenant = db.get(Tenant, tenant_id)
     lang = (tenant.language if tenant and tenant.language else "en")
     routed = route(db, tenant_id, question, period_days)
+    try:
+        provider = get_provider(db, tenant_id)
+    except Exception:
+        provider = None
+    if provider and (routed is None or (routed["intent"] in PLANNABLE and query_plan.needs_plan(db, tenant_id, question))):
+        # With a model connected, a question the fixed intents cannot express (a filter, a grouping, a comparison) is
+        # PLANNED by the model and then run as SQL; the model never sees or writes numbers.
+        planned = query_plan.answer_with_plan(db, tenant_id, question, provider)
+        if planned:
+            return {"question": question, "answered": True, "intent": planned["intent"], "answer": planned["answer"],
+                    "evidence": planned["evidence"], "answer_source": "deterministic", "classified_by": "llm_plan",
+                    "advisory": advisory_text(lang)}
     if routed is None and classify(question) is None:
         # No keyword matched: let a configured model pick an intent (classification only; numbers stay in SQL).
         try:
