@@ -11,7 +11,7 @@ def contributions(db: Session, tenant_id: str) -> dict[str, dict[str, int]]:
     (kept for provenance, not double counted), and records rejected as invalid."""
     rows = (db.query(E.connector_id,
                      func.count(case((E.validation_status == "validated", 1))),
-                     func.count(case((E.validation_status == "duplicate", 1))),
+                     func.count(case((E.validation_status.in_(("duplicate", "matched")), 1))),
                      func.count(case((E.validation_status == "failed", 1))))
             .filter(E.tenant_id == tenant_id).group_by(E.connector_id).all())
     return {cid: {"counted": counted, "matched": matched, "rejected": rejected} for cid, counted, matched, rejected in rows}
@@ -63,4 +63,6 @@ def remove_source(db: Session, connector: Connector) -> dict:
     db.expunge(connector)                  # its row is gone; the session must not try to refresh it
     db.commit()
     invalidate_prefix(f"kpis:{tenant_id}:")
+    invalidate_prefix(f"overlaps:{tenant_id}")
+    invalidate_prefix(f"names:{tenant_id}")
     return {"removed_records": removed}

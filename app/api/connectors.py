@@ -170,7 +170,7 @@ def source_contributions(tenant_id: str, db: Session = Depends(get_db), authoriz
 def source_overlaps(tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
     """Sources that look like the same records (to confirm) and, for confirmed merges, what exists in only one source."""
     authorize_tenant(authorization, tenant_id)
-    return {"suggestions": reconcile.suggestions(db, tenant_id), "merged": reconcile.merged_pairs(db, tenant_id)}
+    return reconcile.overview(db, tenant_id)
 
 
 @router.post("/{other_id}/merge-into/{keep_id}")
@@ -185,6 +185,7 @@ def merge_sources(other_id: str, keep_id: str, tenant_id: str, request: Request,
         raise HTTPException(400, "One of these sources is already merged with another. Undo that first.")
     paired = reconcile.merge(db, other, keep)
     invalidate_prefix(f"kpis:{tenant_id}:")
+    invalidate_prefix(f"overlaps:{tenant_id}")
     audit.record(db, "connector.merge", request=request, tenant_id=tenant_id, actor_user_id=me.user_id, target=other_id,
                  detail={"into": keep_id, "counted_once": paired})
     return {"counted_once": paired}
@@ -200,6 +201,7 @@ def unmerge_source(other_id: str, tenant_id: str, request: Request, db: Session 
         raise HTTPException(400, "This source is not merged with another")
     restored = reconcile.unmerge(db, other)
     invalidate_prefix(f"kpis:{tenant_id}:")
+    invalidate_prefix(f"overlaps:{tenant_id}")
     audit.record(db, "connector.unmerge", request=request, tenant_id=tenant_id, actor_user_id=me.user_id, target=other_id,
                  detail={"restored": restored})
     return {"restored": restored}

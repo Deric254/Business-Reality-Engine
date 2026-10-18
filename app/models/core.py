@@ -115,10 +115,11 @@ class BusinessEvent(Base):
 
     # Section 11: provenance / ingestion tracking
     imported_at = Column(DateTime, default=datetime.utcnow)
-    validation_status = Column(String, default="pending")  # pending | validated | failed | duplicate
+    validation_status = Column(String, default="pending")  # pending | validated | failed | duplicate | matched
     validation_errors = Column(JSON, nullable=True)
-    # "duplicate" = the same record (same id, amount, day) is already counted from ANOTHER source. The row is kept for
-    # provenance but excluded from every total; this points at the copy that is counted.
+    # "duplicate" = the same record (same id, amount, day) is already counted from ANOTHER source; "matched" = the owner
+    # confirmed the two sources are the same and this record pairs with one there (same amount, close in time). Either
+    # way the row is kept for provenance but excluded from every total; this points at the copy that is counted.
     duplicate_of = Column(UUID(as_uuid=False), ForeignKey("business_events.id", ondelete="SET NULL"), nullable=True)
 
     __table_args__ = (
@@ -167,6 +168,16 @@ class ResolvedEntity(Base):
     aliases = relationship("EntityAlias", back_populates="entity")
 
     __table_args__ = (Index("ix_resolved_entities_tenant_type", "tenant_id", "entity_type"),)
+
+
+class TenantLocation(Base):
+    """The one spelling of each place a business uses: "nairobi", "Nairobi " and "NAIROBI" are a single location.
+    A small lookup keyed by tenant, so ingestion never has to scan the (huge) events table to find the spelling."""
+    __tablename__ = "tenant_locations"
+
+    tenant_id = Column(UUID(as_uuid=False), ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True)
+    key = Column(String, primary_key=True)             # lower case, spaces squashed
+    name = Column(String, nullable=False)              # the spelling shown everywhere
 
 
 class EntityAlias(Base):

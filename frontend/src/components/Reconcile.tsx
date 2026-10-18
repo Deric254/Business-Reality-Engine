@@ -52,7 +52,7 @@ export function Reconcile({ tenantId, isOwner, rows, onChanged, setNotice, setEr
     <div className="space-y-3">
       {open.map((s) => (
         <Card key={key(s)} accent="var(--color-info)">
-          <p className="text-sm"><b>{s.other.name}</b> and <b>{s.keep.name}</b> look like the same {kind(s.entity)}: {s.matched.toLocaleString()} records match (same amount, within {s.window}). If you add both, these are counted twice.</p>
+          <p className="text-sm"><b>{s.other.name}</b> and <b>{s.keep.name}</b> look like the same {kind(s.entity)}: {s.matched.toLocaleString()} records from the last {s.window_days} days match (same amount, within {s.window}). If you add both, these are counted twice. Counting once is quick for most businesses; a history of hundreds of thousands of records can take a minute.</p>
           {isOwner
             ? <div className="mt-3 flex flex-wrap gap-2">
                 <button className={primaryCls} disabled={busy} onClick={() => act(async () => `Counted once: ${(await connectorApi.merge(tenantId, s.other.id, s.keep.id)).counted_once} records matched. ${s.keep.name} is the main record.`)}>Count them once</button>
@@ -63,7 +63,7 @@ export function Reconcile({ tenantId, isOwner, rows, onChanged, setNotice, setEr
       ))}
       {merged.map((m) => (
         <Card key={`${m.other.id}:${m.entity}`}>
-          <p className="text-sm"><b>{m.other.name}</b> {kind(m.entity)} are counted once with <b>{m.keep.name}</b>: {m.counted_once.toLocaleString()} records matched.</p>
+          <p className="text-sm"><b>{m.other.name}</b> {kind(m.entity)} are counted once with <b>{m.keep.name}</b>: {m.counted_once.toLocaleString()} records matched. The lists below cover the last {m.window_days} days.</p>
           <div className="mt-2 space-y-1">
             <OnlyIn name={m.other.name} here={m.other.only_here} />
             <OnlyIn name={m.keep.name} here={m.keep.only_here} />

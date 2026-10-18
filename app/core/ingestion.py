@@ -10,12 +10,12 @@ from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import HTTPException
-from sqlalchemy import func, tuple_
+from sqlalchemy import tuple_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
-from app.models.core import BusinessEvent, Connector, Tenant
+from app.models.core import BusinessEvent, Connector, Tenant, TenantLocation
 from app.core import reconcile
 from app.core.fx import convert_event_fields
 from app.core.entity_resolution import resolve_entities_bulk
@@ -92,17 +92,15 @@ def _squash(value: str) -> str:
     return " ".join(value.split())
 
 
-def _canonical_locations(db: Session, chunk: list[NormalizedEvent]) -> dict[tuple, str]:
+def _canonical_locations(db: Session, payloads: list[NormalizedEvent]) -> dict[tuple, str]:
     """One spelling per place, so "nairobi", "Nairobi " and "NAIROBI" from different sources are one location. The
-    spelling already in the business wins; otherwise the first one seen."""
-    wanted = {(p.tenant_id, _squash(p.location).casefold()): _squash(p.location) for p in reversed(chunk) if p.location and p.location.strip()}
-    canon: dict[tuple, str] = {}
-    for tenant_id in {t for t, _ in wanted}:
-        keys = [k for t, k in wanted if t == tenant_id]
-        for (spelling,) in db.query(BusinessEvent.location).filter(
-                BusinessEvent.tenant_id == tenant_id, func.lower(func.btrim(BusinessEvent.location)).in_(keys)).distinct().order_by(BusinessEvent.location):
-            canon.setdefault((tenant_id, _squash(spelling).casefold()), spelling)
-    return {**wanted, **canon}
+    spelling the business already uses wins; a new place keeps the first spelling seen."""
+    wanted = {(p.tenant_id, _squash(p.location).casefold()): _squash(p.location) for p in reversed(payloads) if p.location and p.location.strip()}
+    if not wanted:
+        return {}
+    db.execute(pg_insert(TenantLocation).values([{"tenant_id": t, "key": k, "name": n} for (t, k), n in wanted.items()]).on_conflict_do_nothing())
+    rows = db.query(TenantLocation).filter(tuple_(TenantLocation.tenant_id, TenantLocation.key).in_(list(wanted))).all()
+    return {(r.tenant_id, r.key): r.name for r in rows}
 
 
 def _same_amount(a, b) -> bool:
@@ -114,12 +112,12 @@ def _find_cross_source_duplicates(db: Session, chunk: list[NormalizedEvent], row
     amount, within a day of each other. Needs a shared id (a receipt or order number); without one there is no safe
     way to tell two real sales apart, so those rows are never merged."""
     keys = {(p.tenant_id, p.entity, p.entity_id) for p in chunk if p.entity_id}
-    if not keys:
-        return
+    if not keys or not db.query(Connector.id).filter(Connector.tenant_id.in_({k[0] for k in keys}), Connector.id.notin_({p.connector_id for p in chunk})).first():
+        return                                                        # nothing to compare with: no other source
     originals: dict[tuple, list] = {}
     for ev in db.query(BusinessEvent).filter(
             BusinessEvent.tenant_id.in_({k[0] for k in keys}), BusinessEvent.validation_status == "validated",
-            tuple_(BusinessEvent.entity, BusinessEvent.entity_id).in_({(k[1], k[2]) for k in keys})):
+            BusinessEvent.entity_id.in_({k[2] for k in keys})):          # one column, so the (tenant, id) index serves it
         originals.setdefault((ev.tenant_id, ev.entity, ev.entity_id), []).append(ev)
     for p, row in zip(chunk, rows):
         if row["validation_status"] != "validated" or not p.entity_id:
@@ -130,7 +128,7 @@ def _find_cross_source_duplicates(db: Session, chunk: list[NormalizedEvent], row
                 break
 
 
-def _ingest_chunk(db: Session, chunk: list[NormalizedEvent], connectors: dict[str, Connector]) -> list[dict]:
+def _ingest_chunk(db: Session, chunk: list[NormalizedEvent], connectors: dict[str, Connector], places: dict[tuple, str]) -> list[dict]:
     """One transaction: resolve entities (each distinct value once), bulk
     INSERT ... ON CONFLICT DO NOTHING, commit. Duplicates are detected by the
     database's unique index — correct under concurrency, with no per-row
@@ -162,7 +160,6 @@ def _ingest_chunk(db: Session, chunk: list[NormalizedEvent], connectors: dict[st
     rows, errors_by_idx = [], []
     bases = {t.id: t.base_currency for t in db.query(Tenant).filter(Tenant.id.in_({p.tenant_id for p in chunk}))}
     fx_cache: dict = {}
-    places = _canonical_locations(db, chunk)
     for i, p in enumerate(chunk):
         data = p.model_dump()
         data["timestamp"] = _naive_utc(p.timestamp)
@@ -255,22 +252,26 @@ def ingest_events_bulk(db: Session, payloads: list[NormalizedEvent], chunk_size:
     if not payloads:
         return []
     connectors = _check_connectors(db, payloads)
+    places = _canonical_locations(db, payloads)
     results: list[dict] = []
     for start in range(0, len(payloads), chunk_size):
         try:
-            results.extend(_ingest_chunk(db, payloads[start:start + chunk_size], connectors))
+            results.extend(_ingest_chunk(db, payloads[start:start + chunk_size], connectors, places))
         except Exception:
             db.rollback()
             raise
     try:
-        reconcile.reapply(db, {p.connector_id for p in payloads})       # pair new records under any confirmed merge
+        stamps = [_naive_utc(p.timestamp) for p in payloads]
+        reconcile.reapply(db, {p.connector_id for p in payloads}, (min(stamps), max(stamps)))       # pair new records under any confirmed merge
     except Exception:
         db.rollback()
         raise
     try:
         from app.core.cache import invalidate_prefix
-        for tid in {p.tenant_id for p in payloads}:
-            invalidate_prefix(f"kpis:{tid}:")        # new data must show on the dashboard now, not after the cache TTL
+        for tid in {p.tenant_id for p in payloads}:      # new data must show on the dashboard now, not after the cache TTL
+            invalidate_prefix(f"kpis:{tid}:")
+            invalidate_prefix(f"overlaps:{tid}")
+            invalidate_prefix(f"names:{tid}")
     except Exception:
         pass
     return results

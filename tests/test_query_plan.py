@@ -6,7 +6,6 @@ import pytest
 
 from app.core import business_questions as bq
 from app.core.query_plan import QueryPlan, resolve_period
-from app.core.tenant_time import tenant_zone
 from tests.test_block_c import make_owner, mk
 
 CFG = {"entity": "sale", "event_type": "sale.created", "timestamp_col": "Date", "amount_col": "Total", "location_col": "Branch", "product_id_col": "Product"}

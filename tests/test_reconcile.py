@@ -1,10 +1,14 @@
 """Two sources that record the same sales with no shared id (a POS and an M-Pesa statement): detected, confirmed by the
 owner, counted once, undoable, and still reconciling as new data arrives."""
 import datetime as dt
+import time
 
 import pytest
 
-from app.core.reconcile import pair_rows
+from app.core import reconcile
+from app.core.db import SessionLocal, engine
+from app.models.core import BusinessEvent, Connector
+from sqlalchemy import text
 from tests.conftest import bearer, register
 from tests.test_block_c import make_owner, mk
 
@@ -119,25 +123,80 @@ def test_only_the_owner_merges_and_nonsense_requests_are_refused(client, shop):
     assert client.post(url(pos, mp), headers=h).status_code == 400                                       # no cycles, no chains
 
 
-def _row(i, minutes, amount):
-    return (f"r{i}", BASE + dt.timedelta(minutes=minutes), amount)
+# ---- the matching itself, on records written straight to the database ----
+@pytest.fixture()
+def pair(client):
+    """Two empty sources in one business; `put` adds records to them."""
+    t, h = make_owner(client, "recmatch")
+    keep = mk(client, t, h, name="Keep", connector_type="file", config=POS_CFG).json()["id"]
+    other = mk(client, t, h, name="Other", connector_type="file", config=MPESA_CFG).json()["id"]
+    db = SessionLocal()
+
+    def put(connector_id, rows, entity="sale"):
+        for i, (when, amount) in enumerate(rows):
+            db.add(BusinessEvent(tenant_id=t, connector_id=connector_id, source="s", entity=entity, event_type=f"{entity}.created", entity_id=f"{connector_id[:4]}{i}{when:%H%M%S}",
+                                 timestamp=when, amount=amount, currency="KES", validation_status="validated"))
+        db.commit()
+
+    def matched():
+        return db.execute(text("select count(*) from business_events where connector_id = :c and validation_status = 'matched'"), {"c": other}).scalar()
+
+    yield t, keep, other, put, matched, db
+    db.close()
 
 
-def test_pairing_is_one_to_one_and_nearest_first():
-    keep = [_row(1, 0, 100.0), _row(2, 1, 100.0)]
-    other = [_row(10, 0, 100.0), _row(11, 1, 100.0), _row(12, 2, 100.0)]
-    assert sorted(pair_rows(keep, other)) == [("r1", "r10"), ("r2", "r11")]                              # the third has no partner left
+def _at_time(h, m, s=0):
+    return dt.datetime(2026, 9, 3, h, m, s)
 
 
-def test_the_window_is_fifteen_minutes_and_amounts_must_match():
-    keep = [_row(1, 0, 100.0)]
-    assert pair_rows(keep, [_row(9, 15, 100.0)]) == [("r1", "r9")]
-    assert pair_rows(keep, [_row(9, 16, 100.0)]) == []
-    assert pair_rows(keep, [_row(9, 1, 100.5)]) == []
+def test_pairing_is_one_to_one(pair):
+    t, keep, other, put, matched, db = pair
+    put(keep, [(_at_time(10, 0), 100), (_at_time(10, 0, 30), 100)])
+    put(other, [(_at_time(10, 0, 10), 100), (_at_time(10, 0, 40), 100), (_at_time(10, 1), 100)])
+    assert reconcile._pair(db, t, keep, other, "sale") == 2 and matched() == 2                      # the third has no partner left
 
 
-def test_a_source_with_dates_only_pairs_on_the_same_day():
-    day = dt.datetime(2026, 9, 3)
-    keep = [("k1", day, 100.0), ("k2", day + dt.timedelta(days=1), 100.0)]
-    other = [("o1", day.replace(hour=17, minute=40), 100.0)]
-    assert pair_rows(keep, other) == [("k1", "o1")]
+def test_the_window_is_fifteen_minutes_and_amounts_must_match(pair):
+    t, keep, other, put, matched, db = pair
+    put(keep, [(_at_time(8, 0), 100), (_at_time(9, 0), 100), (_at_time(11, 0), 100)])
+    put(other, [(_at_time(8, 15), 100), (_at_time(9, 16), 100), (_at_time(11, 1), 101)])
+    assert reconcile._pair(db, t, keep, other, "sale") == 1 and matched() == 1                      # 15 minutes yes; 16 minutes no; another amount no
+
+
+def test_a_pair_on_either_side_of_a_bucket_edge_is_still_found(pair):
+    t, keep, other, put, matched, db = pair
+    put(keep, [(_at_time(10, 29), 100), (_at_time(12, 14), 200)])
+    put(other, [(_at_time(10, 43), 100), (_at_time(12, 0), 200)])                                 # 14 minutes apart, across a boundary of the first pass
+    assert reconcile._pair(db, t, keep, other, "sale") == 2
+
+
+def test_a_source_with_dates_only_is_matched_by_day(pair):
+    t, keep, other, put, matched, db = pair
+    put(keep, [(dt.datetime(2026, 9, 3), 100), (dt.datetime(2026, 9, 4), 100)])
+    put(other, [(_at_time(17, 40), 100)])
+    assert reconcile._pair(db, t, keep, other, "sale") == 1 and matched() == 1
+
+
+def test_new_arrivals_are_paired_only_near_themselves(pair):
+    t, keep, other, put, matched, db = pair
+    put(keep, [(_at_time(10, 0), 100), (dt.datetime(2026, 9, 20, 10, 0), 200)])
+    put(other, [(_at_time(10, 1), 100), (dt.datetime(2026, 9, 20, 10, 1), 200)])
+    db.get(Connector, other).merge_into = keep
+    db.commit()
+    reconcile.reapply(db, {other}, (_at_time(9, 55), _at_time(10, 5)))                           # only the 3 September records are new
+    assert matched() == 1
+    reconcile.reapply(db, {other}, (dt.datetime(2026, 9, 20), dt.datetime(2026, 9, 21)))
+    assert matched() == 2
+
+
+def test_it_holds_up_past_the_old_row_limit(pair):
+    t, keep, other, put, matched, db = pair
+    with engine.begin() as c:
+        for cid, offset in ((keep, "0 seconds"), (other, "90 seconds")):
+            c.execute(text("INSERT INTO business_events (id, tenant_id, connector_id, source, entity, entity_id, event_type, timestamp, amount, currency, metadata_json, imported_at, validation_status) "
+                           "SELECT gen_random_uuid(), CAST(:t AS uuid), CAST(:c AS uuid), 's', 'sale', :p || g, 'sale.created', TIMESTAMP '2026-01-01' + g * interval '7 minutes' + CAST(:o AS interval), "
+                           "100 + (g % 400), 'KES', '{}'::json, now(), 'validated' FROM generate_series(1, 60000) g"),
+                      {"t": t, "c": cid, "p": cid[:4], "o": offset})
+    started = time.perf_counter()
+    assert reconcile._pair(db, t, keep, other, "sale") == 60000                                      # more than the 50,000 an earlier version silently stopped at
+    assert time.perf_counter() - started < 30

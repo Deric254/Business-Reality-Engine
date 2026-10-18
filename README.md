@@ -31,11 +31,42 @@ cd frontend && npm install && npm run dev    # UI on :5173 (set VITE_API_BASE if
 python -m pytest tests -q -W ignore          # 357 tests; needs Postgres at DATABASE_URL
 ```
 
+## Scale
+Measured on one business with 860,000 records from three sources (a POS, an M-Pesa statement, accounting), PostgreSQL on a small machine: dashboard numbers 0.3 to 0.5 s, a full detection cycle 3.9 s, a question planned by the AI 1.0 s, a 5,000-row upload into that business 3.6 s (a single row 0.1 s), disconnecting a 400,000-record source 3.5 s. Things that are one-off and slow: confirming a merge that pairs 320,000 records takes about 30 s and undoing it about 15 s. Design rules that keep it this way: reconciliation runs as set-based SQL inside the database (never rows pulled into Python) and incrementally, only against records near new arrivals; it uses grouping instead of joins so a stale query plan after a bulk import cannot turn it quadratic; per-business lookups (location spellings, branch and product names) live in small tables or short caches, so no request scans the whole history to find them. Not measured: much beyond a million records in one business, or many hundreds of businesses in one database; at that size the events table would need partitioning.
+
+## Built for volume and many sources
+Measured on one business with about 860,000 records across three sources (a POS, an M-Pesa statement, an accounting export) on a single small Postgres:
+
+| Operation | Time |
+|---|---|
+| Dashboard numbers (30 and 365 days) | about 1 s |
+| Business health, source contributions | 0.4 to 0.5 s |
+| Plain question / weekday / forecast | 0.1 s |
+| AI-planned question (grouping, comparison over a year) | about 1.2 s |
+| Full detection cycle | about 3 s |
+| Upload of 5,000 rows | about 3 s (5 s while a merge rule is active); one row: 0.03 s |
+| Suggest merges between sources (cached 5 min) | about 4 s |
+| Confirm a merge that pairs 320,000 records (one time) | about 30 s |
+| Undo that merge / disconnect a 400,000-record source | about 17 s / 3 s |
+
+How it stays that way: aggregation and matching happen in the database, never by loading records into Python; after a merge, new records are paired only against records near them in time; spellings of places live in a small lookup table; branch and product names for the AI planner are cached. Matching works from small temporary tables with fresh statistics, because the planner cannot estimate the big table right after a bulk import.
+
+Not measured: more than about 1 million records in one business, or more than about 8 sources compared pairwise (suggestions stop there). The events table is not partitioned; at tens of millions of rows per business, partition it by tenant and month.
+
 ## Ask anything, with numbers you can trust
 - **Common questions need no AI** (profit, sales, expenses, top customers, branches, best weekday, forecast, what needs attention).
 - **Everything else is planned by the AI and answered by SQL.** With an AI provider connected, a question with a filter, a grouping or a comparison ("best products at Maua last month", "sales by week against last year", "average sale this week") is turned into a query plan: a small JSON object where every field is one of a fixed set of choices. The plan is validated, branch and product names must exist in the business's records, and then it runs as ordinary SQL. The AI never sees or writes a number; the answer states exactly what was computed (period, filters, comparison), so a misread question is visible. Customer names are never sent to the AI.
 - **Days start at the business's local midnight** (tenant timezone), for "today", weekday and daily groupings.
 - **Forecasts follow the weekly rhythm.** The next 7 or 30 days are projected day by day from the business's own pattern (a Saturday is not a Tuesday; a closed Sunday stays at zero) plus a trend, with a likely range from how far past days missed. It needs four weeks of history; with less, the older straight-line projection is used. Holidays and paydays are not modelled in the forecast.
+
+## Built for large histories and many sources
+Measured on one business with 860,000 records across three sources (a POS, an M-Pesa statement, accounting), on a small shared database:
+- Dashboard numbers 0.4 to 0.8 s, health score 1.1 s, a detection cycle 7 to 8 s, questions 0.1 to 2 s, disconnecting a 400,000-record source 7 s.
+- Ingesting 5,000 rows takes 4 to 6 s (about 1,000 rows a second, mostly entity resolution and index writes); one row takes under 0.1 s, even with a merge rule active.
+- Reconciliation runs entirely in the database (no rows are loaded into Python) and has no row limit. It pairs about 320,000 records in roughly 50 s and undoes that in about 30 s; a typical business (tens of thousands) takes seconds. After a merge, new records are paired incrementally, only against records near them in time.
+- Suggestions and the "only in one source" lists look at the last 60 days, are tried inside a transaction that is rolled back, and are cached for 5 minutes.
+- Place spellings live in a small per-business lookup table, so ingestion never scans the events table to normalise them; the lists of branch and product names the AI may filter by are cached.
+Not measured: more than about a million records in one business, or many dozens of sources. Beyond that the events table would want partitioning by tenant and time.
 
 ## Reads data as the business keeps it
 Nobody has to reshape their files. On connect, the columns are detected (by an AI when a provider key is set, by rules otherwise; every AI answer is checked against the real columns) and the person only confirms.

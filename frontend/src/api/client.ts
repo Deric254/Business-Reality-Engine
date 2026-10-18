@@ -400,12 +400,12 @@ export const skippedNote = (r: ImportResult) =>
 
 /** Two sources that look like the same records (a POS and an M-Pesa statement), and confirmed merges. */
 export interface OverlapSuggestion {
-  entity: string; matched: number; share: number; window: string;
+  entity: string; matched: number; share: number; window: string; window_days: number;
   keep: { id: string; name: string; records: number }; other: { id: string; name: string; records: number };
 }
 export interface OnlyHere { count: number; amount: number; recent: { timestamp: string; amount: number }[] }
 export interface MergedPair {
-  entity: string; counted_once: number;
+  entity: string; counted_once: number; window_days: number;
   keep: { id: string; name: string; only_here: OnlyHere }; other: { id: string; name: string; only_here: OnlyHere };
 }
 
