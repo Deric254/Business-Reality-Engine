@@ -102,7 +102,7 @@ def test_the_weekday_question_needs_no_ai_and_uses_the_business_clock(client):
     assert client.patch("/api/tenants/me", json={"timezone": "Africa/Nairobi"}, headers=h).status_code == 200
     sunday = NOW.date() - dt.timedelta(days=(NOW.weekday() + 1) % 7 or 7)             # the latest Sunday before today
     cid = mk(client, t, h, name="s", connector_type="file", config=CFG).json()["id"]
-    csv = f"Date,Total,Branch,Product\n{sunday:%Y-%m-%d} 22:30,500,Meru,Oil\n{sunday:%Y-%m-%d} 10:00,100,Meru,Oil\n"             # 22:30 UTC is 01:30 Monday in Nairobi
+    csv = f"Date,Total,Branch,Product\n{sunday:%Y-%m-%d} 22:30:00+00:00,500,Meru,Oil\n{sunday:%Y-%m-%d} 10:00,100,Meru,Oil\n"       # 22:30 UTC is 01:30 Monday in Nairobi; a time with no zone is Nairobi's own clock
     client.post(f"/api/connectors/{cid}/upload", data={"tenant_id": t}, files={"file": ("s.csv", csv.encode(), "text/csv")}, headers=h)
     out = client.post("/api/questions/ask", json={"tenant_id": t, "question": "Which day of the week is my best?", "period_days": 30}, headers=h).json()
     rows = {r["label"]: r["value"] for r in out["evidence"]["rows"]}

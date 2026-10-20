@@ -51,3 +51,9 @@ def test_rows_are_numbered_even_when_the_parser_left_a_text_index():
     df = pd.DataFrame({"Date": ["2026-09-03", "TOTAL"], "Amount": [1, 2], "__row_id": ["a", "b"]}, index=["x", "y"])
     p = dataframe_to_normalized_events(df, MAP, "t", "c", "s")
     assert len(p.events) == 1 and p.skipped == ["Row 3: 'TOTAL' is not a date"]
+
+
+def test_a_column_that_mixes_times_with_and_without_a_timezone_is_read():
+    p = _parse("Date,Amount\n2026-09-03 22:30:00+00:00,1\n2026-09-04 10:00,2\n03/09/2026 08:15,3\n")
+    assert [(e["timestamp"].replace(tzinfo=None).isoformat(), e["timestamp"].tzinfo is None) for e in p.events] == [
+        ("2026-09-03T22:30:00", False), ("2026-09-04T10:00:00", True), ("2026-09-03T08:15:00", True)]

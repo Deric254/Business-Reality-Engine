@@ -121,6 +121,9 @@ class BusinessEvent(Base):
     # confirmed the two sources are the same and this record pairs with one there (same amount, close in time). Either
     # way the row is kept for provenance but excluded from every total; this points at the copy that is counted.
     duplicate_of = Column(UUID(as_uuid=False), ForeignKey("business_events.id", ondelete="SET NULL"), nullable=True)
+    # Fingerprint of the record exactly as its source gave it (before currency conversion or place normalising). A tracked
+    # source is re-read on every sync; a record whose fingerprint changed was edited there, and is replaced.
+    source_hash = Column(String(40), nullable=True)
 
     __table_args__ = (
         # FK-referencing columns need indexes: deleting/merging a resolved entity

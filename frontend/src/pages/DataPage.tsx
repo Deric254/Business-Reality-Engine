@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Reconcile } from "../components/Reconcile";
-import { ApiError, captureApi, connectorApi, skippedNote, type CaptureEntry, type ConnectorRow, type Contribution, type ImportResult } from "../api/client";
+import { RejectedList } from "../components/RejectedList";
+import { ApiError, captureApi, connectorApi, importSummary, type CaptureEntry, type ConnectorRow, type Contribution, type ImportResult } from "../api/client";
 import { getClaims } from "../api/session";
 import { Shell } from "../components/Shell";
 import { ConnectWizard, SecretOnce } from "../components/ConnectWizard";
@@ -39,21 +40,29 @@ function ConnectorList({ tenantId, rows, contributions, isOwner, reload, setNoti
   tenantId: string; rows: ConnectorRow[]; contributions: Record<string, Contribution>; isOwner: boolean; reload: () => void; setNotice: (s: string | null) => void; setError: (s: string | null) => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
-  const [uploadFor, setUploadFor] = useState<string | null>(null);
+  const [uploadFor, setUploadFor] = useState<{ id: string; replace: boolean } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   async function run(id: string, fn: () => Promise<unknown>, done: (r: unknown) => string) {
     setBusy(id); setError(null); setNotice(null);
     try { const r = await fn(); setNotice(done(r)); reload(); } catch (e) { setError(errText(e)); reload(); } finally { setBusy(null); }
   }
-  const summarize = (r: unknown) => {
-    const x = (r ?? {}) as ImportResult & { duplicates?: number };
-    const head = x.new_rows != null ? `Sync finished: ${x.new_rows} new rows, ${x.duplicates ?? 0} already seen.` : x.rows_processed != null ? `Done: ${x.rows_processed} rows.` : "Sync finished.";
-    return head + skippedNote(x);
-  };
+  const summarize = (r: unknown) => importSummary((r ?? {}) as ImportResult);
+  /** Sync a source. If a mirrored link now looks completely different, ask the owner before applying it. */
+  async function syncSource(c: ConnectorRow) {
+    try {
+      return await connectorApi.sync(tenantId, c.id, c.connector_type);
+    } catch (e) {
+      if (isOwner && e instanceof ApiError && e.status === 409 && e.message.startsWith("This source changed a lot") && window.confirm(`${e.message}\n\nReplace the data with what the source holds now?`))
+        return connectorApi.sync(tenantId, c.id, c.connector_type, true);
+      throw e;
+    }
+  }
   return (
     <>
       <input ref={fileRef} type="file" hidden accept=".csv,.xlsx,.xls,.json,.xml,.txt"
-        onChange={(e) => { const file = e.target.files?.[0]; const id = uploadFor; e.target.value = ""; if (file && id) run(id, () => connectorApi.upload(tenantId, id, file), summarize); }} />
+        onChange={(e) => { const file = e.target.files?.[0]; const target = uploadFor; e.target.value = "";
+          if (file && target && (!target.replace || window.confirm(`Replace everything this source holds with ${file.name}? Records that are not in the file are removed.`)))
+            run(target.id, () => connectorApi.upload(tenantId, target.id, file, target.replace), summarize); }} />
       <ul className="bg-panel border border-border rounded-xl divide-y divide-border overflow-hidden">
         {rows.map((c) => {
           const [label, color] = statusOf(c);
@@ -64,14 +73,16 @@ function ConnectorList({ tenantId, rows, contributions, isOwner, reload, setNoti
                 <div className="text-sm text-ink-muted">
                   {TYPE_LABEL[c.connector_type] ?? c.connector_type}
                   {c.sync_interval_minutes ? `, checked every ${c.sync_interval_minutes >= 60 ? `${c.sync_interval_minutes / 60} h` : `${c.sync_interval_minutes} min`}` : ""}
-                  {c.last_sync_at ? `, last data ${timeAgo(c.last_sync_at)}` : ""}
+                  {c.last_sync_at ? `, last checked ${timeAgo(c.last_sync_at)}` : ""}
                 </div>
                 {contributions[c.id] && <div className="text-sm text-ink-muted">{contributionText(contributions[c.id])}</div>}
+                {contributions[c.id]?.rejected > 0 && <RejectedList key={contributions[c.id].rejected} tenantId={tenantId} connectorId={c.id} count={contributions[c.id].rejected} />}
               </div>
               <span className="text-sm flex items-center gap-2"><span className="w-2 h-2 rounded-full" style={{ background: color }} aria-hidden />{label}</span>
               <div className="flex gap-2">
-                {c.connector_type === "file" && <button className={btnCls} disabled={busy === c.id} onClick={() => { setUploadFor(c.id); fileRef.current?.click(); }}>Upload file</button>}
-                {PULL.includes(c.connector_type) && <button className={btnCls} disabled={busy === c.id} onClick={() => run(c.id, () => connectorApi.sync(tenantId, c.id, c.connector_type), summarize)}>{busy === c.id ? "Syncing…" : "Sync now"}</button>}
+                {c.connector_type === "file" && <button className={btnCls} disabled={busy === c.id} onClick={() => { setUploadFor({ id: c.id, replace: false }); fileRef.current?.click(); }}>Add a file</button>}
+                {c.connector_type === "file" && isOwner && <button className={btnCls} disabled={busy === c.id} title="Makes the file the whole truth: records this source holds that are not in the file are removed" onClick={() => { setUploadFor({ id: c.id, replace: true }); fileRef.current?.click(); }}>Replace with a file</button>}
+                {PULL.includes(c.connector_type) && <button className={btnCls} disabled={busy === c.id} title="Re-reads the source. Rows added, edited or deleted there are added, updated or removed here." onClick={() => run(c.id, () => syncSource(c), summarize)}>{busy === c.id ? "Syncing…" : "Sync now"}</button>}
                 {isOwner && <button className={btnCls} onClick={() => run(c.id, () => connectorApi.update(tenantId, c.id, { is_active: !c.is_active }), () => (c.is_active ? "Paused." : "Resumed."))}>{c.is_active ? "Pause" : "Resume"}</button>}
                 {isOwner && <button className={btnCls} disabled={busy === c.id} onClick={() => {
                   const n = contributions[c.id] ? contributions[c.id].counted + contributions[c.id].matched + contributions[c.id].rejected : 0;

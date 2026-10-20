@@ -5,6 +5,7 @@ must go through this same function. This is what keeps validation and
 tenant-isolation rules consistent across every ingestion path instead of
 each connector re-implementing (and potentially drifting on) the checks.
 """
+import hashlib
 import uuid
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
@@ -16,8 +17,9 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.models.core import BusinessEvent, Connector, Tenant, TenantLocation
-from app.core import reconcile
+from app.core import detection_kick, reconcile
 from app.core.fx import convert_event_fields
+from app.core.tenant_time import tenant_zone
 from app.core.entity_resolution import resolve_entities_bulk
 
 
@@ -63,6 +65,22 @@ def _validate_event(event) -> list[str]:
     if event.entity_id and len(event.entity_id) > 255:
         errors.append("entity_id exceeds max length")
     return errors
+
+
+def localize(db: Session, payloads: list[NormalizedEvent]) -> None:
+    """A time with no timezone (a sheet, a typed entry, most exports) is the business's own clock time, not UTC: it is
+    given the business's timezone here, once, so every later step sees the true moment."""
+    zones = {t: tenant_zone(db, t) for t in {p.tenant_id for p in payloads}}
+    for p in payloads:
+        if p.timestamp.tzinfo is None:
+            p.timestamp = p.timestamp.replace(tzinfo=zones[p.tenant_id])
+
+
+def source_fingerprint(p: NormalizedEvent) -> str:
+    """A fingerprint of a record as its source gave it (after `localize`), to tell an edited record from an unchanged one."""
+    fields = (p.event_type, _naive_utc(p.timestamp).isoformat(), p.amount, p.quantity, p.currency, _squash(p.location or ""),
+              p.customer_id, p.product_id, p.employee_id, p.supplier_id)
+    return hashlib.sha1("|".join("" if v is None else str(v) for v in fields).encode()).hexdigest()
 
 
 def _naive_utc(ts: datetime) -> datetime:
@@ -163,6 +181,7 @@ def _ingest_chunk(db: Session, chunk: list[NormalizedEvent], connectors: dict[st
     for i, p in enumerate(chunk):
         data = p.model_dump()
         data["timestamp"] = _naive_utc(p.timestamp)
+        data["source_hash"] = source_fingerprint(p)
         if p.location and p.location.strip():
             data["location"] = places[(p.tenant_id, _squash(p.location).casefold())]
         errors = _validate_event(SimpleNamespace(**data))
@@ -252,6 +271,7 @@ def ingest_events_bulk(db: Session, payloads: list[NormalizedEvent], chunk_size:
     if not payloads:
         return []
     connectors = _check_connectors(db, payloads)
+    localize(db, payloads)
     places = _canonical_locations(db, payloads)
     results: list[dict] = []
     for start in range(0, len(payloads), chunk_size):
@@ -267,11 +287,10 @@ def ingest_events_bulk(db: Session, payloads: list[NormalizedEvent], chunk_size:
         db.rollback()
         raise
     try:
-        from app.core.cache import invalidate_prefix
+        from app.core.cache import invalidate_tenant
         for tid in {p.tenant_id for p in payloads}:      # new data must show on the dashboard now, not after the cache TTL
-            invalidate_prefix(f"kpis:{tid}:")
-            invalidate_prefix(f"overlaps:{tid}")
-            invalidate_prefix(f"names:{tid}")
+            invalidate_tenant(tid)
+        detection_kick.kick({p.tenant_id for p in payloads})
     except Exception:
         pass
     return results

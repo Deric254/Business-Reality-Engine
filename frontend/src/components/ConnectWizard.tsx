@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, connectorApi, skippedNote, tenantApi, type ConnectorRow, type DbType, type ImportResult, type Inspection } from "../api/client";
+import { ApiError, connectorApi, importSummary, tenantApi, type ConnectorRow, type DbType, type ImportResult, type Inspection } from "../api/client";
 import { API_BASE } from "../api/client";
 import { Card, Notice, btnCls, inputCls, primaryCls } from "./ui";
 
@@ -177,10 +177,10 @@ export function ConnectWizard({ tenantId, onClose, onDone }: { tenantId: string;
       try {
         if (kind === "file" && file) {
           const r = await connectorApi.upload(tenantId, created.id, file) as ImportResult;
-          summary = `Imported ${r.rows_processed ?? 0} rows${r.failed ? `, ${r.failed} had problems` : ""}.${skippedNote(r)}`;
+          summary = importSummary(r, "Imported");
         } else if (entry!.type === "url") {
           const r = await connectorApi.sync(tenantId, created.id, "url") as ImportResult;
-          summary = `Imported ${r.new_rows ?? 0} rows${r.failed ? `, ${r.failed} had problems` : ""}.${skippedNote(r)}`;
+          summary = importSummary(r, "Imported");
         }
       } catch (x) {
         await connectorApi.disconnect(tenantId, created.id).catch(() => undefined);     // nothing came in, so do not leave an empty source behind

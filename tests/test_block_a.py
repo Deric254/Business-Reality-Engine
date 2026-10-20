@@ -265,7 +265,9 @@ def test_profit_risk_projection_and_already_negative(db):
     assert detect_profit_risk(db, t3, now=NOW) is None
     t4 = _make_tenant("risk4"); c4 = mk_conn(db, t4)
     weekly(db, t4, c4, "sale", [1000, 1000]); weekly(db, t4, c4, "expense", [2000, 2000])
-    assert detect_profit_risk(db, t4, now=NOW) is None                  # two periods is not a trend
+    short = detect_profit_risk(db, t4, now=NOW)                         # two periods is not a trend, but a loss is a loss
+    assert short and short.title == "Spending exceeds sales" and short.severity == AlertSeverity.high
+    assert short.evidence["projection"] is False and short.evidence["net"] < 0 and "not a forecast" in short.what_happened
 
 
 def test_insufficient_data_alert_then_self_resolves(db):

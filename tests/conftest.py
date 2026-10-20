@@ -10,6 +10,7 @@ os.environ["ADMIN_API_KEY"] = "test-admin-key"
 os.environ["JWT_SECRET_KEY"] = "test-jwt-secret-test-jwt-secret-1234"
 os.environ.setdefault("CONNECTOR_ENCRYPTION_KEY", "kP0kQ0dQ5oJ3m3t0m1o5nB0Zl8m0Y3cQe0n8q9mWk7U=")
 os.environ["SCHEDULER_ENABLED"] = "false"
+os.environ["DETECT_AFTER_INGEST"] = "false"       # tests run detection themselves; a test that wants the background run turns this on
 os.environ.pop("REDIS_URL", None)
 
 import pytest

@@ -20,6 +20,9 @@ ORDERS = [{"id": i, "date_created": f"2026-01-{(i % 9) + 1:02d}T10:00:00", "tota
            "billing": {"first_name": f"C{i}"}} for i in range(1, 8)]
 
 
+SHEET = {"csv": "", "json": "[]"}
+
+
 class _H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -29,6 +32,10 @@ class _H(BaseHTTPRequestHandler):
         u = urlparse(self.path); q = parse_qs(u.query)
         if u.path == "/sales.csv":
             body, ct = CSV.encode(), "text/csv"
+        elif u.path == "/sheet.csv":                      # a live sheet: tests edit it between syncs
+            body, ct = SHEET["csv"].encode(), "text/csv"
+        elif u.path == "/sheet.json":
+            body, ct = SHEET["json"].encode(), "application/json"
         elif u.path == "/messy.csv":
             body, ct = MESSY.encode(), "text/csv"
         elif u.path == "/orders":

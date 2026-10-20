@@ -20,7 +20,7 @@ import statistics
 from datetime import datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
-from app.core.tenant_time import tenant_zone
+from app.core.tenant_time import start_of_local_day, tenant_zone
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -318,11 +318,15 @@ def run_metric_detectors(db: Session, tenant_id: str, *, entity: str, field: str
 
 
 def run_tenant_cycle(db: Session, tenant_id: str, metrics: list[dict], now: Optional[datetime] = None, replay: bool = False) -> dict:
-    """All detectors for one tenant, then ranking/correlation/escalation over its open alerts."""
+    """All detectors for one tenant, then ranking/correlation/escalation over its open alerts.
+    A live run compares whole days: the day in progress is incomplete, and counting it would make every week look
+    like a drop. A run for a given `now` (tests, replays) uses exactly that moment."""
+    live = now is None
     now = now or datetime.utcnow()
+    window = start_of_local_day(now, tenant_zone(db, tenant_id)) if live and not replay else now
     alerts, errors = [], 0
     for m in metrics:
-        alerts += run_metric_detectors(db, tenant_id, now=now, **m)
+        alerts += run_metric_detectors(db, tenant_id, now=window, **m)
     try:
         if not replay:                  # silence compares to the latest event ever stored: meaningless for a past date
             alerts += detect_data_silence(db, tenant_id, now)
@@ -331,7 +335,7 @@ def run_tenant_cycle(db: Session, tenant_id: str, metrics: list[dict], now: Opti
         logger.error(f"Silence detector failed for tenant={tenant_id}: {e}")
     try:
         from app.core import detectors_extra as ex
-        a = ex.detect_profit_risk(db, tenant_id, now=now)
+        a = ex.detect_profit_risk(db, tenant_id, now=window)
         if a:
             alerts.append(a)
     except Exception as e:

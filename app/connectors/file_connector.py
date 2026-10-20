@@ -192,6 +192,15 @@ def _row_money(mapping: ColumnMapping, get, where: str) -> tuple[str, str, Optio
     return entity, event_type, amount, quantity
 
 
+def _identity(mapped, row) -> Optional[str]:
+    """The record's id: the id column when the row has one, else the row's own content fingerprint, so a blank id
+    never makes a record that is re-added on every sync."""
+    if mapped is not None:
+        return str(mapped)
+    generated = row.get(ROW_ID_COL)
+    return None if generated is None or pd.isna(generated) else str(generated)
+
+
 class ParsedRows(NamedTuple):
     events: list[dict]
     skipped: list[str]      # why each unreadable row was left out, e.g. "Row 14: 'TOTAL' is not a date"
@@ -249,9 +258,9 @@ def dataframe_to_normalized_events(
             "connector_id": connector_id,
             "source": source,
             "entity": entity,
-            "entity_id": str(_get("entity_id_col")) if _get("entity_id_col") is not None else None,
+            "entity_id": _identity(_get("entity_id_col"), row),
             "event_type": event_type,
-            "timestamp": stamps[idx].to_pydatetime(),
+            "timestamp": stamps[idx].to_pydatetime() if isinstance(stamps[idx], pd.Timestamp) else stamps[idx],   # a column mixing zones holds plain datetimes
             "amount": amount,
             "quantity": quantity,
             "currency": str(_get("currency_col")) if _get("currency_col") is not None else mapping.default_currency,

@@ -18,14 +18,13 @@ from app.connectors.file_connector import (ColumnMapping, add_row_ids, dataframe
 from app.connectors.url_connector import fetch_dataframe
 from app.connectors.folder_connector import MAX_TRACKED, list_new_files as list_folder_files, read_file
 from app.connectors.sftp_connector import fetch_file, list_new_files as list_sftp_files
+from app.core import snapshot
 from app.core.locks import try_advisory_lock
-from app.core.ingestion import NormalizedEvent, ingest_events_bulk
+from app.core.ingestion import NormalizedEvent
 from app.models.core import Connector
 
 logger = logging.getLogger("business_reality_engine")
 
-MAPPING_KEYS = {"entity", "event_type", "timestamp_col", "amount_col", "quantity_col", "currency_col", "location_col",
-                "customer_id_col", "product_id_col", "entity_id_col", "default_currency"}
 SYNCABLE = {"database", "url", "sftp", "email", "shared_folder"}
 MIN_INTERVAL_MINUTES, MAX_INTERVAL_MINUTES = 5, 10080
 
@@ -40,7 +39,7 @@ def record_sync_failure(db: Session, connector: Connector, exc: HTTPException):
 
 def _mapping(connector: Connector, cls):
     try:
-        return cls(**{k: v for k, v in (connector.config or {}).items() if k in MAPPING_KEYS})
+        return cls(**{k: v for k, v in (connector.config or {}).items() if k in cls.model_fields})
     except Exception as e:
         raise HTTPException(400, f"Connector column mapping is invalid: {e}")
 
@@ -50,8 +49,8 @@ def _ingest_frame(db, connector, mapping, content, filename):
     df = add_row_ids(parse_file_to_dataframe(content, ext))
     mapping = with_default_id(df, mapping)
     parsed = dataframe_to_normalized_events(df, mapping, tenant_id=connector.tenant_id, connector_id=connector.id, source=connector.name)
-    results = ingest_events_bulk(db, [NormalizedEvent(**e) for e in parsed.events])
-    return {"rows_processed": len(results), "failed": sum(1 for r in results if r["errors"]),
+    done = snapshot.apply(db, connector, [NormalizedEvent(**e) for e in parsed.events], remove_missing=False)
+    return {**{k: v for k, v in done.items() if k != "results"}, "rows_processed": len(done["results"]),
             "skipped": len(parsed.skipped), "skipped_examples": parsed.skipped[:3]}
 
 
@@ -62,8 +61,8 @@ def sync_database(db: Session, connector: Connector) -> dict:
     except HTTPException as e:
         record_sync_failure(db, connector, e)
     raw = rows_to_normalized_events(rows, mapping, tenant_id=connector.tenant_id, connector_id=connector.id, source=connector.name)
-    results = ingest_events_bulk(db, [NormalizedEvent(**e) for e in raw])
-    return {"rows_fetched": len(rows), "rows_processed": len(results), "failed": sum(1 for r in results if r["errors"]), "results": results}
+    done = snapshot.apply(db, connector, [NormalizedEvent(**e) for e in raw], remove_missing=False)   # a query may show only recent rows
+    return {"rows_fetched": len(rows), "rows_processed": len(done["results"]), **done}
 
 
 def sync_sftp(db: Session, connector: Connector) -> dict:
@@ -133,7 +132,8 @@ def sync_folder(db: Session, connector: Connector) -> dict:
     return {"files_found": len(items), "files": results}
 
 
-def sync_url(db: Session, connector: Connector) -> dict:
+def sync_url(db: Session, connector: Connector, confirmed: bool = False) -> dict:
+    """A sheet or file link is mirrored: what is edited, added or deleted there is edited, added or deleted here."""
     mapping = _mapping(connector, ColumnMapping)
     try:
         df = add_row_ids(fetch_dataframe(connector.config))
@@ -141,31 +141,43 @@ def sync_url(db: Session, connector: Connector) -> dict:
         record_sync_failure(db, connector, e)
     mapping = with_default_id(df, mapping)
     parsed = dataframe_to_normalized_events(df, mapping, tenant_id=connector.tenant_id, connector_id=connector.id, source=connector.name)
-    results = ingest_events_bulk(db, [NormalizedEvent(**e) for e in parsed.events])
-    new = sum(1 for r in results if not r["duplicate"])
-    return {"rows_fetched": len(df), "rows_processed": len(results), "new_rows": new,
-            "duplicates": len(results) - new, "failed": sum(1 for r in results if r["errors"]),
+    done = snapshot.apply(db, connector, [NormalizedEvent(**e) for e in parsed.events],
+                          remove_missing=bool(df.attrs.get("whole_file")), confirmed=confirmed)
+    return {**{k: v for k, v in done.items() if k != "results"}, "rows_fetched": len(df), "rows_processed": len(done["results"]),
             "skipped": len(parsed.skipped), "skipped_examples": parsed.skipped[:3]}
 
 
-SYNCERS: dict[str, Callable[[Session, Connector], dict]] = {
+SYNCERS: dict[str, Callable[..., dict]] = {
     "database": sync_database, "url": sync_url, "sftp": sync_sftp, "email": sync_email, "shared_folder": sync_folder,
 }
 
 
-def run_sync(db: Session, connector: Connector) -> dict:
-    """Locked, recorded sync of one connector. 409 if another sync of it is already running."""
+STALE_SYNC_SECONDS = 600
+
+
+def run_sync(db: Session, connector: Connector, confirmed: bool = False) -> dict:
+    """Locked, recorded sync of one connector. 409 if another sync of it is already running. `confirmed` lets a mirrored
+    source apply a very large change (see app.core.snapshot)."""
     fn = SYNCERS.get(connector.connector_type)
     if fn is None:
         raise HTTPException(400, f"Connector type '{connector.connector_type}' cannot be synced by pulling")
     if not connector.is_active:
         raise HTTPException(409, "Connector is not active")
+    if confirmed and connector.connector_type != "url":
+        raise HTTPException(400, "Only a web link or sheet can be replaced this way")
     with try_advisory_lock(f"sync:{connector.id}") as got:
-        if not got:
+        running = connector.last_attempt_at is None or (datetime.utcnow() - connector.last_attempt_at).total_seconds() < STALE_SYNC_SECONDS
+        if not got and running:
             raise HTTPException(409, "A sync of this connector is already running")
+        if not got:           # the last sync started long ago, so the lock is left over (a pooled database connection can keep one): carry on
+            logger.warning(f"Ignoring a stale sync lock for connector={connector.id}")
         connector.last_attempt_at = datetime.utcnow()
         db.commit()
-        return fn(db, connector)
+        result = fn(db, connector, confirmed=True) if confirmed else fn(db, connector)
+        connector.last_sync_at = datetime.utcnow()           # checking and finding nothing new still counts as a successful check
+        connector.last_sync_status = "partial" if result.get("failed") else "success"
+        db.commit()
+        return result
 
 
 def due_connectors(db: Session, now: datetime) -> list[Connector]:

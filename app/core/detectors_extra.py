@@ -4,6 +4,7 @@ Forecast deviation, risk projection and "unknown" (insufficient data) detectors
 """
 from datetime import datetime, timedelta
 from typing import Optional
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core import coverage as coverage_mod
@@ -56,6 +57,40 @@ def detect_forecast_deviation(db: Session, tenant_id: str, entity: str, field: s
     )
 
 
+LOSS_WINDOW_DAYS, LOSS_MIN_DAYS_WITH_SALES = 30, 2
+
+
+def _current_loss(db: Session, tenant_id: str, now: datetime, period_days: int) -> Optional[Alert]:
+    """Plain arithmetic over the last 30 days (or as many as exist): did spending exceed sales? Needs no baseline, so it
+    speaks from the first days of data. It stays quiet when no sales are recorded at all, since that usually means the
+    sales source is not connected, not that nothing was sold."""
+    start = now - timedelta(days=LOSS_WINDOW_DAYS)
+    days_with_sales = (db.query(func.count(func.distinct(func.date(BusinessEvent.timestamp))))
+                       .filter(BusinessEvent.tenant_id == tenant_id, BusinessEvent.entity == "sale", BusinessEvent.validation_status == "validated",
+                               BusinessEvent.amount > 0, BusinessEvent.timestamp >= start, BusinessEvent.timestamp < now).scalar())
+    sold, spent = (_sum_metric(db, tenant_id, entity, "amount", start, now) for entity in ("sale", "expense"))
+    key = f"risk:profit:{period_days}d"                  # the same alert the trend projection uses, so they never double up
+    loss = spent - sold
+    if days_with_sales < LOSS_MIN_DAYS_WITH_SALES or spent <= 0 or loss <= 0:
+        open_alert = _find_open_alert(db, tenant_id, key)
+        if open_alert and open_alert.evidence.get("window_days"):
+            open_alert.state = AlertState.resolved; open_alert.resolved_at = now
+            open_alert.evidence = {**open_alert.evidence, "recovered_at": now.isoformat()}
+            db.commit()
+        return None
+    sev = AlertSeverity.high if spent >= 1.25 * sold else AlertSeverity.medium
+    return _upsert(
+        db, tenant_id, key, now,
+        {"metric": "profit.net", "window_days": LOSS_WINDOW_DAYS, "sales": round(sold, 2), "expenses": round(spent, 2), "net": round(-loss, 2), "projection": False},
+        dict(kind="risk", severity=sev, title="Spending exceeds sales",
+             what_happened=(f"Over the last {LOSS_WINDOW_DAYS} days (or since your data began) you spent {spent:,.0f} and sold {sold:,.0f}: "
+                            f"a net loss of {loss:,.0f}. This is arithmetic on your records, not a forecast."),
+             magnitude=None, period_start=start, period_end=now, confidence=0.9,
+             data_coverage_pct=coverage_mod.coverage_pct_for_entity(db, tenant_id, "sale", now=now),
+             recommended_action="Check which costs are largest and whether every sale is being recorded; if this is a launch or stocking period, compare it with your plan."),
+    )
+
+
 def detect_profit_risk(db: Session, tenant_id: str, period_days: int = 7, horizon_periods: int = 4,
                        now: Optional[datetime] = None) -> Optional[Alert]:
     """Risk projection: net (sales - expenses) per period; alert when the trend crosses zero within the
@@ -64,7 +99,7 @@ def detect_profit_risk(db: Session, tenant_id: str, period_days: int = 7, horizo
     sales = _period_values(db, tenant_id, "sale", "amount", period_days, 6, now)
     exp = _period_values(db, tenant_id, "expense", "amount", period_days, 6, now)
     if sum(1 for v in sales if v > 0) < MIN_PERIODS_WITH_DATA or sum(1 for v in exp if v > 0) < MIN_PERIODS_WITH_DATA:
-        return None
+        return _current_loss(db, tenant_id, now, period_days)       # too little history for a trend, but a loss needs no baseline
     net = [s - e for s, e in zip(sales, exp)]
     xs = list(range(len(net)))
     slope, intercept = _least_squares(xs, net)

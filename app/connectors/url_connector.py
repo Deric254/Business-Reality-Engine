@@ -143,6 +143,9 @@ def _with_param(url: str, **params) -> str:
     return urlunparse(p._replace(query=urlencode(q)))
 
 
+_WHOLE_FILE_EXTS = (".csv", ".tsv", ".txt", ".xlsx")      # an API returning JSON may show only the latest records
+
+
 def fetch_dataframe(config: dict, *, max_pages: Optional[int] = None):
     """Returns a DataFrame of the rows at the connector's URL. `config` has secrets still encrypted (as stored)."""
     import pandas as pd
@@ -188,4 +191,6 @@ def fetch_dataframe(config: dict, *, max_pages: Optional[int] = None):
             break
     if not frames:
         raise HTTPException(400, "The source returned no data rows")
-    return frames[0] if len(frames) == 1 else pd.concat(frames, ignore_index=True)
+    df = frames[0] if len(frames) == 1 else pd.concat(frames, ignore_index=True)
+    df.attrs["whole_file"] = not paginate and ext in _WHOLE_FILE_EXTS      # a sheet or file link holds everything it holds
+    return df

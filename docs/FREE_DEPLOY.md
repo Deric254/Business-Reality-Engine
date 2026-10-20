@@ -30,6 +30,9 @@ Render's free plan puts a service to sleep after ~15 minutes without *outside* t
 
 Honest limits: free instances can still restart or cold-start (~30–60s), and Neon free has monthly compute-hour limits. The Render **Starter** plan (~$7/mo) removes sleeping entirely.
 
+## A note on the database connection string
+Use the **direct** (non-pooled) connection string from your database host (on Neon, turn "Connection pooling" off before copying it). A pooled connection can keep session locks alive, which is why a sync lock left behind is ignored after 10 minutes, but the direct string avoids the problem.
+
 ## 5. Password reset by email (optional)
 Without email, "Forgot your password?" cannot send anything. The page says so. People who set security questions (Settings → Security questions) can recover on their own with "Use your security questions instead". Whoever holds the setup key (`ADMIN_API_KEY`) can also generate a one-time reset link on that page.
 

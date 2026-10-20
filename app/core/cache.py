@@ -78,6 +78,12 @@ def clear_local():
         _local.clear()
 
 
+def invalidate_tenant(tenant_id: str) -> None:
+    """Drop everything cached from a business's records: its numbers, merge suggestions and name lists."""
+    for prefix in (f"kpis:{tenant_id}:", f"overlaps:{tenant_id}", f"names:{tenant_id}"):
+        invalidate_prefix(prefix)
+
+
 def invalidate_prefix(prefix: str) -> None:
     """Drop every cached entry whose key starts with `prefix` (e.g. f"kpis:{tenant_id}:"). Never raises."""
     try:

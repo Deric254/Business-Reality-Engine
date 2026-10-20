@@ -5,10 +5,10 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.core import audit, reconcile, sources
-from app.core.cache import invalidate_prefix
+from app.core import audit, reconcile, snapshot, sources
+from app.core.cache import invalidate_tenant
 from app.core.db import get_db
-from app.core.ingestion import NormalizedEvent, ingest_events_bulk
+from app.core.ingestion import NormalizedEvent
 from app.connectors.file_connector import (
     ColumnMapping, validate_upload, parse_file_to_dataframe, dataframe_to_normalized_events, add_row_ids, with_default_id,
 )
@@ -184,8 +184,7 @@ def merge_sources(other_id: str, keep_id: str, tenant_id: str, request: Request,
     if keep.merge_into or db.query(Connector.id).filter(Connector.merge_into == other.id).first():
         raise HTTPException(400, "One of these sources is already merged with another. Undo that first.")
     paired = reconcile.merge(db, other, keep)
-    invalidate_prefix(f"kpis:{tenant_id}:")
-    invalidate_prefix(f"overlaps:{tenant_id}")
+    invalidate_tenant(tenant_id)
     audit.record(db, "connector.merge", request=request, tenant_id=tenant_id, actor_user_id=me.user_id, target=other_id,
                  detail={"into": keep_id, "counted_once": paired})
     return {"counted_once": paired}
@@ -200,11 +199,19 @@ def unmerge_source(other_id: str, tenant_id: str, request: Request, db: Session 
     if not other.merge_into:
         raise HTTPException(400, "This source is not merged with another")
     restored = reconcile.unmerge(db, other)
-    invalidate_prefix(f"kpis:{tenant_id}:")
-    invalidate_prefix(f"overlaps:{tenant_id}")
+    invalidate_tenant(tenant_id)
     audit.record(db, "connector.unmerge", request=request, tenant_id=tenant_id, actor_user_id=me.user_id, target=other_id,
                  detail={"restored": restored})
     return {"restored": restored}
+
+
+@router.get("/{connector_id}/rejected")
+def rejected_records(connector_id: str, tenant_id: str, limit: int = 50, db: Session = Depends(get_db),
+                     authorization: Optional[str] = Header(default=None)):
+    """The records this source sent that were left out of every total, with why, so each can be fixed at the source."""
+    authorize_tenant(authorization, tenant_id)
+    connector = _get_owned_connector(db, connector_id, tenant_id)
+    return {"total": sources.rejected_summary(db, connector)["rejected_total"], "records": sources.rejected(db, connector, max(1, min(limit, 200)))}
 
 
 @router.get("/{connector_id}", response_model=ConnectorOut)
@@ -218,6 +225,7 @@ async def upload_file(
     connector_id: str,
     tenant_id: str = Form(...),
     file: UploadFile = File(...),
+    replace: bool = Form(False),
     db: Session = Depends(get_db),
     authorization: Optional[str] = Header(default=None),
 ):
@@ -226,7 +234,7 @@ async def upload_file(
     Column mapping must already be configured on the connector (Connector.config)
     at setup time (Section 50) — we don't infer mapping from arbitrary uploads.
     """
-    authorize_tenant(authorization, tenant_id)
+    authorize_tenant(authorization, tenant_id, require_role="owner" if replace else None)       # replacing deletes records
     connector = _get_owned_connector(db, connector_id, tenant_id)  # 404 on mismatch — don't reveal existence
     if connector.connector_type != "file":
         raise HTTPException(400, "This connector is not configured as a file connector")
@@ -246,17 +254,18 @@ async def upload_file(
         df, mapping, tenant_id=tenant_id, connector_id=connector_id, source=connector.name
     )
 
-    results = ingest_events_bulk(db, [NormalizedEvent(**e) for e in parsed.events])
-    failed = sum(1 for r in results if r["errors"])
-    return {"rows_processed": len(results), "failed": failed, "skipped": len(parsed.skipped), "skipped_examples": parsed.skipped[:3], "results": results}
+    # Adds new records and updates edited ones (same id). With `replace`, the file is the whole truth: records it no
+    # longer has are removed. Without it, files are batches that add up (a month at a time), so nothing is removed.
+    done = snapshot.apply(db, connector, [NormalizedEvent(**e) for e in parsed.events], remove_missing=replace, confirmed=True)
+    return {**done, "rows_processed": len(done["results"]), "skipped": len(parsed.skipped), "skipped_examples": parsed.skipped[:3]}
 
 
-def _sync_endpoint(connector_id, tenant_id, db, authorization, expected_type):
-    authorize_tenant(authorization, tenant_id)
+def _sync_endpoint(connector_id, tenant_id, db, authorization, expected_type, confirmed=False):
+    authorize_tenant(authorization, tenant_id, require_role="owner" if confirmed else None)
     connector = _get_owned_connector(db, connector_id, tenant_id)
     if connector.connector_type != expected_type:
         raise HTTPException(400, f"This connector is not configured as a {expected_type.replace('_', ' ')} connector")
-    return run_sync(db, connector)
+    return run_sync(db, connector, confirmed=confirmed)
 
 
 @router.post("/{connector_id}/sync-database")
@@ -266,9 +275,11 @@ def sync_database_ep(connector_id: str, tenant_id: str, db: Session = Depends(ge
 
 
 @router.post("/{connector_id}/sync-url")
-def sync_url_ep(connector_id: str, tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
-    """Pulls the connector's web link / API now; rows already seen are skipped, so repeating it is safe."""
-    return _sync_endpoint(connector_id, tenant_id, db, authorization, "url")
+def sync_url_ep(connector_id: str, tenant_id: str, confirm_replace: bool = False, db: Session = Depends(get_db),
+                authorization: Optional[str] = Header(default=None)):
+    """Re-reads the connector's web link or sheet now and mirrors it: added, edited and deleted rows follow. Repeating it
+    is safe. A change to over half of a sizeable source needs `confirm_replace` (owner)."""
+    return _sync_endpoint(connector_id, tenant_id, db, authorization, "url", confirmed=confirm_replace)
 
 
 @router.post("/inspect-file")

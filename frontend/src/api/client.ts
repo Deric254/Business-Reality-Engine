@@ -394,7 +394,20 @@ export interface ConnectorRow {
   webhook_url?: string | null; webhook_token?: string | null;
 }
 /** What an import or sync reports back. Rows it could not read are skipped and named, never silently dropped. */
-export interface ImportResult { new_rows?: number; rows_processed?: number; failed?: number; skipped?: number; skipped_examples?: string[] }
+export interface RejectedRecord { when: string; amount: number | null; branch: string | null; product: string | null; entity: string; reasons: string[] }
+export interface ImportResult {
+  rows_fetched?: number; rows_processed?: number; new_rows?: number; updated_rows?: number; removed_rows?: number; duplicates?: number; failed?: number;
+  skipped?: number; skipped_examples?: string[]; rejected_total?: number; rejected_examples?: RejectedRecord[];
+}
+const rejectedLine = (e: RejectedRecord) => `${e.when}${e.amount != null ? `, ${e.amount.toLocaleString()}` : ""}${e.branch ? `, ${e.branch}` : ""}: ${e.reasons.join(", ")}`;
+/** What a sync or upload did, in plain words: what was added, edited, removed, and exactly which records were left out and why. */
+export function importSummary(r: ImportResult, verb = "Checked"): string {
+  const rows = r.rows_fetched ?? r.rows_processed;
+  const changes = [`${r.new_rows ?? 0} added`, r.updated_rows ? `${r.updated_rows} updated` : "", r.removed_rows ? `${r.removed_rows} removed` : ""].filter(Boolean).join(", ");
+  const head = r.new_rows != null ? `${verb}${rows != null ? ` ${rows.toLocaleString()} rows` : ""}: ${changes}, ${(r.duplicates ?? 0).toLocaleString()} unchanged.` : `Done: ${rows ?? 0} rows.`;
+  const rejected = r.rejected_total ? ` ${r.rejected_total} record${r.rejected_total === 1 ? "" : "s"} left out of your totals (${(r.rejected_examples ?? []).slice(0, 2).map(rejectedLine).join("; ")}${r.rejected_total > 2 ? "; …" : ""}). See them under the source.` : "";
+  return head + rejected + skippedNote(r);
+}
 export const skippedNote = (r: ImportResult) =>
   r.skipped ? ` ${r.skipped} row${r.skipped === 1 ? "" : "s"} skipped (${(r.skipped_examples ?? []).join("; ")}${r.skipped > (r.skipped_examples?.length ?? 0) ? "; …" : ""}).` : "";
 
@@ -438,16 +451,19 @@ export const connectorApi = {
   unmerge: (t: string, otherId: string) => request<{ restored: number }>(`/api/connectors/${otherId}/merge?tenant_id=${t}`, { method: "DELETE" }),
   disconnect: (t: string, id: string) => request<{ removed_records: number }>(`/api/connectors/${id}?tenant_id=${t}`, { method: "DELETE" }),
   dbTypes: (t: string) => request<DbType[]>(`/api/connectors/meta/database-types?tenant_id=${t}`),
-  sync: (t: string, id: string, type: string) =>
-    request<Record<string, unknown>>(`/api/connectors/${id}/sync-${type === "shared_folder" ? "folder" : type}?tenant_id=${t}`, { method: "POST" }),
-  upload: async (t: string, id: string, file: File) => {
+  sync: (t: string, id: string, type: string, confirmReplace = false) =>
+    request<ImportResult>(`/api/connectors/${id}/sync-${type === "shared_folder" ? "folder" : type}?tenant_id=${t}${confirmReplace ? "&confirm_replace=true" : ""}`, { method: "POST" }),
+  rejected: (t: string, id: string) => request<{ total: number; records: RejectedRecord[] }>(`/api/connectors/${id}/rejected?tenant_id=${t}`),
+  /** `replace`: the file is the whole truth, so records this source holds that it does not have are removed. */
+  upload: async (t: string, id: string, file: File, replace = false) => {
     const tokens = getTokens();
     const form = new FormData();
     form.append("tenant_id", t);
     form.append("file", file);
+    if (replace) form.append("replace", "true");
     const res = await fetch(`${API_BASE}/api/connectors/${id}/upload`, { method: "POST", body: form, headers: tokens ? { Authorization: `Bearer ${tokens.access_token}` } : {} });
     if (!res.ok) throw await parseError(res);
-    return (await res.json()) as Record<string, unknown>;
+    return (await res.json()) as ImportResult;
   },
 };
 
