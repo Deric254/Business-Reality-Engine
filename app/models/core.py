@@ -61,6 +61,7 @@ class Connector(Base):
     is_active = Column(Boolean, default=True)
     last_sync_at = Column(DateTime, nullable=True)
     last_sync_status = Column(String, nullable=True)     # success | failed | partial
+    last_sync_error = Column(String, nullable=True)      # why the last sync failed, in words an owner can act on
     sync_interval_minutes = Column(Integer, nullable=True)   # Section 17: pull-type connectors sync on this schedule (NULL = manual only)
     last_attempt_at = Column(DateTime, nullable=True)         # last scheduled/manual sync attempt, successful or not
     # Set once the owner confirms that this source records the SAME sales or expenses as another one (a POS and an

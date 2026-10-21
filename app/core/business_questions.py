@@ -147,9 +147,11 @@ def answer_question(db: Session, tenant_id: str, question: str, period_days: int
                 routed["classified_by"] = "llm"
     if routed is None:
         return {"question": question, "answered": False, "intent": None, "answer_source": "none", "evidence": {},
-                "answer": "I can't answer that yet. I can answer questions about profit, sales, expenses, top customers, "
-                          "products or suppliers, next-period forecasts, what needs attention, and data freshness.",
-                "suggestions": SUGGESTIONS, "advisory": advisory_text(lang)}
+                "answer": "I can't answer that yet. Without the AI assistant I can answer questions about profit, sales, expenses, top customers, "
+                          "products or suppliers, branches, the best weekday, next-period forecasts, what needs attention, and data freshness."
+                          + ("" if provider else " The AI assistant is not connected: connect it in Settings (or set ANTHROPIC_API_KEY on the server) "
+                             "and you can ask about your sales, expenses and profit in your own words."),
+                "ai_connected": provider is not None, "suggestions": SUGGESTIONS, "advisory": advisory_text(lang)}
     if routed["intent"] != "profit":
         return {"question": question, "answered": True, "intent": routed["intent"], "answer": routed["answer"],
                 "evidence": routed["evidence"], "answer_source": "deterministic",

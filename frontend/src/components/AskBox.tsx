@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import type { QuestionAnswer } from "../api/client";
 import { primaryCls } from "./ui";
@@ -39,6 +40,12 @@ export function AskBox({ tenantId }: { tenantId: string }) {
       {result && (
         <div className="border-l-4 border-info bg-info-soft/60 rounded-sm px-4 py-3 mt-4" aria-live="polite">
           <p className="text-base text-ink-text leading-relaxed">{result.answer}</p>
+          {!result.answered && result.ai_connected === false && (
+            <p className="text-sm text-ink-muted mt-3 border-t border-border pt-3">
+              The AI assistant is not connected, so only the fixed questions below work. To ask about your sales, expenses and profit in your own words,{" "}
+              <Link to="/settings#ai" className="text-info hover:underline">connect it in Settings</Link>.
+            </p>
+          )}
           {!result.answered && result.suggestions && (
             <div className="flex flex-wrap gap-2 mt-3">
               {result.suggestions.map((s) => <button key={s} type="button" className={chip} onClick={() => { setQ(s); ask(s); }}>{s}</button>)}

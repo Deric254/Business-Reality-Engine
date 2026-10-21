@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { DataCheck } from "../components/DataCheck";
 import { Reconcile } from "../components/Reconcile";
 import { RejectedList } from "../components/RejectedList";
 import { ApiError, captureApi, connectorApi, importSummary, type CaptureEntry, type ConnectorRow, type Contribution, type ImportResult } from "../api/client";
@@ -21,10 +22,11 @@ function Text({ label, value, onChange, type = "text", required = false }: { lab
   );
 }
 
-function statusOf(c: ConnectorRow): [string, string] {
+function statusOf(c: ConnectorRow, counted?: number): [string, string] {
   if (!c.is_active) return ["Paused", "#8c968f"];
   if (c.last_sync_status === "failed" || c.last_sync_status === "error") return ["Failing", "#d92d20"];
   if (c.last_sync_status === "partial") return ["Working, some rows rejected", "#d4a017"];
+  if (c.last_sync_at && counted === 0) return ["Connected, but no records counted", "#d4a017"];
   if (c.last_sync_at) return ["Working", "#1f9254"];
   return ["Waiting for data", "#d4a017"];
 }
@@ -65,7 +67,7 @@ function ConnectorList({ tenantId, rows, contributions, isOwner, reload, setNoti
             run(target.id, () => connectorApi.upload(tenantId, target.id, file, target.replace), summarize); }} />
       <ul className="bg-panel border border-border rounded-xl divide-y divide-border overflow-hidden">
         {rows.map((c) => {
-          const [label, color] = statusOf(c);
+          const [label, color] = statusOf(c, contributions[c.id]?.counted);
           return (
             <li key={c.id} className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-5 py-4">
               <div className="min-w-[200px] flex-1">
@@ -75,6 +77,7 @@ function ConnectorList({ tenantId, rows, contributions, isOwner, reload, setNoti
                   {c.sync_interval_minutes ? `, checked every ${c.sync_interval_minutes >= 60 ? `${c.sync_interval_minutes / 60} h` : `${c.sync_interval_minutes} min`}` : ""}
                   {c.last_sync_at ? `, last checked ${timeAgo(c.last_sync_at)}` : ""}
                 </div>
+                {c.last_sync_error && <div role="alert" className="text-sm text-critical">Last sync failed: {c.last_sync_error}</div>}
                 {contributions[c.id] && <div className="text-sm text-ink-muted">{contributionText(contributions[c.id])}</div>}
                 {contributions[c.id]?.rejected > 0 && <RejectedList key={contributions[c.id].rejected} tenantId={tenantId} connectorId={c.id} count={contributions[c.id].rejected} />}
               </div>
@@ -137,6 +140,7 @@ export function CaptureForm({ tenantId, onSaved }: { tenantId: string; onSaved?:
 function DataBody({ tenantId, isOwner }: { tenantId: string; isOwner: boolean }) {
   const t = useT();
   const [rows, setRows] = useState<ConnectorRow[]>([]);
+  const [checking, setChecking] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -153,6 +157,10 @@ function DataBody({ tenantId, isOwner }: { tenantId: string; isOwner: boolean })
       <Notice error={err} notice={notice} />
       {created && (created.webhook_url || created.webhook_token) && <SecretOnce created={created} onClose={() => setCreated(null)} />}
       {adding && isOwner && <ConnectWizard tenantId={tenantId} onClose={() => setAdding(false)} onDone={(c, summary) => { setAdding(false); setCreated(c); setNotice(`Connected ${c.name}.${summary ? " " + summary : ""}`); load(); }} />}
+      <details className="bg-panel border border-border rounded-xl px-5 py-3" onToggle={(e) => setChecking(e.currentTarget.open)}>
+        <summary className="cursor-pointer text-sm font-medium">Is something missing? Check my data</summary>
+        {checking && <div className="mt-3"><DataCheck tenantId={tenantId} days={30} /></div>}
+      </details>
       <Section title="Connected sources">
         {rows.length === 0 && !adding
           ? <Empty action={isOwner ? <button className={primaryCls} onClick={() => setAdding(true)}>{t("data.add")}</button> : undefined}>No data source connected yet. Connect one, or add entries by hand below.</Empty>

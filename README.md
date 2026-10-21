@@ -59,6 +59,10 @@ Not measured: more than about 1 million records in one business, or more than ab
 - **Days start at the business's local midnight** (tenant timezone), for "today", weekday and daily groupings.
 - **Forecasts follow the weekly rhythm.** The next 7 or 30 days are projected day by day from the business's own pattern (a Saturday is not a Tuesday; a closed Sunday stays at zero) plus a trend, with a likely range from how far past days missed. It needs four weeks of history; with less, the older straight-line projection is used. Holidays and paydays are not modelled in the forecast.
 
+## When something does not show, the app says why
+`GET /api/business/data-check` (the **Check my data** panel on the Overview and Data pages) reports, per source: whether it ever synced, why the last sync failed (stored on the source), how many records were counted, left out and why, the date range of its records against the period shown (and offers to widen it), records with no amount, whether the AI assistant is connected, and whether the database has been migrated to this version (`/api/health/` also reports it). The Overview no longer says "nothing needs your attention" when sources are connected but nothing falls in the period shown; it says what it found.
+Without an AI assistant connected, Ask answers a fixed list of questions and says so, with a link to connect one.
+
 ## A tracked sheet is a mirror, not a stream
 A Google Sheet or file link is re-read on every sync and the stored records are brought in line with it (`app/core/snapshot.py`):
 - a row you add appears; a figure you edit is **replaced** (it is never counted twice); a row you delete is **removed**. Each record carries a fingerprint of what the source gave, so an edit is recognised even when the receipt number stays the same.

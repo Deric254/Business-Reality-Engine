@@ -76,6 +76,7 @@ class ConnectorOut(BaseModel):
     is_active: bool
     last_sync_at: Optional[datetime]
     last_sync_status: Optional[str]
+    last_sync_error: Optional[str] = None
     expected_frequency: Optional[str] = None
     sync_interval_minutes: Optional[int] = None
     last_attempt_at: Optional[datetime] = None

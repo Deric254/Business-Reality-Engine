@@ -32,6 +32,7 @@ MIN_INTERVAL_MINUTES, MAX_INTERVAL_MINUTES = 5, 10080
 def record_sync_failure(db: Session, connector: Connector, exc: HTTPException):
     """A connection-level failure must be visible: otherwise it looks identical to a connector never attempted."""
     connector.last_sync_status = "failed"
+    connector.last_sync_error = str(exc.detail)[:500]
     connector.last_sync_at = datetime.utcnow()
     db.commit()
     raise exc
@@ -173,9 +174,17 @@ def run_sync(db: Session, connector: Connector, confirmed: bool = False) -> dict
             logger.warning(f"Ignoring a stale sync lock for connector={connector.id}")
         connector.last_attempt_at = datetime.utcnow()
         db.commit()
-        result = fn(db, connector, confirmed=True) if confirmed else fn(db, connector)
+        try:
+            result = fn(db, connector, confirmed=True) if confirmed else fn(db, connector)
+        except Exception as e:                               # whatever went wrong, the owner can read why on the source
+            db.rollback()
+            connector.last_sync_status = "failed"
+            connector.last_sync_error = str(e.detail)[:500] if isinstance(e, HTTPException) else "Something unexpected went wrong while syncing. The server log has the details."
+            db.commit()
+            raise
         connector.last_sync_at = datetime.utcnow()           # checking and finding nothing new still counts as a successful check
         connector.last_sync_status = "partial" if result.get("failed") else "success"
+        connector.last_sync_error = None
         db.commit()
         return result
 

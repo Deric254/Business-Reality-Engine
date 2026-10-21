@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api, businessApi, connectorApi, type Alert, type ConnectorRow, type Health, type KpiBreakdown, type Trend } from "../api/client";
 import { Shell } from "../components/Shell";
 import { AskBox } from "../components/AskBox";
+import { DataCheck } from "../components/DataCheck";
 import { AlertRow } from "../components/AlertRow";
 import { TrendChart } from "../components/TrendChart";
 import { Card, Empty, Notice, Skeleton, btnCls, money, primaryCls } from "../components/ui";
@@ -82,17 +83,19 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
   const [sources, setSources] = useState<ConnectorRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [days, setDays] = useState(30);
+  const [showCheck, setShowCheck] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true); setError(null);
     Promise.all([
-      api.listAlerts(tenant.id), api.getKpis(tenant.id, 30), businessApi.trend(tenant.id, 30),
-      businessApi.health(tenant.id, 30).catch(() => null), connectorApi.list(tenant.id).catch(() => [] as ConnectorRow[]),
+      api.listAlerts(tenant.id), api.getKpis(tenant.id, days), businessApi.trend(tenant.id, days),
+      businessApi.health(tenant.id, days).catch(() => null), connectorApi.list(tenant.id).catch(() => [] as ConnectorRow[]),
     ])
       .then(([a, k, tr, h, c]) => { setAlerts(a); setKpis(k); setTrend(tr); setHealth(h); setSources(c); })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [tenant.id]);
+  }, [tenant.id, days]);
   useEffect(() => { load(); }, [load]);
 
   const open = alerts.filter((a) => !CLOSED.has(a.state));
@@ -100,9 +103,12 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
   const top = [...open].sort((a, b) => (b.priority_rank ?? 0) - (a.priority_rank ?? 0))[0];
   const noData = !loading && kpis != null && kpis.revenue.current === 0 && kpis.revenue.previous === 0 && kpis.expenses.current === 0 && sources.length === 0;
 
+  const nothingInView = !loading && kpis != null && sources.length > 0 && kpis.revenue.current === 0 && kpis.revenue.previous === 0 && kpis.expenses.current === 0 && kpis.expenses.previous === 0;
+
   let headline = "Nothing needs your attention right now.";
   let sub = health?.headline ?? "Your numbers are being watched. We'll flag anything that moves.";
   if (noData) { headline = "Let's get your numbers in."; sub = "Connect a source or add entries by hand and this page becomes your daily briefing."; }
+  else if (nothingInView) { headline = "Connected, but there is nothing to show yet."; sub = "Here is exactly what I found, and what to do about it."; }
   else if (urgent.length && top) {
     headline = top.title;
     sub = urgent.length > 1 ? `${t(urgent.length === 1 ? "dash.high.one" : "dash.high.many", { n: urgent.length })} ${top.what_happened}` : top.what_happened;
@@ -129,10 +135,17 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
 
       {noData && <GetStarted />}
 
+      {(nothingInView || showCheck) && !noData && <DataCheck tenantId={tenant.id} days={days} onShowDays={setDays} />}
+
       {kpis && !noData && (
         <Card className="!p-5 sm:!p-7 space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+            <label className="text-ink-muted">Showing <select aria-label="Period shown" className="bg-panel border border-field rounded-sm px-2 py-1 text-ink-text" value={days} onChange={(e) => setDays(Number(e.target.value))}>
+              {[30, 90, 180].map((d) => <option key={d} value={d}>the last {d} days</option>)}</select></label>
+            {!nothingInView && <button className="text-info hover:underline" onClick={() => setShowCheck((v) => !v)}>{showCheck ? "Hide the data check" : "Is something missing? Check my data"}</button>}
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-            <Kpi label="Sales, last 30 days" value={kpis.revenue.current} delta={change(kpis.revenue.current, kpis.revenue.previous)} goodWhen="up" />
+            <Kpi label={`Sales, last ${days} days`} value={kpis.revenue.current} delta={change(kpis.revenue.current, kpis.revenue.previous)} goodWhen="up" />
             <Kpi label="Expenses" value={kpis.expenses.current} delta={change(kpis.expenses.current, kpis.expenses.previous)} goodWhen="down" />
             <Kpi label="Profit" value={kpis.profit.current} delta={kpis.profit.change_pct} goodWhen="up" />
           </div>

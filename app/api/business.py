@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.core import fx as fx_mod
+from app.core import data_check as data_check_mod, fx as fx_mod
 from app.core.audit import record as audit_record
 from app.core.auth_users import authorize_tenant, decode_token, ensure_active
 from app.core.business_health import discover, health_summary, quality_report
@@ -24,6 +24,14 @@ def _tenant_user(authorization: Optional[str], tenant_id: str, need_owner: bool 
     if need_owner and user.role != "owner":
         raise HTTPException(403, "This action requires the 'owner' role")
     return user
+
+
+@router.get("/data-check")
+def data_check(tenant_id: str, period_days: int = Query(30, ge=1, le=365), db: Session = Depends(get_db),
+               authorization: Optional[str] = Header(default=None)):
+    """Why the dashboard shows what it shows: per source, what was read, counted, left out and why."""
+    authorize_tenant(authorization, tenant_id)
+    return data_check_mod.run(db, tenant_id, period_days)
 
 
 @router.get("/health")

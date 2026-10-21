@@ -148,7 +148,20 @@ export interface QuestionAnswer {
   answer_source: string;
   intent: string | null;
   answered: boolean;
+  ai_connected?: boolean;
   suggestions?: string[];
+}
+
+/** Why the dashboard shows what it shows: what each source read, counted and left out, and what is stopping anything showing. */
+export interface CheckFinding { level: "problem" | "warning" | "info" | "ok"; source: string | null; text: string; action: string | null }
+export interface CheckSource {
+  id: string; name: string; type: string; active: boolean; counted: number; rejected: number; matched: number;
+  first_record: string | null; last_record: string | null; in_view: number; last_checked: string | null; status: string | null; error: string | null;
+}
+export interface DataCheckResult {
+  verdict: "problem" | "attention" | "ok"; headline: string; findings: CheckFinding[]; sources: CheckSource[];
+  range: { counted: number; first: string | null; last: string | null; in_view: number; period_days: number; suggest_days: number | null };
+  ai_connected: boolean; schema: { current: boolean; database: string | null; expected: string };
 }
 
 export interface CoverageRow {
@@ -358,6 +371,7 @@ export const aiApi = {
 
 export const businessApi = {
   trend: (t: string, days = 30) => request<Trend>(`/api/business/trend?tenant_id=${t}&days=${days}`),
+  dataCheck: (t: string, days = 30) => request<DataCheckResult>(`/api/business/data-check?tenant_id=${t}&period_days=${days}`),
   health: (t: string, days = 30) => request<Health>(`/api/business/health?tenant_id=${t}&days=${days}`),
   quality: (t: string, days = 30) => request<Quality>(`/api/business/quality?tenant_id=${t}&days=${days}`),
   discovery: (t: string) => request<Discovery>(`/api/business/discovery?tenant_id=${t}`),
@@ -391,7 +405,7 @@ export const tenantApi = {
 export interface ConnectorRow {
   id: string; name: string; connector_type: string; is_active: boolean; last_sync_at: string | null; last_sync_status: string | null;
   expected_frequency: string | null; sync_interval_minutes: number | null; last_attempt_at: string | null;
-  webhook_url?: string | null; webhook_token?: string | null;
+  last_sync_error?: string | null; webhook_url?: string | null; webhook_token?: string | null;
 }
 /** What an import or sync reports back. Rows it could not read are skipped and named, never silently dropped. */
 export interface RejectedRecord { when: string; amount: number | null; branch: string | null; product: string | null; entity: string; reasons: string[] }
