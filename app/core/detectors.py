@@ -29,7 +29,7 @@ from app.core import coverage as coverage_mod
 from app.core.alert_engine import post_process_tenant
 from app.core.business_memory import measure_due_cases
 from app.core.detection import (
-    _headline, _noun,
+    _headline, _noun, close_if_cleared, compare_headline, comparison_text, resolve_alert,
     METRIC_FIELDS, _find_open_alert, _in_cooldown, _sum_metric,
     detect_historical_deviation, detect_threshold_breach, explain_deviation,
 )
@@ -64,6 +64,14 @@ def _upsert(db: Session, tenant_id: str, dedup_key: str, now: datetime, evidence
     return alert
 
 
+def _ago(hours: float) -> str:
+    return f"{hours:.0f} hours ago" if hours < 48 else f"{hours / 24:.0f} days ago"
+
+
+def _period_phrase(period_days: int) -> str:
+    return "week" if period_days == 7 else f"{period_days}-day period"
+
+
 # ---------------- opportunity ----------------
 
 def detect_opportunity(
@@ -83,7 +91,10 @@ def detect_opportunity(
     avg = sum(base) / len(base)
     change = (current - avg) / avg
     good = change if direction == "drop" else -change      # positive = moved the GOOD way
+    key = f"opportunity:{entity}:{field}:{period_days}d"
     if good < min_change:
+        if good < min_change / 2:
+            close_if_cleared(db, tenant_id, key, now)
         return None
     rising = change > 0
     related, drivers = explain_deviation(
@@ -91,16 +102,15 @@ def detect_opportunity(
         rising=rising,
     )
     return _upsert(
-        db, tenant_id, f"opportunity:{entity}:{field}:{period_days}d", now,
+        db, tenant_id, key, now,
         {"metric": f"{entity}.{field}", "current": current, "baseline": round(avg, 2),
          "change_pct": round(change * 100, 2), "period_days": period_days, "direction": direction},
         dict(
             severity=AlertSeverity.opportunity, title=_headline(entity, field, change, period_days),
-            what_happened=(f"{_noun(entity, field)} {'rose' if rising else 'fell'} {abs(change)*100:.0f}% over the last {period_days} days, "
-                           f"which is good news: {current:,.0f} against {avg:,.0f} in a typical {period_days} days."),
+            what_happened="Good news. " + comparison_text(entity, field, current, avg, period_days, len(base)),
             magnitude=round(change, 4), period_start=cur_start, period_end=now,
             related_variables=related, possible_explanations=drivers, confidence=0.7 if len(base) >= 2 else 0.4,
-            recommended_action="Find out what drove this and whether it can be repeated.",
+            recommended_action="Find out what caused this (a promotion, a new customer, a price change) so you can repeat it.",
         ),
     )
 
@@ -136,22 +146,27 @@ def detect_sustained_trend(
     total = (vals[-1] - vals[0]) / vals[0]
     bad = -total if direction == "drop" else total
     steps_bad = sum(1 for a, b in zip(vals, vals[1:]) if (b < a if direction == "drop" else b > a))
+    key = f"trend:{entity}:{field}:{period_days}d"
     if bad < min_total_change or r2 < min_r2 or steps_bad < len(vals) - 2:
+        if bad < min_total_change / 2:
+            close_if_cleared(db, tenant_id, key, now)
         return None
     verb = "fallen" if direction == "drop" else "risen"
     sev = AlertSeverity.high if bad >= 0.40 else AlertSeverity.medium if bad >= 0.25 else AlertSeverity.informational
+    noun = _noun(entity, field)
+    unit = _period_phrase(period_days)
+    have = "has" if noun == "Spending" else "have"
     return _upsert(
-        db, tenant_id, f"trend:{entity}:{field}:{period_days}d", now,
+        db, tenant_id, key, now,
         {"metric": f"{entity}.{field}", "period_days": period_days, "values": [round(v, 2) for v in vals],
          "slope_per_period": trend.slope, "r_squared": round(r2, 3), "forecast_next": trend.forecast_next, "direction": direction},
         dict(
-            severity=sev, title=f"{entity.capitalize()} {field} has {verb} for {steps_bad} periods",
-            what_happened=(f"{entity.capitalize()} {field} has {verb} {abs(total)*100:.0f}% over {len(vals)} "
-                           f"{period_days}-day periods ({vals[0]:,.0f} to {vals[-1]:,.0f}); the fit is steady (R²={r2:.2f}). "
-                           f"If it continues, next period lands near {trend.forecast_next:,.0f}."),
+            severity=sev, title=f"{noun} {have} {verb} steadily over the last {len(vals)} {unit}s",
+            what_happened=(f"{noun} {have} {verb} {abs(total)*100:.0f}% over the last {len(vals)} {unit}s, from {vals[0]:,.0f} to {vals[-1]:,.0f}, "
+                           f"and the move has been steady rather than a one-off. If it continues, the next {unit} would come to about {trend.forecast_next:,.0f}."),
             magnitude=round(total, 4), period_start=now - timedelta(days=period_days * len(vals)), period_end=now,
             confidence=round(min(0.9, 0.5 + r2 * 0.4), 2), data_coverage_pct=coverage_mod.coverage_pct_for_entity(db, tenant_id, entity, now=now),
-            recommended_action=f"A slow trend rarely fixes itself: look at what changed in {entity} activity around the start of this slide.",
+            recommended_action=f"A slow change rarely fixes itself. Look at what changed in your {_noun(entity, field).lower()} around the start of this {'slide' if direction == 'drop' else 'climb'}: prices, suppliers, staff, stock or customers.",
         ),
     )
 
@@ -198,26 +213,28 @@ def detect_daily_anomaly(
     z = (x - med) / sigma
     rel = (x - med) / med if med else 0.0
     bad = (z <= -min_z and rel <= -min_rel) if direction == "drop" else (z >= min_z and rel >= min_rel)
+    key = f"daily_anomaly:{entity}:{field}"
     if not bad:
+        close_if_cleared(db, tenant_id, key, now)       # a day-specific alert: the next normal day ends it
         return None
     sev = AlertSeverity.high if abs(rel) >= 0.60 else AlertSeverity.medium
-    word = "below" if rel < 0 else "above"
     from app.core.context import is_holiday
     holiday = is_holiday(db, tenant_id, target)
     if holiday:                                   # Section 42: a public holiday explains an off day; do not raise an incident
         sev = AlertSeverity.informational
     return _upsert(
-        db, tenant_id, f"daily_anomaly:{entity}:{field}", now,
+        db, tenant_id, key, now,
         {"metric": f"{entity}.{field}", "day": target.isoformat(), "weekday": target.strftime("%A"), "value": x,
          "typical_for_weekday": round(med, 2), "robust_z": round(z, 2), "history": [round(v, 2) for v in history],
          "timezone": str(tz), "direction": direction, **({"holiday": holiday} if holiday else {})},
         dict(
-            severity=sev, title=f"Unusual {target.strftime('%A')}: {entity} {field} {word} normal",
-            what_happened=(f"{target.strftime('%A')} {target.isoformat()}: {entity} {field} was {x:,.0f}, "
-                           f"{abs(rel)*100:.0f}% {word} a typical {target.strftime('%A')} ({med:,.0f})."),
+            severity=sev, title=compare_headline(_noun(entity, field), rel, f"a usual {target.strftime('%A')}", past=True),
+            what_happened=(f"On {target.strftime('%A')} {target.isoformat()} {_noun(entity, field).lower()} came to {x:,.0f}. "
+                           f"A usual {target.strftime('%A')} is about {med:,.0f} (the middle value of the last {len(history)} {target.strftime('%A')}s)."
+                           f"{' This was a public holiday, which may explain it.' if holiday else ''}"),
             magnitude=round(rel, 4), period_start=utc_bounds(target)[0], period_end=utc_bounds(target)[1],
             confidence=0.6, kind="daily", data_coverage_pct=coverage_mod.coverage_pct_for_entity(db, tenant_id, entity, now=now),
-            recommended_action="Check whether something specific happened that day (closure, outage, stock-out, a data gap).",
+            recommended_action="Think back to that day: were you closed, out of stock, short of staff, or were some records not entered?",
         ),
     )
 
@@ -244,10 +261,7 @@ def detect_data_silence(db: Session, tenant_id: str, now: Optional[datetime] = N
         if status.value != "stale":
             open_alert = _find_open_alert(db, tenant_id, key)
             if open_alert:                                   # data is back: close our own alert
-                open_alert.state = AlertState.resolved
-                open_alert.resolved_at = now
-                open_alert.evidence = {**open_alert.evidence, "recovered_at": now.isoformat()}
-                db.commit()
+                resolve_alert(db, open_alert, now)
             continue
         age = now - last_at
         limit = coverage_mod._STALE_AFTER.get(c.expected_frequency or "periodic", coverage_mod._DEFAULT_STALE_AFTER)
@@ -259,9 +273,10 @@ def detect_data_silence(db: Session, tenant_id: str, now: Optional[datetime] = N
              "expected_frequency": c.expected_frequency or "periodic"},
             dict(
                 severity=sev, title=f"No new data from {c.name}",
-                what_happened=f"{c.name} last sent data {hours:.0f} hours ago, longer than its expected frequency allows. Alerts that depend on it may be understated.",
+                what_happened=(f"{c.name} last sent data {_ago(hours)}, which is longer than it normally goes without sending. "
+                               f"Until it sends again, your sales and spending figures may be missing recent records, so other alerts may look better or worse than reality."),
                 period_start=last_at, period_end=now, confidence=0.9, data_coverage_pct=0.0,
-                recommended_action=f"Check that {c.name} is still connected and sending (credentials, network, the source system).",
+                recommended_action=f"Check that {c.name} is still switched on and connected (password changed? internet down? system closed?). Then open Data sources to confirm it is sending again.",
             ),
         )
         if a:

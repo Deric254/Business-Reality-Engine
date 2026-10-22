@@ -12,7 +12,7 @@ emptied the sheet) nothing is touched and the owner is asked to confirm, because
 wrong link is the worse mistake.
 """
 from fastapi import HTTPException
-from sqlalchemy import bindparam, func, update
+from sqlalchemy import bindparam, update
 from sqlalchemy.orm import Session
 
 from app.core import sources

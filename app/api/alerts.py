@@ -1,12 +1,13 @@
 from typing import Optional
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Header, Request
+from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
 from pydantic import BaseModel, model_validator
 from sqlalchemy.orm import Session
 
 from app.core import audit
 from app.core.db import get_db
 from app.core.auth_users import authorize_tenant
+from app.core.detection import ACTIVE_STATES, CLOSED_STATES
 from app.models.alerts import Alert, AlertState
 from app.core.business_memory import historical_experience
 from app.reasoning.llm_reasoning import reason_about_alert
@@ -82,6 +83,7 @@ class AlertDetailOut(BaseModel):
     historical_experience: list[dict]  # Section 36: past cases of the same kind of problem
     priority_rank: Optional[float] = None
     correlated_alert_ids: list[str] = []
+    related: list[dict] = []            # id + title of each related open alert, so the page can name them
     escalated: bool = False
     kind: Optional[str] = None
     external_context: list[dict] = []   # Section 42: holidays/promotions overlapping the period
@@ -103,6 +105,7 @@ def list_alerts(
     tenant_id: str,
     severity: Optional[str] = None,
     state: Optional[str] = None,
+    limit: int = Query(300, ge=1, le=1000),
     db: Session = Depends(get_db),
     authorization: Optional[str] = Header(default=None),
 ):
@@ -110,9 +113,13 @@ def list_alerts(
     q = db.query(Alert).filter(Alert.tenant_id == tenant_id)
     if severity:
         q = q.filter(Alert.severity == severity)
-    if state:
+    if state == "open":                    # still needs a person: not resolved, dismissed or marked a false alarm
+        q = q.filter(Alert.state.in_(ACTIVE_STATES))
+    elif state == "closed":
+        q = q.filter(Alert.state.in_(CLOSED_STATES))
+    elif state:
         q = q.filter(Alert.state == state)
-    return q.order_by(Alert.priority_rank.desc().nullslast(), Alert.created_at.desc()).all()
+    return q.order_by(Alert.priority_rank.desc().nullslast(), Alert.created_at.desc()).limit(limit).all()
 
 
 @router.get("/{alert_id}", response_model=AlertOut)
@@ -131,6 +138,10 @@ def get_alert_detail(alert_id: str, tenant_id: str, db: Session = Depends(get_db
     authorize_tenant(authorization, tenant_id)
     alert = _get_owned_alert(db, alert_id, tenant_id)
 
+    related = []
+    if alert.correlated_alert_ids:
+        rows = db.query(Alert.id, Alert.title).filter(Alert.tenant_id == tenant_id, Alert.id.in_(alert.correlated_alert_ids)).all()
+        related = [{"id": i, "title": t} for i, t in rows]
     explanations = alert.possible_explanations or []
     possible_drivers = [e for e in explanations if not e.get("driver", "").endswith("(ruled out)")]
     ruled_out = [e for e in explanations if e.get("driver", "").endswith("(ruled out)")]
@@ -154,6 +165,7 @@ def get_alert_detail(alert_id: str, tenant_id: str, db: Session = Depends(get_db
         data_coverage_pct=float(alert.data_coverage_pct) if alert.data_coverage_pct is not None else None,
         priority_rank=float(alert.priority_rank) if alert.priority_rank is not None else None,
         correlated_alert_ids=alert.correlated_alert_ids or [],
+        related=related,
         escalated=bool((alert.evidence or {}).get("escalated_at")),
         historical_experience=historical_experience(db, tenant_id, alert),
         kind=alert.kind,

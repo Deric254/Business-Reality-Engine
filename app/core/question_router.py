@@ -115,7 +115,7 @@ def _branches(db, tenant_id, q, days, label, now):
     rows = sorted(({"name": n, "amount": a, "previous": prev.get(n, 0.0),
                     "change_pct": round((a - prev[n]) / prev[n] * 100, 1) if prev.get(n) else None} for n, a in cur.items()),
                   key=lambda r: -r["amount"])
-    show = lambda r: _money(r["amount"]) + (f", {r['change_pct']:+.0f}% on the period before" if r["change_pct"] is not None else "")
+    show = lambda r: _money(r["amount"]) + (f", {r['change_pct']:+.0f}% compared with the {days} days before" if r["change_pct"] is not None else "")
     answer = f"Over {label}, {rows[0]['name']} sold the most ({show(rows[0])}) and {rows[-1]['name']} the least ({show(rows[-1])})."
     falling = min((r for r in rows if r["change_pct"] is not None), key=lambda r: r["change_pct"], default=None)
     if falling and falling["change_pct"] <= -10:
@@ -181,7 +181,7 @@ def _attention(db, tenant_id, q, days, label, now):
         return {"answer": "Nothing needs attention right now: there are no open alerts.", "evidence": {"alerts": []}}
     total = db.query(func.count(Alert.id)).filter(Alert.tenant_id == tenant_id, Alert.state.in_(ACTIVE)).scalar()
     items = [{"id": a.id, "severity": a.severity.value, "title": a.title, "escalated": bool((a.evidence or {}).get("escalated_at"))} for a in alerts]
-    lines = "; ".join(f"{i['title']} ({i['severity']}{', escalated' if i['escalated'] else ''})" for i in items)
+    lines = "; ".join(f"{i['title']} ({i['severity']}{', not yet reviewed' if i['escalated'] else ''})" for i in items)
     return {"answer": f"{total} open alert{'s' if total != 1 else ''}. Most important first: {lines}.", "evidence": {"open": total, "alerts": items}}
 
 
@@ -196,7 +196,7 @@ def _data_health(db, tenant_id, q, days, label, now):
         return {"answer": f"All {len(items)} data area{'s are' if len(items) != 1 else ' is'} up to date.", "evidence": {"areas": items}}
     return {"answer": f"{len(bad)} of {len(items)} data areas are not up to date: "
                       + ", ".join(f"{i['area']} ({i['status'].replace('_', ' ')})" for i in bad)
-                      + ". Figures that depend on them may be understated.",
+                      + ". Your figures may be missing recent records until they send data again.",
             "evidence": {"areas": items}}
 
 

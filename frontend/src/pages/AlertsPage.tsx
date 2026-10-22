@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Alert, type Tenant } from "../api/client";
 import { Shell } from "../components/Shell";
 import { FilterBar } from "../components/FilterBar";
@@ -12,12 +12,17 @@ function Body({ tenant }: { tenant: Tenant }) {
   const t = useT();
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [sev, setSev] = useState<Set<string>>(new Set(ALL));
-  const [state, setState] = useState("");
+  const [state, setState] = useState("open");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const latest = useRef(0);       // only the newest request may update the page: a slow older answer must not overwrite it
   const load = useCallback(() => {
+    const mine = ++latest.current;
     setLoading(true); setError(null);
-    api.listAlerts(tenant.id, { state: state || undefined }).then(setAlerts).catch((e) => setError(e.message)).finally(() => setLoading(false));
+    api.listAlerts(tenant.id, { state: state || undefined })
+      .then((a) => { if (mine === latest.current) setAlerts(a); })
+      .catch((e) => { if (mine === latest.current) setError(e.message); })
+      .finally(() => { if (mine === latest.current) setLoading(false); });
   }, [tenant.id, state]);
   useEffect(() => { load(); }, [load]);
   const toggle = (s: string) => setSev((p) => { const n = new Set(p); if (n.has(s)) n.delete(s); else n.add(s); return n; });
@@ -29,7 +34,7 @@ function Body({ tenant }: { tenant: Tenant }) {
       <section className="space-y-3">
         <FilterBar activeSeverities={sev} onToggleSeverity={toggle} state={state} onStateChange={setState} />
         {loading && !alerts.length && <div className="space-y-2"><Skeleton className="h-20" /><Skeleton className="h-20" /><Skeleton className="h-20" /></div>}
-        {!loading && shown.length === 0 && <Empty>No alerts match these filters. Nothing needs attention right now.</Empty>}
+        {!loading && shown.length === 0 && <Empty>No alerts match these filters. If you chose "Open", nothing needs your attention right now.</Empty>}
         {shown.length > 0 && <ul className="bg-panel border border-border rounded-xl divide-y divide-border overflow-hidden">{shown.map((a) => <li key={a.id}><AlertRow alert={a} tenantId={tenant.id} /></li>)}</ul>}
       </section>
     </>

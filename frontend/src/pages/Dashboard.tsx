@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, businessApi, connectorApi, type Alert, type ConnectorRow, type Health, type KpiBreakdown, type Trend } from "../api/client";
 import { Shell } from "../components/Shell";
@@ -9,8 +9,6 @@ import { TrendChart } from "../components/TrendChart";
 import { Card, Empty, Notice, Skeleton, btnCls, money, primaryCls } from "../components/ui";
 import { useT } from "../lib/i18n";
 import type { Tenant } from "../api/client";
-
-const CLOSED = new Set(["resolved", "dismissed", "false_positive"]);
 
 /** Today usually has no (or partial) data yet; an empty last day would draw a false crash to zero, so leave it out. */
 function chartDays(t: Trend): Trend {
@@ -26,14 +24,14 @@ function change(cur: number, prev: number): number | null {
   return prev === 0 ? null : ((cur - prev) / prev) * 100;
 }
 
-function Kpi({ label, value, delta, goodWhen }: { label: string; value: number; delta: number | null; goodWhen: "up" | "down" }) {
+function Kpi({ label, value, delta, goodWhen, days }: { label: string; value: number; delta: number | null; goodWhen: "up" | "down"; days: number }) {
   const good = delta == null || Math.abs(delta) < 0.5 ? null : (delta > 0) === (goodWhen === "up");
   return (
     <div className="min-w-0">
       <div className="text-sm text-ink-muted">{label}</div>
       <div className="figure text-3xl sm:text-4xl mt-0.5 break-words">{money(value)}</div>
       <div className="text-sm mt-1 kpi-figure" style={{ color: good == null ? "var(--neutral)" : good ? "var(--good)" : "var(--bad)" }}>
-        {delta == null ? "No earlier period to compare" : Math.abs(delta) < 0.5 ? "About the same as before" : `${delta > 0 ? "Up" : "Down"} ${Math.abs(delta).toFixed(0)}% on the period before`}
+        {delta == null ? "No earlier records to compare with" : Math.abs(delta) < 0.5 ? `About the same as the ${days} days before` : `${delta > 0 ? "Up" : "Down"} ${Math.abs(delta).toFixed(0)}% compared with the ${days} days before`}
       </div>
     </div>
   );
@@ -86,19 +84,21 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
   const [days, setDays] = useState(30);
   const [showCheck, setShowCheck] = useState(false);
 
+  const latest = useRef(0);       // only the newest request may update the page (a slow answer for 30 days must not replace 90)
   const load = useCallback(() => {
+    const mine = ++latest.current;
     setLoading(true); setError(null);
     Promise.all([
-      api.listAlerts(tenant.id), api.getKpis(tenant.id, days), businessApi.trend(tenant.id, days),
+      api.listAlerts(tenant.id, { state: "open" }), api.getKpis(tenant.id, days), businessApi.trend(tenant.id, days),
       businessApi.health(tenant.id, days).catch(() => null), connectorApi.list(tenant.id).catch(() => [] as ConnectorRow[]),
     ])
-      .then(([a, k, tr, h, c]) => { setAlerts(a); setKpis(k); setTrend(tr); setHealth(h); setSources(c); })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .then(([a, k, tr, h, c]) => { if (mine === latest.current) { setAlerts(a); setKpis(k); setTrend(tr); setHealth(h); setSources(c); } })
+      .catch((e) => { if (mine === latest.current) setError(e.message); })
+      .finally(() => { if (mine === latest.current) setLoading(false); });
   }, [tenant.id, days]);
   useEffect(() => { load(); }, [load]);
 
-  const open = alerts.filter((a) => !CLOSED.has(a.state));
+  const open = alerts;
   const urgent = open.filter((a) => a.severity === "critical" || a.severity === "high");
   const top = [...open].sort((a, b) => (b.priority_rank ?? 0) - (a.priority_rank ?? 0))[0];
   const noData = !loading && kpis != null && kpis.revenue.current === 0 && kpis.revenue.previous === 0 && kpis.expenses.current === 0 && sources.length === 0;
@@ -145,12 +145,12 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
             {!nothingInView && <button className="text-info hover:underline" onClick={() => setShowCheck((v) => !v)}>{showCheck ? "Hide the data check" : "Is something missing? Check my data"}</button>}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-            <Kpi label={`Sales, last ${days} days`} value={kpis.revenue.current} delta={change(kpis.revenue.current, kpis.revenue.previous)} goodWhen="up" />
-            <Kpi label="Expenses" value={kpis.expenses.current} delta={change(kpis.expenses.current, kpis.expenses.previous)} goodWhen="down" />
-            <Kpi label="Profit" value={kpis.profit.current} delta={kpis.profit.change_pct} goodWhen="up" />
+            <Kpi days={days} label={`Sales, last ${days} days`} value={kpis.revenue.current} delta={change(kpis.revenue.current, kpis.revenue.previous)} goodWhen="up" />
+            <Kpi days={days} label={`Spending, last ${days} days`} value={kpis.expenses.current} delta={change(kpis.expenses.current, kpis.expenses.previous)} goodWhen="down" />
+            <Kpi days={days} label={`Profit, last ${days} days`} value={kpis.profit.current} delta={kpis.profit.change_pct} goodWhen="up" />
           </div>
           {trend && <TrendChart current={chartDays(trend).current} previous={chartDays(trend).previous} />}
-          {kpis.largest_contributor && !["Revenue", "Expenses"].includes(kpis.largest_contributor) && <p className="text-sm text-ink-muted border-t border-border pt-4">Biggest driver of the change in profit: <span className="font-semibold text-ink-text">{kpis.largest_contributor}</span>.</p>}
+          {kpis.largest_contributor && kpis.profit.change_pct != null && <p className="text-sm text-ink-muted border-t border-border pt-4">Biggest effect on your profit compared with the {days} days before: <span className="font-semibold text-ink-text">{kpis.largest_contributor}</span>.</p>}
         </Card>
       )}
 

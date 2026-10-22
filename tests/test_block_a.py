@@ -172,7 +172,7 @@ def test_quality_report_numbers(db):
     assert q["events"] == 10 and q["failed"] == 2 and q["failed_pct"] == 20.0
     assert q["sales_missing_pct"]["customer"] == 60.0
     assert q["by_connector"][0]["failed"] == 2
-    assert any("waiting for an exchange rate" in n for n in q["notes"]) and any("failed validation" in n for n in q["notes"])
+    assert any("waiting for an exchange rate" in n for n in q["notes"]) and any("could not be used" in n for n in q["notes"])
     assert 0 <= q["score"] < 80
     assert quality_report(db, _make_tenant("q0"), 30)["score"] is None
 

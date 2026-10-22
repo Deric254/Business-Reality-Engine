@@ -28,8 +28,8 @@ you — a profit/revenue/expense breakdown that has already been computed correc
 by deterministic code. Do not recompute or second-guess the numbers.
 
 Write a short, direct answer (2-4 sentences) in the style of:
-"Profit fell 13%. Main contributors: Revenue down 6%, Supplier costs up 11%.
-Largest contributor: supplier cost increase."
+"Profit fell 13%. Main causes: sales down 6%, supplier costs up 11%.
+Biggest cause: the supplier cost increase."
 
 Use ONLY the numbers provided. Never invent figures. Output plain text, no markdown."""
 
@@ -64,13 +64,13 @@ def compute_profit_breakdown(
     contributors = []
     if revenue_previous or revenue_current:
         contributors.append({
-            "name": "Revenue", "delta": round(revenue_delta, 2),
+            "name": "Sales", "delta": round(revenue_delta, 2),
             "delta_pct": round((revenue_delta / revenue_previous) * 100, 1) if revenue_previous else None,
             "profit_impact": round(revenue_delta, 2),  # revenue up -> profit up, same sign
         })
     if expense_previous or expense_current:
         contributors.append({
-            "name": "Expenses", "delta": round(expense_delta, 2),
+            "name": "Spending", "delta": round(expense_delta, 2),
             "delta_pct": round((expense_delta / expense_previous) * 100, 1) if expense_previous else None,
             "profit_impact": round(-expense_delta, 2),  # expenses up -> profit DOWN, opposite sign
         })
@@ -91,22 +91,19 @@ def compute_profit_breakdown(
 
 
 def _deterministic_fallback(evidence: dict) -> str:
-    """No LLM configured — still a complete, correct answer, just template-worded."""
-    profit = evidence["profit"]
-    parts = [f"Profit is {profit['current']:.2f}"]
+    """No LLM configured: still a complete, correct answer, in plain words."""
+    profit, days = evidence["profit"], evidence["period_days"]
+    text = f"Your profit (sales minus spending) over the last {days} days is {profit['current']:,.0f}"
     if profit["change_pct"] is not None:
-        direction = "up" if profit["change"] >= 0 else "down"
-        parts[0] += f", {direction} {abs(profit['change_pct']):.1f}% vs. the prior period"
-    parts[0] += "."
-    if evidence["contributors"]:
-        contrib_strs = [
-            f"{c['name']} {'up' if c['delta'] >= 0 else 'down'} "
-            f"{abs(c['delta_pct']):.1f}%" if c["delta_pct"] is not None else f"{c['name']} changed"
-            for c in evidence["contributors"]
-        ]
-        parts.append("Contributors: " + ", ".join(contrib_strs) + ".")
-        parts.append(f"Largest contributor: {evidence['largest_contributor']}.")
-    return " ".join(parts)
+        text += f", {'up' if profit['change'] >= 0 else 'down'} {abs(profit['change_pct']):.0f}% compared with the {days} days before"
+    text += "."
+    moves = [f"{c['name'].lower()} {'up' if c['delta'] >= 0 else 'down'} {abs(c['delta_pct']):.0f}%"
+             for c in evidence["contributors"] if c["delta_pct"] is not None]
+    if moves:
+        text += " Over the same time: " + " and ".join(moves) + "."
+    if evidence["largest_contributor"]:
+        text += f" The biggest effect on your profit came from {evidence['largest_contributor'].lower()}."
+    return text
 
 
 PLANNABLE = {"sales", "expenses", "branches", "weekdays", "top_customers", "top_products", "top_suppliers"}

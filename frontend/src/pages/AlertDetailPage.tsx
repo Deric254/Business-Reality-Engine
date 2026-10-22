@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useSearchParams, Link } from "react-router-dom";
 import type { AlertDetail } from "../api/client";
 import { api } from "../api/client";
@@ -18,12 +18,17 @@ function Body({ alertId, tenantId }: { alertId: string; tenantId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
 
-  const load = () => { api.getAlertDetail(alertId, tenantId).then(setAlert).catch((e) => setError(e.message)); };
-  useEffect(load, [alertId, tenantId]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const load = useCallback(() => api.getAlertDetail(alertId, tenantId).then(setAlert), [alertId, tenantId]);
+  useEffect(() => {
+    let current = true;                  // ignore an answer that arrives after the person has moved to another alert
+    setAlert(null); setError(null);
+    load().catch((e) => { if (current) setError(e.message); });
+    return () => { current = false; };
+  }, [load]);
 
   const takeAction = async (state: string) => {
     setUpdating(true);
-    try { await api.updateAlertState(alertId, tenantId, state); load(); }
+    try { await api.updateAlertState(alertId, tenantId, state); await load(); }
     catch (e) { setError((e as Error).message); }
     finally { setUpdating(false); }
   };
@@ -40,14 +45,16 @@ function Body({ alertId, tenantId }: { alertId: string; tenantId: string }) {
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <span className="inline-flex items-center text-xs font-semibold rounded-full px-2.5 py-0.5" style={{ color: SEVERITY_TEXT[sev], backgroundColor: SEVERITY_TINT[sev] }}>{SEVERITY_LABEL[sev]}</span>
           <span className="text-sm text-ink-muted">Detected {timeAgo(alert.created_at)}</span>
-          {alert.escalated && <span className="text-sm font-semibold text-high">Overdue: not acted on in time</span>}
+          {alert.escalated && <span className="text-sm font-semibold text-high">Not yet reviewed: nobody has responded to this yet</span>}
         </div>
         <h1 className="display text-3xl sm:text-4xl" style={{ textDecorationColor: SEVERITY_COLOR[sev] }}>{alert.title}</h1>
         <p className="text-lg text-ink-muted leading-relaxed">{alert.what_happened}</p>
-        {!!alert.correlated_alert_ids?.length && (
-          <p className="text-sm text-ink-muted">Related open alerts about the same records: {alert.correlated_alert_ids.map((id, i) => (
-            <span key={id}>{i > 0 && ", "}<Link className="text-info underline" to={`/alert/${id}?tenant=${tenantId}`}>view</Link></span>
-          ))}</p>
+        {alert.related.length > 0 && (
+          <div className="text-sm text-ink-muted">Also open about the same records:
+            <ul className="mt-1 space-y-0.5">{alert.related.map((r) => (
+              <li key={r.id}><Link className="text-info underline" to={`/alert/${r.id}?tenant=${tenantId}`}>{r.title}</Link></li>
+            ))}</ul>
+          </div>
         )}
       </header>
 
@@ -103,8 +110,8 @@ function Body({ alertId, tenantId }: { alertId: string; tenantId: string }) {
       )}
 
       <section className="grid grid-cols-2 gap-4 max-w-md">
-        <div><div className="text-sm text-ink-muted">How sure we are</div><div className="figure text-2xl">{alert.confidence !== null ? `${(alert.confidence * 100).toFixed(0)}%` : "n/a"}</div></div>
-        <div><div className="text-sm text-ink-muted">Data behind this</div><div className="figure text-2xl">{alert.data_coverage_pct !== null ? `${alert.data_coverage_pct.toFixed(0)}%` : "n/a"}</div></div>
+        <div><div className="text-sm text-ink-muted">How sure we are</div><div className="figure text-2xl">{alert.confidence !== null ? `${(alert.confidence * 100).toFixed(0)}%` : "n/a"}</div><div className="text-xs text-ink-muted mt-0.5">Higher when there is more history to compare with.</div></div>
+        <div><div className="text-sm text-ink-muted">How up to date your data is</div><div className="figure text-2xl">{alert.data_coverage_pct !== null ? `${alert.data_coverage_pct.toFixed(0)}%` : "n/a"}</div><div className="text-xs text-ink-muted mt-0.5">Lower when a data source has gone quiet.</div></div>
       </section>
 
       <section className="space-y-2 border-t border-border pt-6">

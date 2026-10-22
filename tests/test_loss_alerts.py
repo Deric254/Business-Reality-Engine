@@ -41,7 +41,7 @@ def test_spending_far_above_sales_is_flagged_whatever_the_history(client, days):
     loss = [a for a in _cycle(client, t, h) if a["title"] == "Spending exceeds sales"]
     assert len(loss) == 1 and loss[0]["severity"] == "high"
     detail = client.get(f"/api/alerts/{loss[0]['id']}/detail?tenant_id={t}", headers=h).json()
-    assert "net loss" in detail["what_happened"] or "negative" in detail["what_happened"]
+    assert "a loss of" in detail["what_happened"] or "more than you sold" in detail["what_happened"]
 
 
 def test_a_small_loss_is_flagged_less_urgently(client):

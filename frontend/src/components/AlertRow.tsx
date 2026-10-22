@@ -12,8 +12,8 @@ export function AlertRow({ alert, tenantId }: { alert: Alert; tenantId: string }
           <span className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-full px-2.5 py-0.5" style={{ color: SEVERITY_TEXT[sev], backgroundColor: SEVERITY_TINT[sev] }}>
             {SEVERITY_LABEL[sev] ?? sev}
           </span>
-          {alert.escalated && <span className="text-xs font-semibold text-high" title="Not acted on in time">Overdue</span>}
-          {!!alert.correlated_alert_ids?.length && <span className="text-xs text-ink-muted" title="Other open alerts about the same records">{alert.correlated_alert_ids.length} related</span>}
+          {alert.escalated && <span className="text-xs font-semibold text-high" title="Nobody has responded to this alert yet, and it has been waiting longer than it should">Not yet reviewed</span>}
+          {!!alert.correlated_alert_ids?.length && <span className="text-xs text-ink-muted" title="Other open alerts about the same records. Open this alert to see them.">+{alert.correlated_alert_ids.length} related alert{alert.correlated_alert_ids.length === 1 ? "" : "s"}</span>}
         </div>
         <div className="text-base font-semibold text-ink-text mt-1.5 leading-snug">{alert.title}</div>
         <p className="text-sm text-ink-muted mt-0.5 line-clamp-2">{alert.what_happened}</p>

@@ -113,6 +113,7 @@ export interface Alert {
 }
 
 export interface AlertDetail extends Alert {
+  related: { id: string; title: string }[];
   when: { period_start: string | null; period_end: string | null };
   where: Record<string, unknown> | null;
   evidence: Record<string, unknown>;
@@ -385,7 +386,6 @@ export const businessApi = {
   listFx: (t: string) => request<FxRow[]>(`/api/business/fx?tenant_id=${t}`),
   putFx: (t: string, f: { currency: string; rate_to_base: number; effective_date: string }) =>
     request<unknown>(`/api/business/fx?tenant_id=${t}`, { method: "PUT", ...json(f) }),
-  reprocessFx: (t: string) => request<unknown>(`/api/business/fx/reprocess?tenant_id=${t}`, { method: "POST" }),
 };
 
 async function requestVoid(path: string, method: string): Promise<void> {

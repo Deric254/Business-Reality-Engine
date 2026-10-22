@@ -49,13 +49,13 @@ def quality_report(db: Session, tenant_id: str, days: int = 30, now: Optional[da
         score = round(max(0.0, 100.0 - fail_pct - penalty), 1)
     notes = []
     if fail_pct >= 5:
-        notes.append(f"{fail_pct:.0f}% of events failed validation and are excluded from every total.")
+        notes.append(f"{fail_pct:.0f}% of records could not be used (for example a missing date or amount) and are left out of every total.")
     if (missing["customer"] or 0) >= 30:
-        notes.append(f"{missing['customer']:.0f}% of sales carry no customer, so customer analysis is limited.")
+        notes.append(f"{missing['customer']:.0f}% of sales have no customer name, so we cannot say much about your customers.")
     if (missing["amount"] or 0) >= 5:
-        notes.append(f"{missing['amount']:.0f}% of sales have no amount.")
+        notes.append(f"{missing['amount']:.0f}% of sales have no amount, so your sales total is probably too low.")
     if any(r.startswith("no FX rate") for r in reasons):
-        notes.append("Some events are waiting for an exchange rate; add it in Settings and reprocess.")
+        notes.append("Some records are in another currency and are waiting for an exchange rate. Add it in Business settings.")
     return {"period_days": days, "events": int(total), "failed": int(failed), "failed_pct": fail_pct, "score": score,
             "sales_missing_pct": missing, "top_failure_reasons": sorted(
                 ({"reason": r, "count": c} for r, c in reasons.items()), key=lambda x: -x["count"])[:10],
@@ -84,11 +84,11 @@ def discover(db: Session, tenant_id: str, now: Optional[datetime] = None) -> dic
             suggestions.append({
                 "entity": ent, "field": field, "period_days": period, "direction": "rise" if ent == "expense" else "drop",
                 "already_monitored": (ent, field) in monitored, "enough_history": enough,
-                "reason": (f"{have} {ent} events with {field}, about {per_week:.0f} per week" +
+                "reason": (f"{have} {ent} records with {field}, about {per_week:.0f} per week" +
                            ("" if enough else f"; only {span_days} days of history so far (need ~{period * 5})"))})
     suggestions.sort(key=lambda s: (s["already_monitored"], not s["enough_history"]))
     return {"entities": entities, "suggested_metrics": suggestions,
-            "next_steps": [] if entities else ["No data yet. Connect a source or send test events to begin."]}
+            "next_steps": [] if entities else ["No data yet. Connect a source or add a few entries by hand to begin."]}
 
 
 def health_summary(db: Session, tenant_id: str, days: int = 30, now: Optional[datetime] = None) -> dict:
@@ -118,9 +118,9 @@ def health_summary(db: Session, tenant_id: str, days: int = 30, now: Optional[da
         parts.append("No data has arrived in this period yet.")
     else:
         if crit or high:
-            parts.append(f"{crit + high} serious issue(s) open.")
+            parts.append(f"{crit + high} serious problem{'s' if crit + high != 1 else ''} need{'' if crit + high != 1 else 's'} your attention.")
         if stale:
-            parts.append(f"Data is stale for: {', '.join(stale)}.")
+            parts.append(f"These data sources have stopped sending recent records: {', '.join(stale)}.")
         if not parts:
             parts.append("Nothing needs urgent attention.")
     return {"period_days": days, "status": status, "score": score, "headline": " ".join(parts),

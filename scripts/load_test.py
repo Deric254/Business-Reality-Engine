@@ -3,7 +3,7 @@
 Mixes authenticated reads (alerts, KPIs) with service-key batch ingestion
 (50 events/request, every id unique so nothing is deduplicated away).
 Run the API with RATE_LIMIT_GENERAL_PER_MIN raised, or every request past 300/min is a 429."""
-import asyncio, sys, time, uuid, statistics, datetime as dt
+import asyncio, sys, time, uuid, datetime as dt
 import httpx
 
 base, email, pw, tenant, conn, skey = sys.argv[1:7]

@@ -48,7 +48,7 @@ def test_questions_say_where_sales_moved_and_rank_branches(client):
     assert a["intent"] == "sales" and "Where it moved: Branch Maua down 67%" in a["answer"]
     b = ask("Which branch is doing worst this week?")
     assert b["intent"] == "branches" and b["answered"]
-    assert "Meru sold the most (1,500, +0% on the period before)" in b["answer"] and "Maua the least (500, -67% on the period before)" in b["answer"]
+    assert "Meru sold the most (1,500, +0% compared with the 7 days before)" in b["answer"] and "Maua the least (500, -67% compared with the 7 days before)" in b["answer"]
     assert "Biggest fall: Maua, down 67% from 1,500 to 500." in b["answer"]
 
 

@@ -2,11 +2,12 @@ import { SEVERITY_COLOR, SEVERITY_LABEL, SEVERITY_TEXT, SEVERITY_TINT } from "..
 
 const SEVERITIES = ["critical", "high", "medium", "informational", "opportunity"];
 const STATES = [
-  { value: "", label: "All states" },
-  { value: "detected", label: "New" },
+  { value: "open", label: "Open (still needs you)" },
+  { value: "detected", label: "New, not yet looked at" },
   { value: "investigating", label: "Being looked at" },
   { value: "action_taken", label: "Action taken" },
-  { value: "resolved", label: "Resolved" },
+  { value: "closed", label: "Closed (handled or dismissed)" },
+  { value: "", label: "Everything" },
 ];
 
 interface FilterBarProps {

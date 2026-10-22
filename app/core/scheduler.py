@@ -1,16 +1,7 @@
 """
-Scheduler (Sections 17-18, and the core promise in Section 1: "always-on").
-
-Detection has only run on manual trigger up to this point — every test in
-this build called /api/detection/run/historical-deviation by hand. That
-contradicts the product's own premise. This wires it to a real interval.
-
-Deliberately simple for now: BackgroundScheduler running in-process,
-one interval for every tenant/metric. A real system would honor each
-connector's own expected_frequency (Section 17) and let a business
-configure which metrics to watch (Section 50) — that's not built yet.
-This is the honest v1: every active tenant gets sale.amount and
-expense.amount checked on the same fixed interval.
+Scheduler (Sections 17-18): the "always-on" part. Runs in-process and checks every active business on a fixed interval,
+so problems are found even when no new data arrives (a source going quiet is only visible to a scheduled check).
+Each business watches its own monitored metrics (Section 50); one with none set gets sales and spending.
 """
 import logging
 import os
@@ -71,8 +62,7 @@ def _release_cycle_lock(client):
     except Exception as e:
         logger.error(f"Scheduler lock release error: {e}")
 
-# Metrics checked for every tenant on each cycle. Section 50 (per-business
-# configuration of what to monitor) would replace this fixed list.
+# What a business with no monitored-metric rows of its own watches.
 _DEFAULT_METRICS = [
     {"entity": "sale", "field": "amount", "direction": "drop"},
     {"entity": "expense", "field": "amount", "direction": "rise"},
@@ -188,6 +178,22 @@ def run_sync_cycle():
         db.close()
 
 
+def run_housekeeping():
+    """Daily: forget revoked-login records that have expired anyway, so the table does not grow without end."""
+    from app.core import revocation
+    db = SessionLocal()
+    try:
+        removed = revocation.purge_expired(db)
+        db.commit()
+        if removed:
+            logger.info(f"Housekeeping: removed {removed} expired revoked-token record(s)")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Housekeeping failed: {e}")
+    finally:
+        db.close()
+
+
 def start_scheduler(interval_minutes: int):
     global _scheduler
     if _scheduler is not None:
@@ -195,11 +201,12 @@ def start_scheduler(interval_minutes: int):
     _scheduler = BackgroundScheduler()
     _scheduler.add_job(
         run_detection_cycle, "interval", minutes=interval_minutes,
-        id="detection_cycle", next_run_time=None,  # first run scheduled normally, not immediate
-    )
+        id="detection_cycle", max_instances=1, coalesce=True,
+    )   # (passing next_run_time=None here would add the job PAUSED, and it would never run)
     _scheduler.add_job(run_dispatch_cycle, "interval", minutes=1, id="notification_dispatch",
                        max_instances=1, coalesce=True)
     _scheduler.add_job(run_sync_cycle, "interval", minutes=1, id="connector_sync", max_instances=1, coalesce=True)
+    _scheduler.add_job(run_housekeeping, "interval", hours=24, id="housekeeping", max_instances=1, coalesce=True)
     _scheduler.start()
     logger.info(f"Scheduler started — detection cycle every {interval_minutes} minute(s)")
 

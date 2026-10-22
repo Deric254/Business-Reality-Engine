@@ -49,7 +49,7 @@ export function TrendChart({ current, previous, height = 260 }: { current: Trend
 
   return (
     <div ref={ref} className="relative">
-      <svg width={w} height={height} role="img" aria-label={`Daily sales and expenses for the last ${n} days. Total sales ${Math.round(total).toLocaleString("en-KE")}.`}
+      <svg width={w} height={height} role="img" aria-label={`Daily sales and spending for the last ${n} days. Total sales ${Math.round(total).toLocaleString("en-KE")}.`}
         onPointerMove={move} onPointerLeave={() => setHover(null)} className="block touch-pan-y">
         {ticks.map((t, i) => (
           <g key={i}>
@@ -77,12 +77,12 @@ export function TrendChart({ current, previous, height = 260 }: { current: Trend
           style={{ left: Math.min(Math.max(x(hover) + 12, 8), w - 168) }}>
           <div className="font-semibold text-ink-text mb-1">{day(hd.date)}</div>
           <div className="flex justify-between gap-6"><span style={{ color: SALES }}>Sales</span><span className="kpi-figure">{Math.round(hd.sales).toLocaleString("en-KE")}</span></div>
-          <div className="flex justify-between gap-6"><span style={{ color: EXPENSES }}>Expenses</span><span className="kpi-figure">{Math.round(hd.expenses).toLocaleString("en-KE")}</span></div>
+          <div className="flex justify-between gap-6"><span style={{ color: EXPENSES }}>Spending</span><span className="kpi-figure">{Math.round(hd.expenses).toLocaleString("en-KE")}</span></div>
         </div>
       )}
       <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-ink-muted mt-1 pl-[46px]">
         <span className="inline-flex items-center gap-1.5"><span className="inline-block w-4 h-[3px] rounded" style={{ background: SALES }} />Sales</span>
-        <span className="inline-flex items-center gap-1.5"><span className="inline-block w-4 h-[2px] rounded" style={{ background: EXPENSES }} />Expenses</span>
+        <span className="inline-flex items-center gap-1.5"><span className="inline-block w-4 h-[2px] rounded" style={{ background: EXPENSES }} />Spending</span>
         <span className="inline-flex items-center gap-1.5"><span className="inline-block w-4 border-t-2 border-dashed" style={{ borderColor: PREV }} />Sales in the period before</span>
       </div>
     </div>

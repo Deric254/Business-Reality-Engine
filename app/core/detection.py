@@ -16,7 +16,6 @@ a lower average ticket size, or fewer distinct customers — these are
 different problems needing different responses. We decompose the same
 event data along those dimensions rather than just reporting the total.
 """
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
 from sqlalchemy import func
@@ -25,15 +24,6 @@ from sqlalchemy.orm import Session
 from app.models.core import BusinessEvent
 from app.models.alerts import Alert, AlertSeverity, AlertState
 from app.core.coverage import coverage_pct_for_entity
-
-
-@dataclass
-class MetricWindow:
-    tenant_id: str
-    entity: str            # e.g. "sale", "expense"
-    field: str              # "amount" or "quantity"
-    period_days: int
-    end: datetime
 
 
 METRIC_FIELDS = ("amount", "quantity")  # the only numeric event columns a metric may sum
@@ -64,13 +54,43 @@ def _noun(entity: str, field: str) -> str:
     return _NOUNS.get((entity, field), f"{entity.capitalize()} {field}")
 
 
+def _be(noun: str, past: bool = False) -> str:
+    if noun == "Spending":
+        return "was" if past else "is"
+    return "were" if past else "are"
+
+
+def _usual(period_days: int) -> str:
+    return "your usual week" if period_days == 7 else f"your usual {period_days} days"
+
+
+def _size_of_change(change: float) -> str:
+    """'down 59%' / 'up 30%'; past +100% a multiple reads better than a huge percentage ('15 times', not '1404%')."""
+    if change >= 1:
+        times = 1 + change
+        return f"{times:.0f} times" if times >= 10 else f"{times:.1f} times".replace(".0 ", " ")
+    return f"{'up' if change > 0 else 'down'} {abs(change) * 100:.0f}%"
+
+
 def _headline(entity: str, field: str, change: float, period_days: int) -> str:
-    """Plain words an owner would say: 'Sales are down 42% this week'."""
-    noun = _noun(entity, field)
-    word = "up" if change > 0 else "down"
-    span = "this week" if period_days == 7 else f"in the last {period_days} days"
-    verb = "is" if noun in ("Spending",) else "are"
-    return f"{noun} {verb} {word} {abs(change)*100:.0f}% {span}"
+    """Says what it is compared with, so two alerts about one metric can never look like they disagree:
+    'Sales are down 59% from your usual week', 'Spending is 15 times your usual week'."""
+    return compare_headline(_noun(entity, field), change, _usual(period_days))
+
+
+def compare_headline(noun: str, change: float, usual: str, past: bool = False) -> str:
+    """'<Sales> are down 59% from <your usual week>'. `usual` is the thing it is compared with, always spelled out."""
+    joiner = "" if change >= 1 else " from"
+    return f"{noun} {_be(noun, past)} {_size_of_change(change)}{joiner} {usual}"
+
+
+def comparison_text(entity: str, field: str, current: float, usual: float, period_days: int, periods_used: int) -> str:
+    """The plain facts behind a headline: the last N days, a usual N days, and the gap between them."""
+    noun = _noun(entity, field).lower()
+    gap = abs(current - usual)
+    return (f"In the last {period_days} days {noun} came to {current:,.0f}. In a usual {period_days} days it is about {usual:,.0f} "
+            f"(the average of the {periods_used} period{'s' if periods_used != 1 else ''} of {period_days} days before). "
+            f"That is {gap:,.0f} {'more' if current > usual else 'less'} than usual.")
 
 
 def _severity_for_change(pct_change: float) -> AlertSeverity:
@@ -115,6 +135,23 @@ def _find_open_alert(db: Session, tenant_id: str, dedup_key: str) -> Optional[Al
     )
 
 
+def resolve_alert(db: Session, alert: Alert, now: datetime) -> None:
+    """Close an alert this system raised itself, because its condition no longer holds."""
+    alert.state = AlertState.resolved
+    alert.resolved_at = now
+    alert.evidence = {**(alert.evidence or {}), "recovered_at": now.isoformat()}
+    db.commit()
+
+
+def close_if_cleared(db: Session, tenant_id: str, dedup_key: str, now: datetime) -> None:
+    """The problem has clearly gone. An alert nobody has touched is closed, so the list only shows what is still true
+    (otherwise 'Sales are down 59%' would sit there, with old numbers, after sales recovered). One a person is
+    working on is left for them to close."""
+    open_alert = _find_open_alert(db, tenant_id, dedup_key)
+    if open_alert and open_alert.state == AlertState.detected:
+        resolve_alert(db, open_alert, now)
+
+
 def _keep_lifecycle(existing, evidence: dict) -> dict:
     """A refresh replaces the measurements but must not erase lifecycle stamps (escalation)."""
     keep = {k: v for k, v in (existing.evidence or {}).items() if k == "escalated_at"}
@@ -122,11 +159,12 @@ def _keep_lifecycle(existing, evidence: dict) -> dict:
 
 
 def _in_cooldown(db: Session, tenant_id: str, dedup_key: str, now: datetime) -> bool:
-    """True if an alert with this dedup_key was closed recently enough to stay quiet."""
+    """True if a person closed an alert with this dedup_key recently enough that it should stay quiet."""
     closed = (
         db.query(Alert.state, Alert.updated_at, Alert.resolved_at)
         .filter(Alert.tenant_id == tenant_id, Alert.state.in_(CLOSED_STATES),
-                Alert.evidence["dedup_key"].as_string() == dedup_key)
+                Alert.evidence["dedup_key"].as_string() == dedup_key,
+                Alert.evidence["recovered_at"].as_string().is_(None))     # closed by the system when it cleared, not by a person
         .order_by(Alert.updated_at.desc())
         .limit(5)
         .all()
@@ -327,11 +365,13 @@ def detect_historical_deviation(
     rising = direction == "rise"
     bad_move = pct_change if rising else -pct_change     # positive = moved the bad way
 
+    dedup_key = f"historical_deviation:{entity}:{field}:{period_days}d"
     if bad_move < deterioration_threshold:
-        # Flat, moved the good way, or within noise — no alert.
+        # Flat, moved the good way, or within noise — no new alert. Well inside the line: the old one is over.
+        if bad_move < deterioration_threshold / 2:
+            close_if_cleared(db, tenant_id, dedup_key, now)
         return None
 
-    dedup_key = f"historical_deviation:{entity}:{field}:{period_days}d"
     evidence = {
         "metric": f"{entity}.{field}",
         "current": current_value,
@@ -342,10 +382,7 @@ def detect_historical_deviation(
         "direction": direction,
         "dedup_key": dedup_key,
     }
-    what_happened = (
-        f"{_noun(entity, field)} {'rose' if pct_change > 0 else 'fell'} {abs(pct_change)*100:.0f}% over the last {period_days} days: "
-        f"{current_value:,.0f}, against {baseline_avg:,.0f} in a typical {period_days} days (the average of the {len(valid_baseline)} before)."
-    )
+    what_happened = comparison_text(entity, field, current_value, baseline_avg, period_days, len(valid_baseline))
 
     # Explanation (Section 27): compare current period against the single
     # most recent baseline period (not the multi-period average — that's a
@@ -446,13 +483,14 @@ def detect_threshold_breach(
         tenant_id=tenant_id,
         severity=severity,
         state=AlertState.detected,
-        title=f"{entity.capitalize()} {field} threshold breached",
-        what_happened=f"{entity.capitalize()} {field} is {value:.2f}, {direction} threshold {threshold:.2f}.",
+        title=f"{_noun(entity, field)} {_be(_noun(entity, field))} {direction} the limit you set",
+        what_happened=(f"In the last {period_days} day{'s' if period_days != 1 else ''} {_noun(entity, field).lower()} came to {value:,.0f}. "
+                       f"You asked to be warned when this goes {direction} {threshold:,.0f}."),
         period_start=start,
         period_end=now,
         evidence=evidence,
         confidence=1.0,  # a fixed threshold breach is a fact, not an inference
-        recommended_action=f"Immediate review required — {field} has crossed a defined safety threshold.",
+        recommended_action=f"Look at this today: {_noun(entity, field).lower()} have crossed the limit you set. Change the limit in Settings if it no longer fits your business.",
     )
     db.add(alert)
     db.commit()
