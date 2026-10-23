@@ -148,16 +148,16 @@ def _one_line(value: str) -> str:
 def build_email(alert: Alert, to_addr: str, kind: str = "alert") -> EmailMessage:
     p = alert_payload(alert, kind)["alert"]
     msg = EmailMessage()
-    prefix = "ESCALATED " if kind == "escalation" else ""
+    prefix = "NOT YET REVIEWED " if kind == "escalation" else ""
     msg["Subject"] = _one_line(f"[{prefix}{p['severity'].upper()}] {p['title']}")
     msg["From"] = os.environ.get("SMTP_FROM", "alerts@localhost")
     msg["To"] = to_addr
     lines = [p["title"], ""]
     if kind == "escalation":
-        lines += ["This alert has gone unacknowledged and needs attention.", ""]
+        lines += ["Nobody has responded to this alert yet, and it has been waiting too long.", ""]
     lines += [p["what_happened"] or ""]
     if p["recommended_action"]:
-        lines += ["", f"Recommended: {p['recommended_action']}"]
+        lines += ["", f"Next step: {p['recommended_action']}"]
     lines += ["", f"Details: {p['url']}"]
     msg.set_content("\n".join(lines))
     return msg
@@ -239,11 +239,11 @@ def _post_json(url: str, body: dict, what: str) -> None:
 def render_alert(alert: Alert, kind: str = "alert") -> tuple[str, str]:
     """(headline, body) as plain text, shared by chat and SMS channels."""
     p = alert_payload(alert, kind)["alert"]
-    prefix = "ESCALATED " if kind == "escalation" else ""
+    prefix = "NOT YET REVIEWED " if kind == "escalation" else ""
     head = _one_line(f"[{prefix}{p['severity'].upper()}] {p['title']}")
     body = _one_line(p["what_happened"] or "")
     if p["recommended_action"]:
-        body += f" Recommended: {_one_line(p['recommended_action'])}"
+        body += f" Next step: {_one_line(p['recommended_action'])}"
     return head, body.strip()
 
 

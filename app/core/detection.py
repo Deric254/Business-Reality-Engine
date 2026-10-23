@@ -21,7 +21,7 @@ from typing import Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.core import BusinessEvent
+from app.models.core import BusinessEvent, Tenant
 from app.models.alerts import Alert, AlertSeverity, AlertState
 from app.core.coverage import coverage_pct_for_entity
 
@@ -54,6 +54,17 @@ def _noun(entity: str, field: str) -> str:
     return _NOUNS.get((entity, field), f"{entity.capitalize()} {field}")
 
 
+def currency_of(db: Session, tenant_id: str) -> str:
+    tenant = db.get(Tenant, tenant_id)
+    return (tenant.base_currency if tenant else "") or ""
+
+
+def money_formatter(db: Session, tenant_id: str, field: str = "amount"):
+    """Amounts in the business's own currency ('KES 9,060'); counts such as items sold get no currency."""
+    cur = currency_of(db, tenant_id) if field == "amount" else ""
+    return lambda v: f"{cur} {v:,.0f}".strip()
+
+
 def _be(noun: str, past: bool = False) -> str:
     if noun == "Spending":
         return "was" if past else "is"
@@ -84,13 +95,14 @@ def compare_headline(noun: str, change: float, usual: str, past: bool = False) -
     return f"{noun} {_be(noun, past)} {_size_of_change(change)}{joiner} {usual}"
 
 
-def comparison_text(entity: str, field: str, current: float, usual: float, period_days: int, periods_used: int) -> str:
+def comparison_text(entity: str, field: str, current: float, usual: float, period_days: int, periods_used: int, fmt=None) -> str:
     """The plain facts behind a headline: the last N days, a usual N days, and the gap between them."""
     noun = _noun(entity, field).lower()
+    fmt = fmt or (lambda v: f"{v:,.0f}")
     gap = abs(current - usual)
-    return (f"In the last {period_days} days {noun} came to {current:,.0f}. In a usual {period_days} days it is about {usual:,.0f} "
+    return (f"In the last {period_days} days {noun} came to {fmt(current)}. In a usual {period_days} days it is about {fmt(usual)} "
             f"(the average of the {periods_used} period{'s' if periods_used != 1 else ''} of {period_days} days before). "
-            f"That is {gap:,.0f} {'more' if current > usual else 'less'} than usual.")
+            f"That is {fmt(gap)} {'more' if current > usual else 'less'} than usual.")
 
 
 def _severity_for_change(pct_change: float) -> AlertSeverity:
@@ -250,6 +262,52 @@ def _pct_change(current: float, baseline: float) -> Optional[float]:
     return (current - baseline) / baseline
 
 
+def _one_off_driver(db: Session, tenant_id: str, entity: str, what: str, rising: bool,
+                    cur_start: datetime, cur_end: datetime, base_start: datetime, base_end: datetime,
+                    cur_total: float, base_total: float, fmt) -> Optional[dict]:
+    """Did ONE record cause most of the move? A single big purchase (or one big sale last period) looks like a crisis
+    (or a collapse) but may be a one-off, and the owner needs to know that before reacting. Rising: the largest record
+    now; falling: the largest record in the earlier period that is no longer there. Needs a clearly out-of-pattern
+    record (4x the average of the others, at least half of the whole change) so ordinary busy weeks never trigger it."""
+    start, end = (cur_start, cur_end) if rising else (base_start, base_end)
+    move = (cur_total - base_total) if rising else (base_total - cur_total)
+    if move <= 0:
+        return None
+    count, total = db.query(func.count(BusinessEvent.id), func.coalesce(func.sum(BusinessEvent.amount), 0)).filter(
+        BusinessEvent.tenant_id == tenant_id, BusinessEvent.entity == entity, BusinessEvent.timestamp >= start,
+        BusinessEvent.timestamp < end, BusinessEvent.validation_status == "validated", BusinessEvent.amount.isnot(None)).one()
+    top = (db.query(BusinessEvent.amount, BusinessEvent.timestamp).filter(
+        BusinessEvent.tenant_id == tenant_id, BusinessEvent.entity == entity, BusinessEvent.timestamp >= start,
+        BusinessEvent.timestamp < end, BusinessEvent.validation_status == "validated", BusinessEvent.amount.isnot(None))
+        .order_by(BusinessEvent.amount.desc()).first())
+    if count < 3 or not top:
+        return None
+    amount, when = float(top[0]), top[1]
+    others_avg = (float(total) - amount) / (count - 1)
+    share = amount / move
+    if amount < 4 * others_avg or share < 0.5:
+        return None
+    day = f"{when:%d %b}"
+    share_text = "all" if share >= 1 else f"{share * 100:.0f}% of"
+    if rising:
+        evidence = (f"One {what} of {fmt(amount)} on {day} is {share_text} the increase. Without it, the total would be {fmt(cur_total - amount)} "
+                    f"(before: {fmt(base_total)}). If it was a one-off, your normal level has not really changed.")
+    else:
+        evidence = (f"The earlier period included one {what} of {fmt(amount)} on {day}, which is {share_text} the fall. "
+                    f"If that was unusual, the drop looks worse than it really is.")
+    return {"driver": f"One large {what}", "evidence": evidence, "one_off": True, "record": {"amount": amount, "amount_text": fmt(amount), "date": when.date().isoformat()}}
+
+
+def one_off_action(driver: dict, rising: bool) -> str:
+    """The next step when one record explains the move: check that record first, and say what to tap if it was expected."""
+    rec = driver["record"]
+    if rising:
+        return (f"Start with the large payment of {rec['amount_text']} on {rec['date']}. If it was planned (stock, equipment, a loan repayment), "
+                f"tap 'Not relevant' and this alert stays quiet for 2 days. If you do not recognise it, treat it as a problem and find out who approved it.")
+    return (f"Check the large sale of {rec['amount_text']} on {rec['date']} in the earlier period. If big sales like that are rare for you, "
+            f"the real drop is smaller than shown; if they are normal, find out why this period had none.")
+
+
 def explain_deviation(
     db: Session, tenant_id: str, entity: str,
     current_start: datetime, current_end: datetime,
@@ -281,42 +339,49 @@ def explain_deviation(
     # For cost-like metrics the bad move is UP, so drivers are named by increases.
     sign = -1 if rising else 1
     word = "rose" if rising else "fell"
+    fmt = money_formatter(db, tenant_id)
+    what, count_word = ("payment", "payments") if entity == "expense" else ("sale", "sales")
 
-    # Where it happened comes first: a branch or product the owner can act on beats a generic "volume fell".
+    one_off = _one_off_driver(db, tenant_id, entity, what, rising, current_start, current_end, baseline_start, baseline_end,
+                              current["total_amount"], baseline["total_amount"], fmt)
+    if one_off:
+        explanations.append(one_off)       # first: if one record explains the move, the owner should look at it before anything else
+
+    # Where it happened comes next: a branch or product the owner can act on beats a generic "volume fell".
     product_label = ("Category", "categories") if entity == "expense" else ("Product", "products")      # what a cost was spent on
     for column, (label, plural) in (("location", ("Branch", "branches")), ("product_id", product_label)):
         for m in dimension_movers(db, tenant_id, entity, column, (current_start, current_end), (baseline_start, baseline_end), rising, NOTABLE):
             explanations.append({
                 "driver": f"{label}: {m['value']} {word}",
-                "evidence": f"{m['value']}: {m['before']:,.0f} -> {m['after']:,.0f} ({m['change_pct']:+d}%), "
-                            f"{m['share_pct']}% of the {'rise' if rising else 'fall'} across the {plural} that {word}.",
+                "evidence": f"{m['value']} went from {fmt(m['before'])} to {fmt(m['after'])} ({m['change_pct']:+d}%). "
+                            f"That is {m['share_pct']}% of the {'rise' if rising else 'fall'} across the {plural} that {word}.",
             })
 
     if txn_change is not None and sign * txn_change <= -NOTABLE:
         explanations.append({
-            "driver": "Transaction volume increase" if rising else "Transaction volume decline",
-            "evidence": f"Transaction count {word} {abs(txn_change)*100:.1f}% "
-                        f"({baseline['transaction_count']} -> {current['transaction_count']}).",
+            "driver": f"More {count_word}" if rising else f"Fewer {count_word}",
+            "evidence": f"The number of {count_word} {word} {abs(txn_change)*100:.0f}% "
+                        f"(from {baseline['transaction_count']} to {current['transaction_count']}).",
         })
     if ticket_change is not None and sign * ticket_change <= -NOTABLE:
         explanations.append({
-            "driver": "Higher average value per record" if rising else "Lower average sale value",
-            "evidence": f"Average ticket size {word} {abs(ticket_change)*100:.1f}% "
-                        f"({baseline['avg_ticket']:.2f} -> {current['avg_ticket']:.2f}).",
+            "driver": f"Bigger average {what}" if rising else f"Smaller average {what}",
+            "evidence": f"The average {what} {word} {abs(ticket_change)*100:.0f}% "
+                        f"(from {fmt(baseline['avg_ticket'])} to {fmt(current['avg_ticket'])}).",
         })
     if customer_change is not None and sign * customer_change <= -NOTABLE:
         explanations.append({
-            "driver": "More distinct customers" if rising else "Fewer distinct customers",
-            "evidence": f"Distinct customers {word} {abs(customer_change)*100:.1f}% "
-                        f"({baseline['distinct_customers']} -> {current['distinct_customers']}).",
+            "driver": "More different customers" if rising else "Fewer different customers",
+            "evidence": f"The number of different customers {word} {abs(customer_change)*100:.0f}% "
+                        f"(from {baseline['distinct_customers']} to {current['distinct_customers']}).",
         })
 
     # Explicitly note what did NOT change — as informative as what did move.
     if ticket_change is not None and abs(ticket_change) < NOTABLE:
         explanations.append({
-            "driver": "Average sale value (ruled out)",
-            "evidence": f"Average ticket size is stable ({baseline['avg_ticket']:.2f} -> "
-                        f"{current['avg_ticket']:.2f}, {ticket_change*100:+.1f}%) — not a pricing/mix issue.",
+            "driver": f"Average {what} (ruled out)",
+            "evidence": f"The average {what} stayed about the same ({fmt(baseline['avg_ticket'])} before, {fmt(current['avg_ticket'])} now), "
+                        f"so prices and what you sell are probably not the cause.",
         })
 
     return related_variables, explanations
@@ -382,7 +447,7 @@ def detect_historical_deviation(
         "direction": direction,
         "dedup_key": dedup_key,
     }
-    what_happened = comparison_text(entity, field, current_value, baseline_avg, period_days, len(valid_baseline))
+    what_happened = comparison_text(entity, field, current_value, baseline_avg, period_days, len(valid_baseline), money_formatter(db, tenant_id, field))
 
     # Explanation (Section 27): compare current period against the single
     # most recent baseline period (not the multi-period average — that's a
@@ -396,6 +461,16 @@ def detect_historical_deviation(
         rising=rising,
     )
 
+    one_off = next((e for e in possible_explanations if e.get("one_off")), None)
+    noun_lower = _noun(entity, field).lower()
+    if one_off:
+        action = one_off_action(one_off, rising)
+    elif rising:
+        action = f"Check what drove the rise in {noun_lower}: which days, branches or suppliers grew the most."
+    else:
+        action = (f"Check what changed in {noun_lower}: which days, branches or products fell the most, and whether anything changed "
+                  f"on your side (prices, stock, staff, opening hours).")
+
     existing = _find_open_alert(db, tenant_id, dedup_key)
     if existing:
         # Same ongoing issue — update evidence and severity, don't spam a new alert (Section 25).
@@ -406,6 +481,7 @@ def detect_historical_deviation(
         existing.possible_explanations = possible_explanations
         existing.data_coverage_pct = coverage_pct_for_entity(db, tenant_id, entity, now=now)
         existing.what_happened = what_happened
+        existing.recommended_action = action
         db.commit()
         db.refresh(existing)
         return existing
@@ -427,11 +503,7 @@ def detect_historical_deviation(
         possible_explanations=possible_explanations,
         confidence=0.7 if len(valid_baseline) >= 2 else 0.4,  # more baseline periods = more confidence
         data_coverage_pct=coverage_pct_for_entity(db, tenant_id, entity, now=now),
-        recommended_action=(
-            f"Check what drove the rise in {_noun(entity, field).lower()}: which days, branches or suppliers grew the most."
-            if rising else
-            f"Check what changed in {_noun(entity, field).lower()}: which days, branches or products fell the most, and whether anything changed on your side (prices, stock, staff, opening hours)."
-        ),
+        recommended_action=action,
     )
     db.add(alert)
     db.commit()
@@ -484,8 +556,8 @@ def detect_threshold_breach(
         severity=severity,
         state=AlertState.detected,
         title=f"{_noun(entity, field)} {_be(_noun(entity, field))} {direction} the limit you set",
-        what_happened=(f"In the last {period_days} day{'s' if period_days != 1 else ''} {_noun(entity, field).lower()} came to {value:,.0f}. "
-                       f"You asked to be warned when this goes {direction} {threshold:,.0f}."),
+        what_happened=(f"In the last {period_days} day{'s' if period_days != 1 else ''} {_noun(entity, field).lower()} came to {money_formatter(db, tenant_id, field)(value)}. "
+                       f"You asked to be warned when this goes {direction} {money_formatter(db, tenant_id, field)(threshold)}."),
         period_start=start,
         period_end=now,
         evidence=evidence,

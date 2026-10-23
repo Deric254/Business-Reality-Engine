@@ -37,7 +37,7 @@ def test_alert_drivers_name_the_branch_and_product_behind_the_drop(client, db):
     names = [d["driver"] for d in drivers]
     assert names[0] == "Branch: Maua fell" and any(n.startswith("Product: ") for n in names)
     maua = next(d for d in drivers if d["driver"] == "Branch: Maua fell")
-    assert "1,500 -> 500 (-67%)" in maua["evidence"] and "100% of the fall" in maua["evidence"]
+    assert "went from KES 1,500 to KES 500 (-67%)" in maua["evidence"] and "100% of the fall" in maua["evidence"]
     assert "Branch: Meru fell" not in names                                                        # Meru did not fall
 
 
@@ -48,8 +48,8 @@ def test_questions_say_where_sales_moved_and_rank_branches(client):
     assert a["intent"] == "sales" and "Where it moved: Branch Maua down 67%" in a["answer"]
     b = ask("Which branch is doing worst this week?")
     assert b["intent"] == "branches" and b["answered"]
-    assert "Meru sold the most (1,500, +0% compared with the 7 days before)" in b["answer"] and "Maua the least (500, -67% compared with the 7 days before)" in b["answer"]
-    assert "Biggest fall: Maua, down 67% from 1,500 to 500." in b["answer"]
+    assert "Meru sold the most (KES 1,500, +0% compared with the 7 days before)" in b["answer"] and "Maua the least (KES 500, -67% compared with the 7 days before)" in b["answer"]
+    assert "Biggest fall: Maua, down 67% from KES 1,500 to KES 500." in b["answer"]
 
 
 def test_a_cost_rise_names_the_category_not_a_product(client, db):

@@ -51,7 +51,7 @@ def test_a_loss_already_made_is_stated_as_fact_not_as_a_forecast(db, tid):  # no
     weekly(db, tid, c.id, "expense", [900] * 6)
     a = ex.detect_profit_risk(db, tid, now=NOW)
     assert a.title == "Spending exceeds sales"
-    assert "you spent 400 more than you sold" in a.what_happened and "forecast" not in a.what_happened
+    assert "you spent KES 400 more than you sold" in a.what_happened and "forecast" not in a.what_happened
 
 
 def test_alert_gives_the_figures_and_the_gap(db, tid):  # noqa: F811
@@ -59,7 +59,7 @@ def test_alert_gives_the_figures_and_the_gap(db, tid):  # noqa: F811
     weekly(db, tid, c.id, "sale", [400, 1000, 1000, 1000, 1000])
     a = detect_historical_deviation(db, tid, "sale", "amount", now=NOW)
     assert a.title == "Sales are down 60% from your usual week"
-    for part in ("In the last 7 days sales came to 400", "In a usual 7 days it is about 1,000", "600 less than usual"):
+    for part in ("In the last 7 days sales came to KES 400", "In a usual 7 days it is about KES 1,000", "KES 600 less than usual"):
         assert part in a.what_happened
 
 
@@ -134,3 +134,46 @@ def test_oversized_upload_is_refused_without_being_read_in_full(client):
     assert r.status_code == 413
     r = client.post("/api/connectors/inspect-file", data={"tenant_id": t}, files={"file": ("big.csv", big, "text/csv")}, headers=h)
     assert r.status_code == 413
+
+
+def _spread(db, tid, cid, entity, per_period, big=None, now=NOW, period_days=7):
+    """Several ordinary records per period (per_period[0] = most recent); `big` = (period index, amount) adds one large record."""
+    for i, total in enumerate(per_period):
+        for k in range(5):
+            put(db, tid, cid, entity, now - dt.timedelta(days=period_days * i + 1 + k * 0.5), total / 5)
+    if big:
+        put(db, tid, cid, entity, now - dt.timedelta(days=period_days * big[0] + 3), big[1])
+    db.commit()
+
+
+def test_one_large_payment_is_named_and_the_next_step_says_what_to_do_if_it_was_planned(db, tid):  # noqa: F811
+    c = connector(db, tid)
+    _spread(db, tid, c.id, "expense", [1000, 1000, 1000, 1000, 1000], big=(0, 5000))
+    a = detect_historical_deviation(db, tid, "expense", "amount", now=NOW, direction="rise")
+    first = a.possible_explanations[0]
+    assert first["driver"] == "One large payment" and "KES 5,000" in first["evidence"] and "one-off" in first["evidence"]
+    assert "large payment of KES 5,000" in a.recommended_action and "'Not relevant'" in a.recommended_action
+
+
+def test_ordinary_busy_week_is_not_mistaken_for_a_one_off(db, tid):  # noqa: F811
+    c = connector(db, tid)
+    _spread(db, tid, c.id, "expense", [2000, 1000, 1000, 1000, 1000])          # five similar records each week
+    a = detect_historical_deviation(db, tid, "expense", "amount", now=NOW, direction="rise")
+    assert a and not any(e.get("one_off") for e in a.possible_explanations)
+    assert a.recommended_action.startswith("Check what drove the rise in spending")
+
+
+def test_a_drop_caused_by_one_big_sale_in_the_earlier_week_says_so(db, tid):  # noqa: F811
+    c = connector(db, tid)
+    _spread(db, tid, c.id, "sale", [1000, 1000, 1000, 1000, 1000])
+    put(db, tid, c.id, "sale", NOW - dt.timedelta(days=10), 5000); db.commit()          # one big sale in the week before last week
+    a = detect_historical_deviation(db, tid, "sale", "amount", now=NOW, deterioration_threshold=0.05)
+    drivers = [e for e in a.possible_explanations if e.get("one_off")]
+    assert drivers and drivers[0]["driver"] == "One large sale" and "KES 5,000" in drivers[0]["evidence"]
+    assert "rare for you" in a.recommended_action
+
+
+def test_counts_such_as_items_sold_carry_no_currency(db, tid):  # noqa: F811
+    from app.core.detection import money_formatter
+    assert money_formatter(db, tid, "amount")(1234) == "KES 1,234"
+    assert money_formatter(db, tid, "quantity")(1234) == "1,234"

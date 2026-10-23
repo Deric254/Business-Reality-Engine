@@ -7,6 +7,8 @@ and the answer is template-worded. No LLM is needed to answer, and none ever com
 can be asked, never a guess. The profit intent keeps its optional LLM phrasing (business_questions).
 """
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 from typing import Callable, Optional
 
@@ -66,8 +68,21 @@ def classify(question: str) -> Optional[str]:
     return None
 
 
+_currency: ContextVar[str] = ContextVar("currency", default="")
+
+
+@contextmanager
+def currency_scope(currency: str):
+    """Every amount in the answers produced inside this block carries the business's currency ('KES 9,060')."""
+    token = _currency.set(currency)
+    try:
+        yield
+    finally:
+        _currency.reset(token)
+
+
 def _money(v: float) -> str:
-    return f"{v:,.0f}" if abs(v) >= 100 else f"{v:,.2f}"
+    return f"{_currency.get()} {v:,.0f}".strip() if abs(v) >= 100 else f"{_currency.get()} {v:,.2f}".strip()
 
 
 def _change(cur: float, prev: float) -> tuple[Optional[float], str]:

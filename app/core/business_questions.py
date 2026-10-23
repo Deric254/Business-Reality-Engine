@@ -92,8 +92,9 @@ def compute_profit_breakdown(
 
 def _deterministic_fallback(evidence: dict) -> str:
     """No LLM configured: still a complete, correct answer, in plain words."""
+    from app.core.question_router import _money
     profit, days = evidence["profit"], evidence["period_days"]
-    text = f"Your profit (sales minus spending) over the last {days} days is {profit['current']:,.0f}"
+    text = f"Your profit (sales minus spending) over the last {days} days is {_money(profit['current'])}"
     if profit["change_pct"] is not None:
         text += f", {'up' if profit['change'] >= 0 else 'down'} {abs(profit['change_pct']):.0f}% compared with the {days} days before"
     text += "."
@@ -110,6 +111,13 @@ PLANNABLE = {"sales", "expenses", "branches", "weekdays", "top_customers", "top_
 
 
 def answer_question(db: Session, tenant_id: str, question: str, period_days: int = 30) -> dict:
+    from app.core.detection import currency_of
+    from app.core.question_router import currency_scope
+    with currency_scope(currency_of(db, tenant_id)):
+        return _answer_question(db, tenant_id, question, period_days)
+
+
+def _answer_question(db: Session, tenant_id: str, question: str, period_days: int) -> dict:
     """Section 45: route the question to the analytics that can answer it. Profit questions keep the
     optional LLM phrasing; everything else is deterministic. Unplaceable questions are said so."""
     from app.core import query_plan

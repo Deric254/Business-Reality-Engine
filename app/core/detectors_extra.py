@@ -8,7 +8,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core import coverage as coverage_mod
-from app.core.detection import _be, _in_cooldown, _noun, METRIC_FIELDS, _find_open_alert, _sum_metric, close_if_cleared, resolve_alert
+from app.core.detection import _be, _in_cooldown, _noun, money_formatter, METRIC_FIELDS, _find_open_alert, _sum_metric, close_if_cleared, resolve_alert
 from app.core.detectors import _period_phrase, _r_squared, _upsert
 from app.core.forecasting import _least_squares, forecast_next_period
 from app.models.alerts import Alert, AlertSeverity
@@ -53,14 +53,15 @@ def detect_forecast_deviation(db: Session, tenant_id: str, entity: str, field: s
     word = "below" if rel < 0 else "above"
     noun = _noun(entity, field)
     unit = _period_phrase(period_days)
+    fmt = money_formatter(db, tenant_id, field)
     return _upsert(
         db, tenant_id, key, now,
         {"metric": f"{entity}.{field}", "forecast": round(pred, 2), "actual": round(actual, 2),
          "history": [round(v, 2) for v in history], "period_days": period_days, "direction": direction,
          "method": "linear trend of prior periods"},
         dict(kind="forecast", severity=sev, title=f"{noun} {_be(noun)} {abs(rel)*100:.0f}% {word} where your recent trend was heading",
-             what_happened=(f"In the last {period_days} days {noun.lower()} came to {actual:,.0f}. The direction of your previous {unit}s "
-                            f"pointed to about {pred:,.0f}, so the result is {abs(actual - pred):,.0f} {word} that."),
+             what_happened=(f"In the last {period_days} days {noun.lower()} came to {fmt(actual)}. The direction of your previous {unit}s "
+                            f"pointed to about {fmt(pred)}, so the result is {fmt(abs(actual - pred))} {word} that."),
              magnitude=round(rel, 4), period_start=now - timedelta(days=period_days), period_end=now,
              confidence=0.55, data_coverage_pct=coverage_mod.coverage_pct_for_entity(db, tenant_id, entity, now=now),
              recommended_action="Find out what changed in this period compared with before: prices, stock, staff, opening hours, or a one-off event."),
@@ -93,12 +94,13 @@ def _current_loss(db: Session, tenant_id: str, now: datetime, period_days: int) 
             resolve_alert(db, open_alert, now)
         return None
     sev = AlertSeverity.high if spent >= 1.25 * sold else AlertSeverity.medium
+    fmt = money_formatter(db, tenant_id)
     return _upsert(
         db, tenant_id, key, now,
         {"metric": "profit.net", "window_days": LOSS_WINDOW_DAYS, "sales": round(sold, 2), "expenses": round(spent, 2), "net": round(-loss, 2), "projection": False},
         dict(kind="risk", severity=sev, title="Spending exceeds sales",
-             what_happened=(f"Over the last {LOSS_WINDOW_DAYS} days (or since your records began) you spent {spent:,.0f} and sold {sold:,.0f}, "
-                            f"which is a loss of {loss:,.0f}. This is simple subtraction of your records, not a forecast."),
+             what_happened=(f"Over the last {LOSS_WINDOW_DAYS} days (or since your records began) you spent {fmt(spent)} and sold {fmt(sold)}, "
+                            f"which is a loss of {fmt(loss)}. This is simple subtraction of your records, not a forecast."),
              magnitude=None, period_start=start, period_end=now, confidence=0.9,
              data_coverage_pct=coverage_mod.coverage_pct_for_entity(db, tenant_id, "sale", now=now),
              recommended_action="Look at your biggest costs, and check that every sale is being recorded. If this is a launch or a big stock purchase, compare it with your plan."),
@@ -127,7 +129,8 @@ def detect_profit_risk(db: Session, tenant_id: str, period_days: int = 7, horizo
     if not already and not (crossing is not None and crossing <= horizon_periods and fit >= 0.5):
         return None
     sev = AlertSeverity.high if already else AlertSeverity.medium
-    msg = (f"In the last {period_days} days you spent {-current:,.0f} more than you sold." if already else
+    fmt = money_formatter(db, tenant_id)
+    msg = (f"In the last {period_days} days you spent {fmt(-current)} more than you sold." if already else
            f"Your sales minus spending is shrinking. If it keeps going this way you could start losing money within about {crossing * period_days} days.")
     return _upsert(
         db, tenant_id, f"risk:profit:{period_days}d", now,

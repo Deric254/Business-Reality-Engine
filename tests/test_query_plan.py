@@ -51,7 +51,7 @@ def test_grouping_and_comparison_are_computed_by_sql_not_by_the_ai(client, shop,
     assert (rows["Meru"]["value"], rows["Maua"]["value"]) == (1500.0, 500.0)
     assert (rows["Meru"]["change_pct"], rows["Maua"]["change_pct"]) == (0.0, -66.7)
     assert out["evidence"]["total"] == 2000.0 and out["evidence"]["previous_total"] == 3000.0
-    assert "Sales by branch, the last 7 days" in out["answer"] and "Maua 500 (-67%)" in out["answer"] and "Total 2,000 (-33% vs the previous period, 3,000)" in out["answer"]
+    assert "Sales by branch, the last 7 days" in out["answer"] and "Maua KES 500 (-67%)" in out["answer"] and "Total KES 2,000 (-33% vs the previous period, KES 3,000)" in out["answer"]
     assert "2000" not in p.calls[0][1] and "1500" not in p.calls[0][1]                             # the AI never saw a number
 
 

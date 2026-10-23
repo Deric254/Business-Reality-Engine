@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, businessApi, connectorApi, type Alert, type ConnectorRow, type Health, type KpiBreakdown, type Trend } from "../api/client";
+import { api, businessApi, connectorApi, settingsApi, tenantApi, type Alert, type ConnectorRow, type Health, type KpiBreakdown, type Trend } from "../api/client";
 import { Shell } from "../components/Shell";
 import { AskBox } from "../components/AskBox";
 import { DataCheck } from "../components/DataCheck";
@@ -26,12 +26,12 @@ function change(cur: number, prev: number): number | null {
   return prev === 0 ? null : ((cur - prev) / prev) * 100;
 }
 
-function Kpi({ label, value, delta, goodWhen, days }: { label: string; value: number; delta: number | null; goodWhen: "up" | "down"; days: number }) {
+function Kpi({ label, value, delta, goodWhen, days, cur }: { label: string; value: number; delta: number | null; goodWhen: "up" | "down"; days: number; cur: string }) {
   const good = delta == null || Math.abs(delta) < 0.5 ? null : (delta > 0) === (goodWhen === "up");
   return (
     <div className="min-w-0">
       <div className="text-sm text-ink-muted">{label}</div>
-      <div className="figure text-3xl sm:text-4xl mt-0.5 break-words">{money(value)}</div>
+      <div className="figure text-3xl sm:text-4xl mt-0.5 break-words">{money(value, cur)}</div>
       <div className="text-sm mt-1 kpi-figure" style={{ color: good == null ? "var(--neutral)" : good ? "var(--good)" : "var(--bad)" }}>
         {delta == null ? "No earlier records to compare with" : Math.abs(delta) < 0.5 ? `About the same as the ${days} days before` : `${delta > 0 ? "Up" : "Down"} ${Math.abs(delta).toFixed(0)}% compared with the ${days} days before`}
       </div>
@@ -81,6 +81,8 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
   const [trend, setTrend] = useState<Trend | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [sources, setSources] = useState<ConnectorRow[]>([]);
+  const [cur, setCur] = useState("");
+  const [channelCount, setChannelCount] = useState<number | null>(null);   // null = unknown (for example a viewer who may not see Settings)
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState(7);
@@ -93,8 +95,9 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
     Promise.all([
       api.listAlerts(tenant.id, { state: "open" }), api.getKpis(tenant.id, days), businessApi.trend(tenant.id, days),
       businessApi.health(tenant.id, days).catch(() => null), connectorApi.list(tenant.id).catch(() => [] as ConnectorRow[]),
+      tenantApi.me().then((m) => m.base_currency).catch(() => ""), settingsApi.listChannels(tenant.id).then((l) => l.filter((c) => c.enabled).length).catch(() => null),
     ])
-      .then(([a, k, tr, h, c]) => { if (mine === latest.current) { setAlerts(a); setKpis(k); setTrend(tr); setHealth(h); setSources(c); } })
+      .then(([a, k, tr, h, c, currency, channels]) => { if (mine === latest.current) { setAlerts(a); setKpis(k); setTrend(tr); setHealth(h); setSources(c); setCur(currency); setChannelCount(channels); } })
       .catch((e) => { if (mine === latest.current) setError(e.message); })
       .finally(() => { if (mine === latest.current) setLoading(false); });
   }, [tenant.id, days]);
@@ -135,6 +138,16 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
 
       {error && <Notice error={`Couldn't load your data: ${error}`} />}
 
+      {channelCount === 0 && sources.length > 0 && (
+        <Card className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="font-semibold">Nobody is told when something goes wrong</div>
+            <div className="text-sm text-ink-muted">Add an email, WhatsApp or SMS number and serious alerts reach you without opening this page.</div>
+          </div>
+          <Link to="/settings" className={primaryCls}>Set up alerts</Link>
+        </Card>
+      )}
+
       {noData && <GetStarted />}
 
       {(nothingInView || showCheck) && !noData && <DataCheck tenantId={tenant.id} days={days} onShowDays={setDays} />}
@@ -153,9 +166,9 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
             {!nothingInView && <button className="text-info hover:underline" onClick={() => setShowCheck((v) => !v)}>{showCheck ? "Hide the data check" : "Is something missing? Check my data"}</button>}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-            <Kpi days={days} label={`Sales, last ${days} days`} value={kpis.revenue.current} delta={change(kpis.revenue.current, kpis.revenue.previous)} goodWhen="up" />
-            <Kpi days={days} label={`Spending, last ${days} days`} value={kpis.expenses.current} delta={change(kpis.expenses.current, kpis.expenses.previous)} goodWhen="down" />
-            <Kpi days={days} label={`Profit, last ${days} days`} value={kpis.profit.current} delta={kpis.profit.change_pct} goodWhen="up" />
+            <Kpi days={days} cur={cur} label={`Sales, last ${days} days`} value={kpis.revenue.current} delta={change(kpis.revenue.current, kpis.revenue.previous)} goodWhen="up" />
+            <Kpi days={days} cur={cur} label={`Spending, last ${days} days`} value={kpis.expenses.current} delta={change(kpis.expenses.current, kpis.expenses.previous)} goodWhen="down" />
+            <Kpi days={days} cur={cur} label={`Profit, last ${days} days`} value={kpis.profit.current} delta={kpis.profit.change_pct} goodWhen="up" />
           </div>
           {trend && <TrendChart current={chartDays(trend).current} previous={chartDays(trend).previous} />}
           {kpis.largest_contributor && kpis.profit.change_pct != null && <p className="text-sm text-ink-muted border-t border-border pt-4">Biggest effect on your profit compared with the {days} days before: <span className="font-semibold text-ink-text">{kpis.largest_contributor}</span>.</p>}

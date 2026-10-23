@@ -29,7 +29,7 @@ from app.core import coverage as coverage_mod
 from app.core.alert_engine import post_process_tenant
 from app.core.business_memory import measure_due_cases
 from app.core.detection import (
-    _headline, _noun, close_if_cleared, compare_headline, comparison_text, resolve_alert,
+    _headline, _noun, close_if_cleared, compare_headline, comparison_text, money_formatter, resolve_alert,
     METRIC_FIELDS, _find_open_alert, _in_cooldown, _sum_metric,
     detect_historical_deviation, detect_threshold_breach, explain_deviation,
 )
@@ -107,7 +107,7 @@ def detect_opportunity(
          "change_pct": round(change * 100, 2), "period_days": period_days, "direction": direction},
         dict(
             severity=AlertSeverity.opportunity, title=_headline(entity, field, change, period_days),
-            what_happened="Good news. " + comparison_text(entity, field, current, avg, period_days, len(base)),
+            what_happened="Good news. " + comparison_text(entity, field, current, avg, period_days, len(base), money_formatter(db, tenant_id, field)),
             magnitude=round(change, 4), period_start=cur_start, period_end=now,
             related_variables=related, possible_explanations=drivers, confidence=0.7 if len(base) >= 2 else 0.4,
             recommended_action="Find out what caused this (a promotion, a new customer, a price change) so you can repeat it.",
@@ -156,14 +156,15 @@ def detect_sustained_trend(
     noun = _noun(entity, field)
     unit = _period_phrase(period_days)
     have = "has" if noun == "Spending" else "have"
+    fmt = money_formatter(db, tenant_id, field)
     return _upsert(
         db, tenant_id, key, now,
         {"metric": f"{entity}.{field}", "period_days": period_days, "values": [round(v, 2) for v in vals],
          "slope_per_period": trend.slope, "r_squared": round(r2, 3), "forecast_next": trend.forecast_next, "direction": direction},
         dict(
             severity=sev, title=f"{noun} {have} {verb} steadily over the last {len(vals)} {unit}s",
-            what_happened=(f"{noun} {have} {verb} {abs(total)*100:.0f}% over the last {len(vals)} {unit}s, from {vals[0]:,.0f} to {vals[-1]:,.0f}, "
-                           f"and the move has been steady rather than a one-off. If it continues, the next {unit} would come to about {trend.forecast_next:,.0f}."),
+            what_happened=(f"{noun} {have} {verb} {abs(total)*100:.0f}% over the last {len(vals)} {unit}s, from {fmt(vals[0])} to {fmt(vals[-1])}, "
+                           f"and the move has been steady rather than a one-off. If it continues, the next {unit} would come to about {fmt(trend.forecast_next)}."),
             magnitude=round(total, 4), period_start=now - timedelta(days=period_days * len(vals)), period_end=now,
             confidence=round(min(0.9, 0.5 + r2 * 0.4), 2), data_coverage_pct=coverage_mod.coverage_pct_for_entity(db, tenant_id, entity, now=now),
             recommended_action=f"A slow change rarely fixes itself. Look at what changed in your {_noun(entity, field).lower()} around the start of this {'slide' if direction == 'drop' else 'climb'}: prices, suppliers, staff, stock or customers.",
@@ -222,6 +223,7 @@ def detect_daily_anomaly(
     holiday = is_holiday(db, tenant_id, target)
     if holiday:                                   # Section 42: a public holiday explains an off day; do not raise an incident
         sev = AlertSeverity.informational
+    fmt = money_formatter(db, tenant_id, field)
     return _upsert(
         db, tenant_id, key, now,
         {"metric": f"{entity}.{field}", "day": target.isoformat(), "weekday": target.strftime("%A"), "value": x,
@@ -229,8 +231,8 @@ def detect_daily_anomaly(
          "timezone": str(tz), "direction": direction, **({"holiday": holiday} if holiday else {})},
         dict(
             severity=sev, title=compare_headline(_noun(entity, field), rel, f"a usual {target.strftime('%A')}", past=True),
-            what_happened=(f"On {target.strftime('%A')} {target.isoformat()} {_noun(entity, field).lower()} came to {x:,.0f}. "
-                           f"A usual {target.strftime('%A')} is about {med:,.0f} (the middle value of the last {len(history)} {target.strftime('%A')}s)."
+            what_happened=(f"On {target.strftime('%A')} {target.isoformat()} {_noun(entity, field).lower()} came to {fmt(x)}. "
+                           f"A usual {target.strftime('%A')} is about {fmt(med)} (the middle value of the last {len(history)} {target.strftime('%A')}s)."
                            f"{' This was a public holiday, which may explain it.' if holiday else ''}"),
             magnitude=round(rel, 4), period_start=utc_bounds(target)[0], period_end=utc_bounds(target)[1],
             confidence=0.6, kind="daily", data_coverage_pct=coverage_mod.coverage_pct_for_entity(db, tenant_id, entity, now=now),
