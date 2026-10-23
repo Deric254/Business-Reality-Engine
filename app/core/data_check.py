@@ -16,7 +16,7 @@ from app.core import schema, sources
 from app.core.tenant_time import tenant_zone
 from app.models.core import BusinessEvent as E, Connector
 
-VIEW_CHOICES = (30, 90, 180)             # the periods the Overview can show
+VIEW_CHOICES = (7, 30, 90, 180)            # the periods the Overview can show
 _PULL = ("url", "database", "sftp", "email", "shared_folder")
 _NOTHING_RETURNED = {
     "url": "It returned no records. The sheet may be empty, shared privately (it must be shared as 'Anyone with the link'), or the link may point at another tab.",
@@ -89,7 +89,7 @@ def run(db: Session, tenant_id: str, period_days: int = 30, now: Optional[dateti
     total = sum(r["counted"] for r in out)
     in_view_total = sum(r["in_view"] for r in out)
     oldest, newest = db.query(func.min(E.timestamp), func.max(E.timestamp)).filter(E.tenant_id == tenant_id, counted).one()
-    suggest = next((d for d in VIEW_CHOICES if newest and newest >= now - timedelta(days=d)), None) if not in_view_total else None
+    suggest = next((d for d in VIEW_CHOICES if d > period_days and newest and newest >= now - timedelta(days=d)), None) if not in_view_total else None
     if not connectors:
         findings.insert(0, _finding("problem", "No source is connected yet.", None, "Connect a sheet or file on the Data page, or add entries by hand."))
     elif total and not in_view_total:

@@ -7,7 +7,7 @@ import { primaryCls } from "./ui";
 const EXAMPLES = ["Why did profit fall?", "Who are my top customers?", "What needs my attention?", "What will sales be next week?"];
 const chip = "text-sm border border-field rounded-full px-3 py-1 text-ink-text bg-panel hover:bg-panel-raised transition-colors";
 
-export function AskBox({ tenantId }: { tenantId: string }) {
+export function AskBox({ tenantId, days }: { tenantId: string; days: number }) {
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<QuestionAnswer | null>(null);
@@ -17,7 +17,7 @@ export function AskBox({ tenantId }: { tenantId: string }) {
     const question = text.trim();
     if (!question || busy) return;
     setBusy(true); setError(null);
-    try { setResult(await api.askQuestion(tenantId, question)); }
+    try { setResult(await api.askQuestion(tenantId, question, days)); }
     catch (e) { setError(e instanceof Error ? e.message : "Something went wrong."); }
     finally { setBusy(false); }
   }
@@ -25,7 +25,7 @@ export function AskBox({ tenantId }: { tenantId: string }) {
   return (
     <section aria-labelledby="ask" className="bg-panel border border-border rounded-xl p-5 sm:p-6">
       <h2 id="ask" className="text-lg font-semibold tracking-tight">Ask your business a question</h2>
-      <p className="text-sm text-ink-muted mt-0.5 mb-3">Answers come from your own numbers, with the evidence shown.</p>
+      <p className="text-sm text-ink-muted mt-0.5 mb-3">Answers use only your own numbers, for the last {days} days unless you say otherwise.</p>
       <form onSubmit={(e) => { e.preventDefault(); ask(q); }} className="flex gap-2">
         <input aria-label="Ask a question about your business" maxLength={500} value={q} onChange={(e) => setQ(e.target.value)}
           placeholder="For example: Why did profit fall?" className="flex-1 min-w-0 bg-panel border border-field rounded-sm px-3 py-2.5 text-sm text-ink-text" />

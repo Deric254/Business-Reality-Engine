@@ -20,6 +20,8 @@ function chartDays(t: Trend): Trend {
   return t;
 }
 
+const PERIODS = [7, 30, 90, 180];
+
 function change(cur: number, prev: number): number | null {
   return prev === 0 ? null : ((cur - prev) / prev) * 100;
 }
@@ -81,7 +83,7 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
   const [sources, setSources] = useState<ConnectorRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [days, setDays] = useState(30);
+  const [days, setDays] = useState(7);
   const [showCheck, setShowCheck] = useState(false);
 
   const latest = useRef(0);       // only the newest request may update the page (a slow answer for 30 days must not replace 90)
@@ -106,7 +108,7 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
   const nothingInView = !loading && kpis != null && sources.length > 0 && kpis.revenue.current === 0 && kpis.revenue.previous === 0 && kpis.expenses.current === 0 && kpis.expenses.previous === 0;
 
   let headline = "Nothing needs your attention right now.";
-  let sub = health?.headline ?? "Your numbers are being watched. We'll flag anything that moves.";
+  let sub = health?.headline ?? "";
   if (noData) { headline = "Let's get your numbers in."; sub = "Connect a source or add entries by hand and this page becomes your daily briefing."; }
   else if (nothingInView) { headline = "Connected, but there is nothing to show yet."; sub = "Here is exactly what I found, and what to do about it."; }
   else if (urgent.length && top) {
@@ -125,7 +127,7 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
               <span className="w-3 h-3 rounded-full shrink-0 mt-3 sm:mt-4" style={{ backgroundColor: noData ? "#8c968f" : dot }} aria-hidden />
               <h1 className="display text-3xl sm:text-5xl max-w-3xl">{headline}</h1>
             </div>
-            <p className="text-lg text-ink-muted mt-3 max-w-2xl pl-6">{sub}</p>
+            {sub && <p className="text-lg text-ink-muted mt-3 max-w-2xl pl-6">{sub}</p>}
             {top && urgent.length > 0 && <div className="pl-6 mt-4"><Link to={`/alert/${top.id}?tenant=${tenant.id}`} className={`${primaryCls} inline-block`}>See why and what to do</Link></div>}
           </>
         )}
@@ -140,8 +142,14 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
       {kpis && !noData && (
         <Card className="!p-5 sm:!p-7 space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-            <label className="text-ink-muted">Showing <select aria-label="Period shown" className="bg-panel border border-field rounded-sm px-2 py-1 text-ink-text" value={days} onChange={(e) => setDays(Number(e.target.value))}>
-              {[30, 90, 180].map((d) => <option key={d} value={d}>the last {d} days</option>)}</select></label>
+            <div role="group" aria-label="Period shown" className="inline-flex border border-field rounded-sm overflow-hidden">
+              {PERIODS.map((d) => (
+                <button key={d} aria-pressed={d === days} onClick={() => setDays(d)}
+                  className={`px-3 py-1.5 text-sm font-medium ${d === days ? "bg-info text-white" : "bg-panel text-ink-text hover:bg-panel-raised"}`}>
+                  {d === 7 ? "Last 7 days" : `${d} days`}
+                </button>
+              ))}
+            </div>
             {!nothingInView && <button className="text-info hover:underline" onClick={() => setShowCheck((v) => !v)}>{showCheck ? "Hide the data check" : "Is something missing? Check my data"}</button>}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
@@ -161,7 +169,7 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
             <Link to="/alerts" className="text-sm font-medium text-info hover:underline">All alerts ({open.length} open)</Link>
           </div>
           {loading && !alerts.length && <Skeleton className="h-24 w-full" />}
-          {!loading && open.length === 0 && <Empty>No open alerts. When something moves in your numbers, it will show up here with the reason and a suggested step.</Empty>}
+          {!loading && open.length === 0 && <Empty>No open alerts.</Empty>}
           {open.length > 0 && (
             <ul className="bg-panel border border-border rounded-xl divide-y divide-border overflow-hidden">
               {[...open].sort((a, b) => (b.priority_rank ?? 0) - (a.priority_rank ?? 0)).slice(0, 4).map((a) => <li key={a.id}><AlertRow alert={a} tenantId={tenant.id} /></li>)}
@@ -170,7 +178,7 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
         </section>
       )}
 
-      {!noData && <AskBox key={tenant.id} tenantId={tenant.id} />}
+      {!noData && <AskBox key={tenant.id} tenantId={tenant.id} days={days} />}
       {sources.length > 0 && <SourcesStrip rows={sources} />}
     </>
   );

@@ -29,7 +29,7 @@ function Body({ tenant }: { tenant: Tenant }) {
   const shown = alerts.filter((a) => sev.has(a.severity));
   return (
     <>
-      <PageTitle title={t("nav.alerts")} sub="Ordered by what matters most. Open one to see the evidence, the likely causes and what to do." />
+      <PageTitle title={t("nav.alerts")} sub="Most important first." />
       {error && <p role="alert" className="text-sm text-critical">Couldn't load alerts: {error} <button onClick={load} className="text-info font-medium hover:underline">Try again</button></p>}
       <section className="space-y-3">
         <FilterBar activeSeverities={sev} onToggleSeverity={toggle} state={state} onStateChange={setState} />

@@ -116,7 +116,7 @@ function Body({ alertId, tenantId }: { alertId: string; tenantId: string }) {
 
       <section className="space-y-2 border-t border-border pt-6">
         <h2 className="text-xl font-semibold tracking-tight">Where are you with this?</h2>
-        <p className="text-sm text-ink-muted">Your answer is remembered, so next time something similar happens you can see what you did and what followed.</p>
+        <p className="text-sm text-ink-muted">We keep a record of what you did and what followed.</p>
         <div className="flex gap-2 flex-wrap pt-1">
           {ACTIONS.map((a) => {
             const on = alert.state === a.state;

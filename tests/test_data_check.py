@@ -110,3 +110,13 @@ def test_the_expected_schema_revision_is_the_newest_migration():
 def test_health_reports_whether_the_database_is_current(client):
     body = client.get("/api/health/").json()
     assert body["status"] == "ok" and body["schema"]["current"] is True
+
+
+def test_the_last_7_days_view_suggests_only_a_wider_period(client, server):
+    t, h = make_owner(client, "dc7")
+    cid = mk(client, t, h, name="Recent sheet", connector_type="url", config={"url": server + "/sheet.csv", "auth_type": "none", **CFG}).json()["id"]
+    _sheet((_day(10), 100, "Meru"))
+    client.post(f"/api/connectors/{cid}/sync-url?tenant_id={t}", headers=h)
+    narrow = _check(client, t, h, days=7)
+    assert narrow["range"]["in_view"] == 0 and narrow["range"]["suggest_days"] == 30
+    assert _check(client, t, h, days=30)["range"]["suggest_days"] is None          # something is in view: nothing to suggest

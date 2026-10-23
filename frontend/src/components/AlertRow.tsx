@@ -16,8 +16,8 @@ export function AlertRow({ alert, tenantId }: { alert: Alert; tenantId: string }
           {!!alert.correlated_alert_ids?.length && <span className="text-xs text-ink-muted" title="Other open alerts about the same records. Open this alert to see them.">+{alert.correlated_alert_ids.length} related alert{alert.correlated_alert_ids.length === 1 ? "" : "s"}</span>}
         </div>
         <div className="text-base font-semibold text-ink-text mt-1.5 leading-snug">{alert.title}</div>
-        <p className="text-sm text-ink-muted mt-0.5 line-clamp-2">{alert.what_happened}</p>
-        {alert.recommended_action && <p className="text-sm text-ink-text mt-1.5"><span className="font-medium">Suggested next step:</span> {alert.recommended_action}</p>}
+        <p className="text-sm text-ink-muted mt-0.5 line-clamp-3">{alert.what_happened}</p>
+        {alert.recommended_action && <p className="text-sm text-ink-text mt-1.5"><span className="font-medium">Next step:</span> {alert.recommended_action}</p>}
       </div>
       <span className="hidden sm:block text-ink-faint text-xl leading-none self-center group-hover:text-info transition-colors" aria-hidden>›</span>
     </Link>
