@@ -10,7 +10,7 @@ from app.core.cache import invalidate_tenant
 from app.core.db import get_db
 from app.core.ingestion import NormalizedEvent
 from app.connectors.file_connector import (
-    ColumnMapping, validate_upload, parse_file_to_dataframe, dataframe_to_normalized_events, add_row_ids, with_default_id,
+    ColumnMapping, read_upload, validate_upload, parse_file_to_dataframe, dataframe_to_normalized_events, add_row_ids, with_default_id,
 )
 from app.connectors.inspect import describe, mapping_provider
 from app.connectors import url_connector
@@ -247,7 +247,7 @@ async def upload_file(
     except Exception as e:
         raise HTTPException(400, f"Connector column mapping is invalid: {e}")
 
-    content = await file.read()
+    content = await read_upload(file)
     ext = validate_upload(file.filename, content)
     df = add_row_ids(parse_file_to_dataframe(content, ext))
     mapping = with_default_id(df, mapping)
@@ -288,7 +288,7 @@ async def inspect_file(tenant_id: str = Form(...), file: UploadFile = File(...),
                        authorization: Optional[str] = Header(default=None)):
     """Read an uploaded spreadsheet WITHOUT storing anything: returns its columns, a few rows and a suggested mapping."""
     authorize_tenant(authorization, tenant_id)
-    content = await file.read()
+    content = await read_upload(file)
     ext = validate_upload(file.filename or "", content)
     df = parse_file_to_dataframe(content, ext)
     return await run_in_threadpool(lambda: describe(df, mapping_provider(db, tenant_id)))     # the AI call is slow and blocking

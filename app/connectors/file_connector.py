@@ -48,6 +48,12 @@ class ColumnMapping(BaseModel):
     default_currency: str = "KES"
 
 
+async def read_upload(file) -> bytes:
+    """Reads at most one byte past the limit, so an oversized upload is refused (413 by validate_upload) without
+    ever being held in memory in full."""
+    return await file.read(MAX_FILE_SIZE_BYTES + 1)
+
+
 def validate_upload(filename: str, content: bytes) -> str:
     """Returns the validated extension, or raises. Call before any parsing."""
     ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""

@@ -122,3 +122,15 @@ def test_alert_list_defaults_can_show_only_open_or_only_closed_and_detail_names_
     live = db.get(Alert, ids["live"]); live.correlated_alert_ids = [ids["working"]]; db.commit()
     detail = client.get(f"/api/alerts/{ids['live']}/detail?tenant_id={t}", headers=h).json()
     assert detail["related"] == [{"id": ids["working"], "title": "working"}]
+
+
+def test_oversized_upload_is_refused_without_being_read_in_full(client):
+    from app.connectors.file_connector import MAX_FILE_SIZE_BYTES
+    from tests.test_block_c import MAP, mk
+    t, h = make_owner(client, "bigfile")
+    cid = mk(client, t, h, connector_type="file", config=MAP).json()["id"]
+    big = b"a,b\n" + b"x" * (MAX_FILE_SIZE_BYTES + 10)
+    r = client.post(f"/api/connectors/{cid}/upload", data={"tenant_id": t}, files={"file": ("big.csv", big, "text/csv")}, headers=h)
+    assert r.status_code == 413
+    r = client.post("/api/connectors/inspect-file", data={"tenant_id": t}, files={"file": ("big.csv", big, "text/csv")}, headers=h)
+    assert r.status_code == 413
