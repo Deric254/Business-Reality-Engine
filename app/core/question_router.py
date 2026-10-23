@@ -246,7 +246,11 @@ def route(db: Session, tenant_id: str, question: str, default_days: int = 30, no
           intent: Optional[str] = None) -> Optional[dict]:
     """Returns {intent, answer, evidence, period_days} for every intent except profit (handled by the
     caller, which owns the optional LLM phrasing), or None when no rule matches."""
-    now = now or datetime.utcnow()
+    if now is None:                  # "last N days" ends where the dashboard's does: the end of today on the business's clock
+        from app.core import periods
+        now = periods.resolve(db, tenant_id, 1).end
+    if default_days == periods.ALL_TIME:        # "all time" asks about the whole history, which is a number of days like any other
+        default_days = periods.resolve(db, tenant_id, 0, now).days
     intent = intent or classify(question)
     if intent is None or (intent != "profit" and intent not in HANDLERS):
         return None

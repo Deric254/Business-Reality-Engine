@@ -10,6 +10,8 @@ const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ de
 const BusinessPage = lazy(() => import("./pages/BusinessPage").then((m) => ({ default: m.BusinessPage })));
 const DataPage = lazy(() => import("./pages/DataPage").then((m) => ({ default: m.DataPage })));
 const AccuracyPage = lazy(() => import("./pages/AccuracyPage").then((m) => ({ default: m.AccuracyPage })));
+const MasterPage = lazy(() => import("./pages/MasterPage").then((m) => ({ default: m.MasterPage })));
+const ActivatePage = lazy(() => import("./pages/ActivatePage").then((m) => ({ default: m.ActivatePage })));
 const SetupWizardPage = lazy(() => import("./pages/SetupWizardPage").then((m) => ({ default: m.SetupWizardPage })));
 const ForgotPasswordPage = lazy(() => import("./pages/ForgotPasswordPage").then((m) => ({ default: m.ForgotPasswordPage })));
 const RecoverPage = lazy(() => import("./pages/RecoverPage").then((m) => ({ default: m.RecoverPage })));
@@ -36,6 +38,8 @@ export default function App() {
       <Suspense fallback={<div className="min-h-screen" aria-busy="true" />}>
       <Routes>
         <Route path="/login" element={signedIn ? <Navigate to="/" replace /> : <LoginPage />} />
+        <Route path="/activate" element={signedIn ? <Navigate to="/" replace /> : <ActivatePage />} />
+        <Route path="/master" element={<RequireAuth><MasterPage /></RequireAuth>} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/recover" element={<RecoverPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />

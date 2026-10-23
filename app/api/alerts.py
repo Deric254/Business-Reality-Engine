@@ -44,6 +44,7 @@ class AlertOut(BaseModel):
     escalated: bool = False
     kind: Optional[str] = None
     created_at: Optional[datetime] = None
+    period_label: Optional[str] = None      # the exact days the figures cover, on the business's calendar
 
     class Config:
         from_attributes = True
@@ -54,7 +55,22 @@ class AlertOut(BaseModel):
         out = handler(data)
         ev = getattr(data, "evidence", None) if not isinstance(data, dict) else data.get("evidence")
         out.escalated = bool(isinstance(ev, dict) and ev.get("escalated_at"))
+        out.period_label = getattr(data, "period_label", None) if not isinstance(data, dict) else data.get("period_label")
         return out
+
+
+def _label_periods(db: Session, tenant_id: str, alerts: list) -> list:
+    """Say which days each alert is about ("16 Oct to 22 Oct 2026"), so it can be checked against any other screen.
+    Detection compares whole days up to the end of yesterday, so this is the evidence window, not 'now'."""
+    from datetime import timedelta, timezone as _tz
+    from app.core.tenant_time import tenant_zone
+    tz = tenant_zone(db, tenant_id)
+    day = lambda d: d.replace(tzinfo=_tz.utc).astimezone(tz)
+    for a in alerts:
+        if a.period_start and a.period_end and a.period_end > a.period_start:
+            s, e = day(a.period_start), day(a.period_end - timedelta(microseconds=1))
+            a.period_label = f"{s:%-d %b} to {e:%-d %b %Y}" if (s.date() != e.date()) else f"{s:%-d %b %Y}"
+    return alerts
 
 
 class AlertDetailOut(BaseModel):
@@ -119,13 +135,13 @@ def list_alerts(
         q = q.filter(Alert.state.in_(CLOSED_STATES))
     elif state:
         q = q.filter(Alert.state == state)
-    return q.order_by(Alert.priority_rank.desc().nullslast(), Alert.created_at.desc()).limit(limit).all()
+    return _label_periods(db, tenant_id, q.order_by(Alert.priority_rank.desc().nullslast(), Alert.created_at.desc()).limit(limit).all())
 
 
 @router.get("/{alert_id}", response_model=AlertOut)
 def get_alert(alert_id: str, tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
     authorize_tenant(authorization, tenant_id)
-    return _get_owned_alert(db, alert_id, tenant_id)
+    return _label_periods(db, tenant_id, [_get_owned_alert(db, alert_id, tenant_id)])[0]
 
 
 @router.get("/{alert_id}/detail", response_model=AlertDetailOut)

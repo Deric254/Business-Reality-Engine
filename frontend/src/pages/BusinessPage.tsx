@@ -6,7 +6,7 @@ import {
 } from "../api/client";
 import { getClaims } from "../api/session";
 import { Shell } from "../components/Shell";
-import { Bar, Card, Empty, Notice, Section, Stat, btnCls, inputCls, money, pct, primaryCls, today } from "../components/ui";
+import { Bar, Card, Empty, Notice, Section, Skeleton, Stat, btnCls, inputCls, money, pct, primaryCls, today } from "../components/ui";
 import { SEVERITY_COLOR } from "../lib/severity";
 import { useT } from "../lib/i18n";
 
@@ -31,19 +31,21 @@ function HealthSection({ tenantId, cur, days, setDays }: { tenantId: string; cur
   const [h, setH] = useState<Health | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => { setErr(null); businessApi.health(tenantId, days).then(setH).catch((e) => setErr(errText(e))); }, [tenantId, days]);
+  const busy = h == null || h.period_days !== days;           // never show another period's figures under this period's button
   const color = STATUS_COLOR[h?.status ?? ""] ?? "#2f6db5";
   return (
     <Section title={t("biz.health")} hint={h?.score_basis}
       action={
         <div role="group" aria-label="Period" className="flex gap-1">
-          {PERIODS.map((p) => (
+          {[...PERIODS, 0].map((p) => (
             <button key={p} onClick={() => setDays(p)} aria-pressed={days === p}
-              className={`${btnCls} ${days === p ? "!text-ink-text !border-info" : ""}`}>{p}d</button>
+              className={`${btnCls} ${days === p ? "!text-ink-text !border-info" : ""}`}>{p === 0 ? "All" : `${p}d`}</button>
           ))}
         </div>
       }>
       <Notice error={err} />
-      {h && (
+      {busy && !err && <div aria-busy="true" aria-label="Loading figures" className="space-y-3"><Skeleton className="h-24 w-full" /><div className="grid grid-cols-1 sm:grid-cols-3 gap-3"><Skeleton className="h-20" /><Skeleton className="h-20" /><Skeleton className="h-20" /></div></div>}
+      {h && !busy && (
         <>
           <Card accent={color} className="flex flex-wrap items-center gap-6">
             <ScoreRing score={h.score} color={color} />

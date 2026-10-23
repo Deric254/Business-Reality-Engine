@@ -27,7 +27,7 @@ def _tenant_user(authorization: Optional[str], tenant_id: str, need_owner: bool 
 
 
 @router.get("/data-check")
-def data_check(tenant_id: str, period_days: int = Query(30, ge=1, le=365), db: Session = Depends(get_db),
+def data_check(tenant_id: str, period_days: int = Query(30, ge=0, le=3650), db: Session = Depends(get_db),
                authorization: Optional[str] = Header(default=None)):
     """Why the dashboard shows what it shows: per source, what was read, counted, left out and why."""
     authorize_tenant(authorization, tenant_id)
@@ -35,14 +35,14 @@ def data_check(tenant_id: str, period_days: int = Query(30, ge=1, le=365), db: S
 
 
 @router.get("/health")
-def health(tenant_id: str, days: int = Query(30, ge=1, le=365), db: Session = Depends(get_db),
+def health(tenant_id: str, days: int = Query(30, ge=0, le=3650), db: Session = Depends(get_db),
            authorization: Optional[str] = Header(default=None)):
     authorize_tenant(authorization, tenant_id)
     return health_summary(db, tenant_id, days)
 
 
 @router.get("/quality")
-def quality(tenant_id: str, days: int = Query(30, ge=1, le=365), db: Session = Depends(get_db),
+def quality(tenant_id: str, days: int = Query(30, ge=0, le=3650), db: Session = Depends(get_db),
             authorization: Optional[str] = Header(default=None)):
     authorize_tenant(authorization, tenant_id)
     return quality_report(db, tenant_id, days)
@@ -154,25 +154,46 @@ def reprocess(tenant_id: str, db: Session = Depends(get_db), authorization: Opti
 
 
 @router.get("/trend")
-def trend(tenant_id: str, days: int = Query(30, ge=7, le=180), db: Session = Depends(get_db),
+def trend(tenant_id: str, days: int = Query(30, ge=0, le=3650), db: Session = Depends(get_db),
           authorization: Optional[str] = Header(default=None)):
-    """Daily sales and expenses for the last `days` days (zero-filled), plus the same length of time before it, for the
-    dashboard chart. Only validated events count, exactly as in every other total."""
-    from datetime import datetime, timedelta
-    from sqlalchemy import func
-    from app.models.core import BusinessEvent as E
     authorize_tenant(authorization, tenant_id)
-    today = datetime.utcnow().date()
-    start = today - timedelta(days=2 * days - 1)
-    rows = (db.query(func.date(E.timestamp), E.entity, func.coalesce(func.sum(E.amount), 0))
-            .filter(E.tenant_id == tenant_id, E.entity.in_(("sale", "expense")), E.validation_status == "validated",
-                    E.timestamp >= datetime.combine(start, datetime.min.time()))
-            .group_by(func.date(E.timestamp), E.entity).all())
+    return build_trend(db, tenant_id, days)
+
+
+def build_trend(db: Session, tenant_id: str, days: int, now=None) -> dict:
+    """Sales and expenses per day for the period, plus the same length of time before it, for the dashboard chart.
+    Days are the business's own calendar days (never UTC days), the boundaries are the same ones the totals use
+    (app/core/periods.py), and only validated events count. `days=0` is all time (no earlier period to draw);
+    a span longer than 400 days is drawn by week, longer than 3 years by month, and `bucket` says which."""
+    from datetime import timedelta
+    from sqlalchemy import func
+    from app.core import periods
+    from app.models.core import BusinessEvent as E
+    per = periods.resolve(db, tenant_id, days, now)
+    span = per.days
+    bucket = "day" if span <= 400 else "week" if span <= 1100 else "month"
+    local = func.timezone(per.tz.key, func.timezone("UTC", E.timestamp))
+    lo = per.start if per.all_time else per.prev_start
     cell: dict = {}
-    for d, ent, amt in rows:
-        cell[(d, ent)] = float(amt)
-    out = []
-    for i in range(2 * days):
-        d = start + timedelta(days=i)
-        out.append({"date": d.isoformat(), "sales": round(cell.get((d, "sale"), 0.0), 2), "expenses": round(cell.get((d, "expense"), 0.0), 2)})
-    return {"days": days, "previous": out[:days], "current": out[days:]}
+    for d, ent, amt in (db.query(func.date_trunc(bucket, local), E.entity, func.coalesce(func.sum(E.amount), 0))
+                        .filter(E.tenant_id == tenant_id, E.entity.in_(("sale", "expense")), E.validation_status == "validated",
+                                E.timestamp >= lo, E.timestamp < per.end)
+                        .group_by(func.date_trunc(bucket, local), E.entity).all()):
+        cell[(d.date(), ent)] = float(amt)
+
+    def row(d):
+        return {"date": d.isoformat(), "sales": round(cell.get((d, "sale"), 0.0), 2), "expenses": round(cell.get((d, "expense"), 0.0), 2)}
+
+    def steps(first, last):
+        d, out = first, []
+        if bucket == "week":
+            d = first - timedelta(days=first.weekday())
+        elif bucket == "month":
+            d = first.replace(day=1)
+        while d <= last:
+            out.append(row(d))
+            d = d + timedelta(days=1) if bucket == "day" else d + timedelta(days=7) if bucket == "week" else (d.replace(day=28) + timedelta(days=4)).replace(day=1)
+        return out
+    current = steps(per.first_day, per.last_day)
+    previous = [] if per.all_time else steps(per.first_day - timedelta(days=days), per.first_day - timedelta(days=1))
+    return {"days": days, "bucket": bucket, "period": per.as_dict(), "previous": previous, "current": current}

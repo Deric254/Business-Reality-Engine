@@ -107,6 +107,8 @@ def ensure_active(user: CurrentUser) -> CurrentUser:
     """An account on an owner-issued temporary password can only change that password."""
     if user.must_change:
         raise HTTPException(403, "Password change required")
+    from app.core.licensing import require_licence
+    require_licence(user.tenant_id)
     return user
 
 
@@ -144,6 +146,8 @@ def authorize_tenant(authorization: Optional[str], tenant_id: str, require_role:
     if current_user.must_change:
         raise HTTPException(403, "Password change required")
     require_tenant_match(current_user, tenant_id)
+    from app.core.licensing import require_licence
+    require_licence(current_user.tenant_id)
     if require_role == "owner":
         require_owner(current_user)
     return current_user

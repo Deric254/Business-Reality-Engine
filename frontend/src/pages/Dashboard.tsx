@@ -20,20 +20,29 @@ function chartDays(t: Trend): Trend {
   return t;
 }
 
-const PERIODS = [7, 30, 90, 180];
+const PERIODS = [7, 30, 90, 180, 0];                       // 0 = all time
+const periodName = (d: number) => (d === 0 ? "all time" : `last ${d} days`);
+const shortDay = (iso: string, year = false) => new Date(iso + "T00:00:00").toLocaleDateString("en-KE", { day: "numeric", month: "short", ...(year ? { year: "numeric" } : {}) });
 
 function change(cur: number, prev: number): number | null {
   return prev === 0 ? null : ((cur - prev) / prev) * 100;
 }
 
-function Kpi({ label, value, delta, goodWhen, days, cur }: { label: string; value: number; delta: number | null; goodWhen: "up" | "down"; days: number; cur: string }) {
+function Kpi({ label, value, delta, goodWhen, days, cur, busy }: { label: string; value: number; delta: number | null; goodWhen: "up" | "down"; days: number; cur: string; busy: boolean }) {
+  if (busy) return (
+    <div className="min-w-0" aria-hidden="true">
+      <div className="text-sm text-ink-muted">{label}</div>
+      <Skeleton className="h-10 w-48 mt-1.5" />
+      <Skeleton className="h-4 w-40 mt-2.5" />
+    </div>
+  );
   const good = delta == null || Math.abs(delta) < 0.5 ? null : (delta > 0) === (goodWhen === "up");
   return (
     <div className="min-w-0">
       <div className="text-sm text-ink-muted">{label}</div>
       <div className="figure text-3xl sm:text-4xl mt-0.5 break-words">{money(value, cur)}</div>
       <div className="text-sm mt-1 kpi-figure" style={{ color: good == null ? "var(--neutral)" : good ? "var(--good)" : "var(--bad)" }}>
-        {delta == null ? "No earlier records to compare with" : Math.abs(delta) < 0.5 ? `About the same as the ${days} days before` : `${delta > 0 ? "Up" : "Down"} ${Math.abs(delta).toFixed(0)}% compared with the ${days} days before`}
+        {delta == null ? (days === 0 ? "All your records, so there is no earlier period" : "No earlier records to compare with") : Math.abs(delta) < 0.5 ? `About the same as the ${days} days before` : `${delta > 0 ? "Up" : "Down"} ${Math.abs(delta).toFixed(0)}% compared with the ${days} days before`}
       </div>
     </div>
   );
@@ -106,6 +115,9 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
   const open = alerts;
   const urgent = open.filter((a) => a.severity === "critical" || a.severity === "high");
   const top = [...open].sort((a, b) => (b.priority_rank ?? 0) - (a.priority_rank ?? 0))[0];
+  // Numbers are only ever shown for the period that is selected: while another period's answer is on its way, or
+  // anything on screen belongs to a different period, the figures are replaced by a loading state, never left stale.
+  const busy = loading || kpis == null || trend == null || kpis.period_days !== days || trend.days !== days;
   const noData = !loading && kpis != null && kpis.revenue.current === 0 && kpis.revenue.previous === 0 && kpis.expenses.current === 0 && sources.length === 0;
 
   const nothingInView = !loading && kpis != null && sources.length > 0 && kpis.revenue.current === 0 && kpis.revenue.previous === 0 && kpis.expenses.current === 0 && kpis.expenses.previous === 0;
@@ -123,7 +135,7 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
 
   return (
     <>
-      <section aria-live="polite">
+      <section aria-live="polite" aria-busy={loading} className={loading && kpis ? "opacity-60 transition-opacity" : "transition-opacity"}>
         {loading && !kpis ? <Skeleton className="h-24 w-full max-w-2xl" /> : (
           <>
             <div className="flex items-start gap-3">
@@ -154,24 +166,26 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
 
       {kpis && !noData && (
         <Card className="!p-5 sm:!p-7 space-y-6">
+          {busy && <div className="h-0.5 -mt-5 sm:-mt-7 -mx-5 sm:-mx-7 overflow-hidden rounded-t-xl" role="progressbar" aria-label="Loading figures"><div className="skeleton h-full w-full" /></div>}
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
             <div role="group" aria-label="Period shown" className="inline-flex border border-field rounded-sm overflow-hidden">
               {PERIODS.map((d) => (
                 <button key={d} aria-pressed={d === days} onClick={() => setDays(d)}
                   className={`px-3 py-1.5 text-sm font-medium ${d === days ? "bg-info text-white" : "bg-panel text-ink-text hover:bg-panel-raised"}`}>
-                  {d === 7 ? "Last 7 days" : `${d} days`}
+                  {d === 7 ? "Last 7 days" : d === 0 ? "All time" : `${d} days`}
                 </button>
               ))}
             </div>
             {!nothingInView && <button className="text-info hover:underline" onClick={() => setShowCheck((v) => !v)}>{showCheck ? "Hide the data check" : "Is something missing? Check my data"}</button>}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-            <Kpi days={days} cur={cur} label={`Sales, last ${days} days`} value={kpis.revenue.current} delta={change(kpis.revenue.current, kpis.revenue.previous)} goodWhen="up" />
-            <Kpi days={days} cur={cur} label={`Spending, last ${days} days`} value={kpis.expenses.current} delta={change(kpis.expenses.current, kpis.expenses.previous)} goodWhen="down" />
-            <Kpi days={days} cur={cur} label={`Profit, last ${days} days`} value={kpis.profit.current} delta={kpis.profit.change_pct} goodWhen="up" />
+            <Kpi busy={busy} days={days} cur={cur} label={`Sales, ${periodName(days)}`} value={kpis.revenue.current} delta={change(kpis.revenue.current, kpis.revenue.previous)} goodWhen="up" />
+            <Kpi busy={busy} days={days} cur={cur} label={`Spending, ${periodName(days)}`} value={kpis.expenses.current} delta={change(kpis.expenses.current, kpis.expenses.previous)} goodWhen="down" />
+            <Kpi busy={busy} days={days} cur={cur} label={`Profit, ${periodName(days)}`} value={kpis.profit.current} delta={kpis.profit.change_pct} goodWhen="up" />
           </div>
-          {trend && <TrendChart current={chartDays(trend).current} previous={chartDays(trend).previous} />}
-          {kpis.largest_contributor && kpis.profit.change_pct != null && <p className="text-sm text-ink-muted border-t border-border pt-4">Biggest effect on your profit compared with the {days} days before: <span className="font-semibold text-ink-text">{kpis.largest_contributor}</span>.</p>}
+          {!busy && kpis && <p className="text-xs text-ink-muted -mt-3 kpi-figure">{shortDay(kpis.period.first_day, true)} to {shortDay(kpis.period.last_day, true)}, whole days on your business's clock, today so far included.</p>}
+          {busy ? <Skeleton className="h-[260px] w-full" /> : trend && <TrendChart current={chartDays(trend).current} previous={chartDays(trend).previous} bucket={trend.bucket} />}
+          {!busy && kpis.largest_contributor && kpis.profit.change_pct != null && <p className="text-sm text-ink-muted border-t border-border pt-4">Biggest effect on your profit compared with the {days} days before: <span className="font-semibold text-ink-text">{kpis.largest_contributor}</span>.</p>}
         </Card>
       )}
 

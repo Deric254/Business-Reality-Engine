@@ -274,6 +274,8 @@ class User(Base):
     must_change_password = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     # Chosen security questions with hashed answers, [{"q": ..., "h": ...}]; None until the person sets them.
     security_questions = Column(JSON, nullable=True)
+    # The platform owner's account: sees every licence and account. Set only through the admin-key bootstrap.
+    is_master = Column(Boolean, nullable=False, default=False, server_default=text("false"))
 
     __table_args__ = (Index("ix_users_email", "email", unique=True),)
 

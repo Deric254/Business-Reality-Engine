@@ -34,6 +34,7 @@ services:
       ENV: production
       API_KEY: ${API_KEY:?set API_KEY in .env}
       ADMIN_API_KEY: ${ADMIN_API_KEY:?set ADMIN_API_KEY in .env}
+      LICENCE_ENFORCED: ${LICENCE_ENFORCED:-false}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env}
       CONNECTOR_ENCRYPTION_KEY: ${CONNECTOR_ENCRYPTION_KEY:?set CONNECTOR_ENCRYPTION_KEY in .env}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}

@@ -56,7 +56,7 @@ function SignIn({ onFirstRun }: { onFirstRun?: () => void }) {
       {error && <p role="alert" className="text-sm text-critical">{error}</p>}
       {slow && <SlowHint />}
       <button type="submit" disabled={busy} className={`${primaryCls} w-full !py-2.5 !text-base`}>{busy ? "Signing in…" : t("login.submit")}</button>
-      <div className="flex justify-between text-sm"><Link to="/forgot-password" className="text-info hover:underline">{t("login.forgot")}</Link>{onFirstRun && <button type="button" onClick={onFirstRun} className="text-info hover:underline">Set up a new business</button>}</div>
+      <div className="flex flex-wrap justify-between gap-2 text-sm"><Link to="/forgot-password" className="text-info hover:underline">{t("login.forgot")}</Link><Link to="/activate" className="text-info hover:underline">I have a licence key</Link>{onFirstRun && <button type="button" onClick={onFirstRun} className="text-info hover:underline">Set up a new business</button>}</div>
     </form>
   );
 }

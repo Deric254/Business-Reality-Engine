@@ -221,7 +221,7 @@ def test_business_api_requires_auth_and_isolates(client, db):
         sep = "&" if "?" in path else "?"
         r = client.get(f"/api/business/{path}{sep}tenant_id={t}", headers=bearer(owner))
         assert r.status_code == 200, path
-    assert client.get(f"/api/business/health?tenant_id={t}&days=0", headers=bearer(owner)).status_code == 422
+    assert client.get(f"/api/business/health?tenant_id={t}&days=-1", headers=bearer(owner)).status_code == 422
 
 
 # ---------------- detectors ----------------

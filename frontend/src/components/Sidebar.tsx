@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink } from "react-router-dom";
 import type { Tenant, CoverageRow } from "../api/client";
-import { api, logout } from "../api/client";
+import { api, logout, masterApi } from "../api/client";
 import { cache } from "../api/cache";
 import { COVERAGE_COLOR } from "../lib/severity";
 import { useT, setLang, getLang, type Lang, type TKey } from "../lib/i18n";
@@ -32,9 +32,14 @@ const COVERAGE_TEXT: Record<string, string> = {
   live: "Data is up to date", recent: "Data is recent", stale: "Some data is out of date", not_connected: "No data connected yet",
 };
 
+let masterKnown: boolean | null = null;                       // asked once per page load; only the master account ever sees the Licences link
+
 export function Sidebar({ tenants, activeTenant, onTenantChange }: { tenants: Tenant[]; activeTenant: Tenant | null; onTenantChange: (t: Tenant) => void }) {
   const t = useT();
   const [coverage, setCoverage] = useState<CoverageRow[]>([]);
+  const [isMaster, setIsMaster] = useState(masterKnown === true);
+  useEffect(() => { if (masterKnown === null) masterApi.whoami().then((m) => { masterKnown = m; setIsMaster(m); }); }, []);
+  const nav = isMaster ? [...NAV, { to: "/master", key: "nav.licences" as TKey, icon: "accuracy" }] : NAV;
 
   useEffect(() => {
     if (!activeTenant) return;
@@ -68,7 +73,7 @@ export function Sidebar({ tenants, activeTenant, onTenantChange }: { tenants: Te
           {business}
         </div>
         <nav aria-label="Main" className="flex flex-col gap-1">
-          {NAV.map((n) => <NavLink key={n.to} to={n.to} end={n.end} className={link}>{ICONS[n.icon]}{t(n.key)}</NavLink>)}
+          {nav.map((n) => <NavLink key={n.to} to={n.to} end={n.end} className={link}>{ICONS[n.icon]}{t(n.key)}</NavLink>)}
         </nav>
         <div className="mt-auto space-y-3 px-2">
           {coverage.length > 0 && (
@@ -97,7 +102,7 @@ export function Sidebar({ tenants, activeTenant, onTenantChange }: { tenants: Te
           </div>
         </div>
         <nav aria-label="Main" className="flex gap-2 overflow-x-auto px-4 pb-3">
-          {NAV.map((n) => <NavLink key={n.to} to={n.to} end={n.end} className={pill}>{t(n.key)}</NavLink>)}
+          {nav.map((n) => <NavLink key={n.to} to={n.to} end={n.end} className={pill}>{t(n.key)}</NavLink>)}
         </nav>
       </header>
     </>

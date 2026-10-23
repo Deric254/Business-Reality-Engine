@@ -44,9 +44,10 @@ def _ai_connected(db: Session, tenant_id: str) -> bool:
 
 
 def run(db: Session, tenant_id: str, period_days: int = 30, now: Optional[datetime] = None) -> dict:
-    now = now or datetime.utcnow()
+    from app.core import periods
     tz = tenant_zone(db, tenant_id)
-    since = now - timedelta(days=period_days)
+    per = periods.resolve(db, tenant_id, period_days, now)
+    since, now = per.start, per.end
     counted = E.validation_status == "validated"
     rows = {r[0]: r[1:] for r in db.query(
         E.connector_id,

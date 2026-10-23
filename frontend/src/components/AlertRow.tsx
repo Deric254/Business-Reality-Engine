@@ -17,6 +17,7 @@ export function AlertRow({ alert, tenantId }: { alert: Alert; tenantId: string }
         </div>
         <div className="text-base font-semibold text-ink-text mt-1.5 leading-snug">{alert.title}</div>
         <p className="text-sm text-ink-muted mt-0.5 line-clamp-3">{alert.what_happened}</p>
+        {alert.period_label && <p className="text-xs text-ink-faint mt-0.5 kpi-figure">Days covered: {alert.period_label}, complete days only</p>}
         {alert.recommended_action && <p className="text-sm text-ink-text mt-1.5"><span className="font-medium">Next step:</span> {alert.recommended_action}</p>}
       </div>
       <span className="hidden sm:block text-ink-faint text-xl leading-none self-center group-hover:text-info transition-colors" aria-hidden>›</span>

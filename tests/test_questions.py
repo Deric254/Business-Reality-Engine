@@ -143,8 +143,8 @@ def test_api_validation_auth_and_shape(client, tenant_a, tenant_b):
     assert r.status_code == 200 and {"answer", "intent", "answered", "evidence"} <= set(r.json())
     assert client.post("/api/questions/ask", json={"tenant_id": tenant_a, "question": ""}, headers=h).status_code == 422
     assert client.post("/api/questions/ask", json={"tenant_id": tenant_a, "question": "x" * 501}, headers=h).status_code == 422
-    assert client.post("/api/questions/ask", json={"tenant_id": tenant_a, "question": "sales", "period_days": 0}, headers=h).status_code == 422
+    assert client.post("/api/questions/ask", json={"tenant_id": tenant_a, "question": "sales", "period_days": -1}, headers=h).status_code == 422
     assert client.post("/api/questions/ask", json={"tenant_id": tenant_a, "question": "sales", "period_days": 9999}, headers=h).status_code == 422
-    assert client.get(f"/api/questions/kpis?tenant_id={tenant_a}&period_days=0", headers=h).status_code == 422
+    assert client.get(f"/api/questions/kpis?tenant_id={tenant_a}&period_days=-1", headers=h).status_code == 422
     assert client.post("/api/questions/ask", json={"tenant_id": tenant_b, "question": "sales"}, headers=h).status_code == 403
     assert client.post("/api/questions/ask", json={"tenant_id": tenant_a, "question": "sales"}).status_code == 401

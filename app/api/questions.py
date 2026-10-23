@@ -18,7 +18,7 @@ KPI_CACHE_TTL_SECONDS = int(os.environ.get("KPI_CACHE_TTL_SECONDS", "30"))
 class AskRequest(BaseModel):
     tenant_id: str
     question: str = Field(min_length=1, max_length=500)
-    period_days: int = Field(default=30, ge=1, le=365)
+    period_days: int = Field(default=30, ge=0, le=3650)
 
 
 @router.post("/ask")
@@ -28,7 +28,7 @@ def ask(payload: AskRequest, db: Session = Depends(get_db), authorization: Optio
 
 
 @router.get("/kpis")
-def kpis(tenant_id: str, period_days: int = Query(default=30, ge=1, le=365), db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+def kpis(tenant_id: str, period_days: int = Query(default=30, ge=0, le=3650), db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
     """
     Deterministic-only breakdown — deliberately does NOT call the LLM.
     /ask is for a person typing a real question (worth an LLM call);
@@ -37,8 +37,11 @@ def kpis(tenant_id: str, period_days: int = Query(default=30, ge=1, le=365), db:
     exists to prevent.
     """
     authorize_tenant(authorization, tenant_id)
-    # Cached briefly: dashboards poll this, the answer only changes as data lands.
+    # Cached briefly: dashboards poll this, the answer only changes as data lands. The key carries the business's
+    # current date, so a cached answer can never be served across midnight into a different period.
+    from app.core import periods
+    day = periods.local_today(db, tenant_id).isoformat()
     return cached(
-        f"kpis:{tenant_id}:{period_days}", KPI_CACHE_TTL_SECONDS,
+        f"kpis:{tenant_id}:{period_days}:{day}", KPI_CACHE_TTL_SECONDS,
         lambda: jsonable_encoder(compute_profit_breakdown(db, tenant_id, period_days=period_days)),
     )

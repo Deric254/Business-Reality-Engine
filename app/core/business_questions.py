@@ -43,15 +43,14 @@ def compute_profit_breakdown(
     revenue-like ('sale') and cost-like ('expense') entities, with
     contributors ranked by absolute dollar impact on profit.
     """
-    now = now or datetime.utcnow()
-    current_start = now - timedelta(days=period_days)
-    previous_start = now - timedelta(days=period_days * 2)
-    previous_end = current_start
-
-    revenue_current = _sum_metric(db, tenant_id, "sale", "amount", current_start, now)
-    revenue_previous = _sum_metric(db, tenant_id, "sale", "amount", previous_start, previous_end)
-    expense_current = _sum_metric(db, tenant_id, "expense", "amount", current_start, now)
-    expense_previous = _sum_metric(db, tenant_id, "expense", "amount", previous_start, previous_end)
+    from app.core import periods
+    per = periods.resolve(db, tenant_id, period_days, now)
+    revenue_current = _sum_metric(db, tenant_id, "sale", "amount", per.start, per.end)
+    expense_current = _sum_metric(db, tenant_id, "expense", "amount", per.start, per.end)
+    revenue_previous = expense_previous = 0.0
+    if not per.all_time:
+        revenue_previous = _sum_metric(db, tenant_id, "sale", "amount", per.prev_start, per.prev_end)
+        expense_previous = _sum_metric(db, tenant_id, "expense", "amount", per.prev_start, per.prev_end)
 
     profit_current = revenue_current - expense_current
     profit_previous = revenue_previous - expense_previous
@@ -78,6 +77,8 @@ def compute_profit_breakdown(
 
     return {
         "period_days": period_days,
+        "period": per.as_dict(),
+        "as_of": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "revenue": {"current": revenue_current, "previous": revenue_previous},
         "expenses": {"current": expense_current, "previous": expense_previous},
         "profit": {

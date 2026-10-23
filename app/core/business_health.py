@@ -23,8 +23,9 @@ def _pct(n: float, d: float) -> Optional[float]:
 
 def quality_report(db: Session, tenant_id: str, days: int = 30, now: Optional[datetime] = None) -> dict:
     now = now or datetime.utcnow()
-    start = now - timedelta(days=days)
-    flt = [E.tenant_id == tenant_id, E.timestamp >= start, E.timestamp < now + timedelta(days=1)]
+    from app.core import periods
+    per = periods.resolve(db, tenant_id, days, now)
+    flt = [E.tenant_id == tenant_id, E.timestamp >= per.start, E.timestamp < per.end]
     total, failed = db.query(func.count(E.id), func.count(case((E.validation_status == "failed", 1)))).filter(*flt).one()
     sales = [*flt, E.entity == "sale"]
     n_sales, no_cust, no_prod, no_amt, no_loc = db.query(
@@ -93,10 +94,11 @@ def discover(db: Session, tenant_id: str, now: Optional[datetime] = None) -> dic
 
 def health_summary(db: Session, tenant_id: str, days: int = 30, now: Optional[datetime] = None) -> dict:
     now = now or datetime.utcnow()
-    cur_s, prev_s = now - timedelta(days=days), now - timedelta(days=2 * days)
+    from app.core import periods
+    per = periods.resolve(db, tenant_id, days, now)
     def tot(ent, s, e): return _sum_metric(db, tenant_id, ent, "amount", s, e)
-    rev, exp = tot("sale", cur_s, now), tot("expense", cur_s, now)
-    prev_rev, prev_exp = tot("sale", prev_s, cur_s), tot("expense", prev_s, cur_s)
+    rev, exp = tot("sale", per.start, per.end), tot("expense", per.start, per.end)
+    prev_rev, prev_exp = (0.0, 0.0) if per.all_time else (tot("sale", per.prev_start, per.prev_end), tot("expense", per.prev_start, per.prev_end))
     def chg(c, p): return round((c - p) / p * 100, 1) if p else None
     open_counts = {sev.value: n for sev, n in db.query(Alert.severity, func.count(Alert.id)).filter(
         Alert.tenant_id == tenant_id, Alert.state.in_(ACTIVE_STATES)).group_by(Alert.severity)}

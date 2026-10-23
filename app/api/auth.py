@@ -141,6 +141,8 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
                      detail={"email": email, "locked": locked})
         raise HTTPException(401, "Invalid email or password")
     lockout.record_success(email)
+    from app.core.licensing import require_licence
+    require_licence(user.tenant_id)                  # a revoked business is told so at sign-in, not by a blank dashboard
     audit.record(db, "auth.login", request=request, tenant_id=user.tenant_id, actor_user_id=user.id)
     return _tokens(user)
 

@@ -110,6 +110,7 @@ export interface Alert {
   priority_rank?: number | null;
   correlated_alert_ids?: string[] | null;
   escalated?: boolean;
+  period_label?: string | null;
 }
 
 export interface AlertDetail extends Alert {
@@ -133,8 +134,11 @@ export interface AlertDetail extends Alert {
   updated_at: string;
 }
 
+export interface PeriodInfo { days: number; all_time: boolean; first_day: string; last_day: string; timezone: string }
 export interface KpiBreakdown {
   period_days: number;
+  period: PeriodInfo;
+  as_of: string;
   revenue: { current: number; previous: number };
   expenses: { current: number; previous: number };
   profit: { current: number; previous: number; change: number; change_pct: number | null };
@@ -337,7 +341,7 @@ export interface ContextItem { id: string; kind: string; name: string; starts_on
 export interface FxRow { id: string; currency: string; rate_to_base: number; effective_date: string }
 
 export interface TrendDay { date: string; sales: number; expenses: number }
-export interface Trend { days: number; previous: TrendDay[]; current: TrendDay[] }
+export interface Trend { days: number; bucket: "day" | "week" | "month"; period: PeriodInfo; previous: TrendDay[]; current: TrendDay[] }
 export interface SetupStatus { has_business: boolean; setup_key_configured: boolean }
 
 export const setupApi = {
@@ -524,3 +528,27 @@ export const accuracyApi = {
   backtests: (t: string) => request<BacktestListItem[]>(`/api/accuracy/backtest?tenant_id=${t}`),
   report: (t: string, days = 180) => request<AccuracyReport>(`/api/accuracy/report?tenant_id=${t}&days=${days}`),
 };
+
+// ---- licences (master account) ----
+export interface MasterOverview {
+  currency: string; as_of: string; paid_up: number; overdue: number; monthly_recurring: number; collected_total: number; collected_this_month: number;
+  licences: { issued: number; unused: number; active: number; revoked: number };
+}
+export interface MasterAccount {
+  id: string; hint: string; label: string | null; status: "unused" | "active" | "revoked"; price: number; currency: string; business: string | null;
+  owner_email: string | null; sources: number; activated_at: string | null; last_record_at: string | null; paid_through: string | null;
+  total_paid: number; revoked_at: string | null; revoked_reason: string | null; payment_state: "free" | "paid" | "unpaid" | null;
+}
+export const masterApi = {
+  whoami: () => request<{ master: boolean }>("/api/master/whoami").then(() => true).catch(() => false),
+  overview: () => request<MasterOverview>("/api/master/overview"),
+  accounts: () => request<MasterAccount[]>("/api/master/accounts"),
+  issue: (count: number, label: string, price: number) => request<{ keys: { id: string; key: string; hint: string }[] }>("/api/master/licences", { method: "POST", body: JSON.stringify({ count, label, price }) }),
+  revoke: (id: string, reason: string) => request<{ status: string }>(`/api/master/licences/${id}/revoke`, { method: "POST", body: JSON.stringify({ reason }) }),
+  pay: (id: string, amount: number, months: number, reference: string) => request<{ paid_through: string }>(`/api/master/licences/${id}/payments`, { method: "POST", body: JSON.stringify({ amount, months, reference: reference || null }) }),
+};
+export async function activateLicence(body: { licence_key: string; business_name: string; email: string; password: string }): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/licences/activate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!res.ok) throw await parseError(res);
+  setTokens((await res.json()) as TokenPair);
+}

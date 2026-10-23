@@ -11,7 +11,7 @@ from app.core.scheduler import start_scheduler, stop_scheduler
 from app.core.keepalive import start_keepalive, stop_keepalive
 from app.spa import mount_spa, SPA_CSP
 from app.core.rate_limit import RateLimitMiddleware
-from app.api import health, connectors, events, alerts, entities, detection, coverage, cases, questions, tenants, forecasting, simulation, webhooks, system, auth, notifications, monitoring, audit as audit_api, users, business, accuracy as accuracy_api, capture, ai as ai_api
+from app.api import health, connectors, events, alerts, entities, detection, coverage, cases, questions, tenants, forecasting, simulation, webhooks, system, auth, notifications, monitoring, audit as audit_api, users, business, accuracy as accuracy_api, capture, ai as ai_api, master as master_api
 
 # Without this, every logger.info() call in the app is silently dropped —
 # Python's root logger defaults to WARNING with no handler configured.
@@ -162,6 +162,8 @@ def healthz():
     restart it (/api/health/ is the deep check). Point the host's health check and any uptime monitor here."""
     return {"status": "ok"}
 app.include_router(business.router, prefix="/api/business", tags=["business"])
+app.include_router(master_api.router, prefix="/api/master", tags=["master"])
+app.include_router(master_api.public, prefix="/api/licences", tags=["licences"])
 app.include_router(accuracy_api.router, prefix="/api/accuracy", tags=["accuracy"])
 app.include_router(capture.router, prefix="/api/capture", tags=["capture"])
 

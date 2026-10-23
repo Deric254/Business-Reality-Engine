@@ -97,7 +97,9 @@ def _current_loss(db: Session, tenant_id: str, now: datetime, period_days: int) 
     speaks from the first days of data. It stays quiet when no sales are recorded at all, since that usually means the
     sales source is not connected, not that nothing was sold."""
     start = now - timedelta(days=LOSS_WINDOW_DAYS)
-    days_with_sales = (db.query(func.count(func.distinct(func.date(BusinessEvent.timestamp))))
+    from app.core.tenant_time import tenant_zone
+    local = func.timezone(tenant_zone(db, tenant_id).key, func.timezone("UTC", BusinessEvent.timestamp))   # the business's days, not UTC days
+    days_with_sales = (db.query(func.count(func.distinct(func.date(local))))
                        .filter(BusinessEvent.tenant_id == tenant_id, BusinessEvent.entity == "sale", BusinessEvent.validation_status == "validated",
                                BusinessEvent.amount > 0, BusinessEvent.timestamp >= start, BusinessEvent.timestamp < now).scalar())
     sold, spent = (_sum_metric(db, tenant_id, entity, "amount", start, now) for entity in ("sale", "expense"))
@@ -147,6 +149,7 @@ def detect_profit_risk(db: Session, tenant_id: str, period_days: int = 7, horizo
         crossing = None if crossing is None or crossing < 0 else crossing + 1
     already = current < 0
     if not already and not (crossing is not None and crossing <= horizon_periods and fit >= 0.5):
+        close_if_cleared(db, tenant_id, f"risk:profit:{period_days}d", now)    # no longer true: do not leave old numbers on screen
         return None
     sev = AlertSeverity.high if already else AlertSeverity.medium
     fmt = money_formatter(db, tenant_id)
