@@ -177,3 +177,13 @@ def test_counts_such_as_items_sold_carry_no_currency(db, tid):  # noqa: F811
     from app.core.detection import money_formatter
     assert money_formatter(db, tid, "amount")(1234) == "KES 1,234"
     assert money_formatter(db, tid, "quantity")(1234) == "1,234"
+
+
+def test_a_loss_caused_by_one_payment_says_what_it_would_look_like_without_it(db, tid):  # noqa: F811
+    c = connector(db, tid)
+    _spread(db, tid, c.id, "sale", [1000, 1000, 1000, 1000, 1000])
+    _spread(db, tid, c.id, "expense", [500, 500, 500, 500, 500], big=(0, 4000))
+    a = ex.detect_profit_risk(db, tid, now=NOW)
+    assert a.title == "Spending exceeds sales"
+    assert "One payment of KES 4,000" in a.what_happened and "without it you would have made a profit of" in a.what_happened
+    assert a.recommended_action.startswith("Start with the payment of KES 4,000")

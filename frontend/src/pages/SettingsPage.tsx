@@ -1,26 +1,31 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Shell } from "../components/Shell";
 import { PageTitle } from "../components/ui";
-import { api, settingsApi, usersApi, ApiError, type Channel, type Metric, type Tenant, type UserRow } from "../api/client";
+import { api, settingsApi, tenantApi, usersApi, ApiError, type Channel, type Metric, type Tenant, type UserRow } from "../api/client";
 import { PasswordForm } from "../components/PasswordForm";
 import { SecurityQuestionsForm } from "../components/SecurityQuestionsForm";
 import { getClaims } from "../api/session";
 import { AiProviders } from "../components/AiProviders";
+import { localHourToUtc, localToUtc, utcHourToLocal, utcToLocal } from "../lib/zone";
 
 const SEVERITIES = ["critical", "high", "medium", "informational"];
 const TARGET_LABEL: Record<string, string> = {
   email: "Email address", webhook: "Webhook URL (https)", slack: "Slack incoming-webhook URL", teams: "Teams workflow webhook URL",
   sms: "Phone number (international format)", whatsapp: "WhatsApp number (international format)",
 };
-const KINDS = ["deviation", "opportunity", "trend", "daily", "silence", "threshold", "forecast", "risk", "unknown", "quality"];
+const KINDS: [string, string][] = [
+  ["deviation", "Sales or spending changed"], ["opportunity", "Good news"], ["trend", "Slow trends"], ["daily", "Unusual days"],
+  ["silence", "A data source went quiet"], ["threshold", "A limit you set was crossed"], ["forecast", "Behind where the trend was heading"],
+  ["risk", "Profit risk"], ["unknown", "Not enough history yet"], ["quality", "Data problems"],
+];
 const DIGEST_OK = ["email", "slack", "teams"];
 
-/** Quiet hours, daily digest and filters for one channel. Times are UTC. */
-function ChannelOptions({ c, onSave }: { c: Channel; onSave: (patch: Parameters<typeof settingsApi.updateChannel>[2]) => void }) {
-  const [qs, setQs] = useState(c.quiet_start ?? "");
-  const [qe, setQe] = useState(c.quiet_end ?? "");
+/** Quiet hours, daily digest and filters for one channel. Shown in the business's own time; stored in UTC. */
+function ChannelOptions({ c, zone, onSave }: { c: Channel; zone: string; onSave: (patch: Parameters<typeof settingsApi.updateChannel>[2]) => void }) {
+  const [qs, setQs] = useState(c.quiet_start ? utcToLocal(c.quiet_start, zone) : "");
+  const [qe, setQe] = useState(c.quiet_end ? utcToLocal(c.quiet_end, zone) : "");
   const [mode, setMode] = useState(c.digest_mode);
-  const [hour, setHour] = useState(c.digest_hour);
+  const [hour, setHour] = useState(utcHourToLocal(c.digest_hour, zone));
   const [kinds, setKinds] = useState<string[]>(c.filter_kinds ?? []);
   const [ents, setEnts] = useState((c.filter_entities ?? []).join(", "));
   const toggle = (k: string) => setKinds((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]));
@@ -29,7 +34,7 @@ function ChannelOptions({ c, onSave }: { c: Channel; onSave: (patch: Parameters<
     <details className="basis-full text-sm">
       <summary className="cursor-pointer text-xs text-ink-muted">Delivery options</summary>
       <div className="mt-3 grid sm:grid-cols-2 gap-4">
-        <fieldset><legend className="text-xs text-ink-muted mb-1">Quiet hours (UTC) — critical alerts still come through</legend>
+        <fieldset><legend className="text-xs text-ink-muted mb-1">Quiet hours (your time) — critical alerts still come through</legend>
           <input type="time" aria-label="Quiet from" className={f} value={qs} onChange={(e) => setQs(e.target.value)} />
           <span className="mx-2 text-ink-muted">to</span>
           <input type="time" aria-label="Quiet until" className={f} value={qe} onChange={(e) => setQe(e.target.value)} />
@@ -39,21 +44,21 @@ function ChannelOptions({ c, onSave }: { c: Channel; onSave: (patch: Parameters<
             <select aria-label="Digest mode" className={f} value={mode} onChange={(e) => setMode(e.target.value as "off" | "daily")}>
               <option value="off">Send as they happen</option><option value="daily">One daily digest</option></select>
             {mode === "daily" && <><span className="mx-2 text-ink-muted">at</span>
-              <select aria-label="Digest hour (UTC)" className={f} value={hour} onChange={(e) => setHour(Number(e.target.value))}>
-                {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00 UTC</option>)}</select></>}
+              <select aria-label="Digest hour" className={f} value={hour} onChange={(e) => setHour(Number(e.target.value))}>
+                {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}</select></>}
           </fieldset>
         )}
         <fieldset className="sm:col-span-2"><legend className="text-xs text-ink-muted mb-1">Only these kinds of alert (none ticked = all)</legend>
-          <div className="flex flex-wrap gap-x-4 gap-y-1">{KINDS.map((k) => (
-            <label key={k} className="flex items-center gap-1 text-xs"><input type="checkbox" checked={kinds.includes(k)} onChange={() => toggle(k)} />{k}</label>))}</div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1">{KINDS.map(([k, label]) => (
+            <label key={k} className="flex items-center gap-1 text-xs"><input type="checkbox" checked={kinds.includes(k)} onChange={() => toggle(k)} />{label}</label>))}</div>
         </fieldset>
         <label className="sm:col-span-2 text-xs text-ink-muted">Only these record types, comma separated (blank = all)
           <input className={`${f} block mt-1 w-full`} value={ents} onChange={(e) => setEnts(e.target.value)} placeholder="sale, expense" /></label>
       </div>
       <button className="mt-3 bg-info text-white font-semibold hover:brightness-110 rounded-sm px-3 py-1 text-xs" onClick={() => {
         const entities = ents.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
-        const quiet = qs && qe ? { quiet_start: qs, quiet_end: qe } : { clear_quiet_hours: true };
-        onSave({ ...quiet, digest_mode: mode, digest_hour: hour, filter_kinds: kinds.length ? kinds : null, filter_entities: entities.length ? entities : null,
+        const quiet = qs && qe ? { quiet_start: localToUtc(qs, zone), quiet_end: localToUtc(qe, zone) } : { clear_quiet_hours: true };
+        onSave({ ...quiet, digest_mode: mode, digest_hour: localHourToUtc(hour, zone), filter_kinds: kinds.length ? kinds : null, filter_entities: entities.length ? entities : null,
           ...(!kinds.length && !entities.length ? { clear_filters: true } : {}) });
       }}>Save options</button>
     </details>
@@ -66,6 +71,7 @@ function errText(e: unknown) {
 
 function SettingsBody() {
   const [tenant, setTenant] = useState<Tenant | null>(null);
+  const [zone, setZone] = useState("UTC");
   const [channels, setChannels] = useState<Channel[]>([]);
   const [metrics, setMetrics] = useState<Metric[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -92,6 +98,7 @@ function SettingsBody() {
       const [c, m] = await Promise.all([settingsApi.listChannels(t.id), settingsApi.listMetrics(t.id)]);
       setChannels(c);
       setMetrics(m);
+      tenantApi.me().then((me) => setZone(me.timezone)).catch(() => undefined);
       if (isOwner) setUsers(await usersApi.list(t.id));
     } catch (e) {
       setError(errText(e));
@@ -216,7 +223,7 @@ function SettingsBody() {
                   </label>
                   <button className={btn} onClick={() => test(c)}>Send test</button>
                   <button className={btn} onClick={() => run(() => settingsApi.deleteChannel(tenant!.id, c.id), "Channel removed.")}>Remove</button>
-                  <ChannelOptions key={`${c.id}${c.quiet_start}${c.quiet_end}${c.digest_mode}${c.digest_hour}${(c.filter_kinds ?? []).join()}${(c.filter_entities ?? []).join()}`} c={c}
+                  <ChannelOptions key={`${c.id}${zone}${c.quiet_start}${c.quiet_end}${c.digest_mode}${c.digest_hour}${(c.filter_kinds ?? []).join()}${(c.filter_entities ?? []).join()}`} c={c} zone={zone}
                     onSave={(patch) => run(() => settingsApi.updateChannel(tenant!.id, c.id, patch), "Options saved.")} />
                 </li>
               ))}

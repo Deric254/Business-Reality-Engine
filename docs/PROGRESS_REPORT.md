@@ -26,7 +26,7 @@ Honest scope note: verified in a sandbox with real Postgres, Redis, OpenSSH, Dov
 | 13 | Entity resolution | DONE (scaled) | Exact-match auto-link, ranked suggestions, human `/merge`. Now indexed + batched: denormalized alias columns, pg_trgm KNN (tenant-scoped GiST), one pass per chunk, unique alias identity so concurrent senders converge on one entity. Old version scanned every entity per new value (400 new customers: 7 events/s; 1,500 did not finish in 5 min). Trade-off: a weak fuzzy pair outside the 40 nearest trigram neighbours with a different surname is no longer suggested |
 | 14 | Discovery | DONE | `/api/business/discovery`: record types, completeness, history, suggested metrics (one click to watch) |
 | 15–18 | Coverage, scheduling | DONE/PARTIAL | Fixed interval for all tenants; per-connector frequency not honored |
-| 19–20 | Detection types | PARTIAL | Built and tested: historical deviation with per-metric bad direction (expense rise = problem, sale drop = problem), opportunity (good-direction move ≥ 20%), sustained trend (OLS, R² ≥ 0.7, ≥ 15% total), weekday-aware daily anomaly (median/MAD, tenant timezone), data silence ("unknown": a connector went quiet; self-resolves), fixed-threshold (wired via per-metric absolute limit). Not built: relationship and forecast-deviation detectors, external context |
+| 19–20 | Detection types | PARTIAL | Built and tested: historical deviation with per-metric bad direction (expense rise = problem, sale drop = problem), opportunity (good-direction move ≥ 20%), sustained trend (OLS, R² ≥ 0.7, ≥ 15% total), weekday-aware daily anomaly (median/MAD, tenant timezone), data silence ("unknown": a connector went quiet; self-resolves), fixed-threshold (wired via per-metric absolute limit). Forecast-deviation is built (it stays quiet while the main comparison already reports the same drop). Not built: external context |
 | 21–24 | Explanation, severity | DONE | |
 | 25–26 | Correlation, ranking, suppression, escalation | DONE | Open alerts about the same record type within 72h link to each other (symmetric, capped at 10, cleared when partners close). `priority_rank` = severity base + magnitude + confidence − coverage gap + escalation bonus; list is ordered by it. Cooldown after a human closes an alert (resolved 24h, dismissed 48h, false-positive 7d). Escalation: untouched critical (4h) / high (24h) alerts are stamped and re-notified once as kind `escalation`. Open alerts are updated, never duplicated, and keep their escalation stamp. Thresholds are fixed constants, not yet per-tenant |
 | 27–32 | Forecasting, simulation, profit | DONE | Deterministic; assumptions explicit |
@@ -71,3 +71,20 @@ Honest scope note: verified in a sandbox with real Postgres, Redis, OpenSSH, Dov
 - **Scale beyond one database**: daily rollup table, monthly partitions of events, read replica. Not needed at the measured sizes (500k events/tenant, sub-second reads); revisit when a tenant exceeds several million events.
 - **UI polish**: deeper Kiswahili coverage, screen-reader and cross-browser pass, committed Playwright suite.
 - **Product extensions not in the blueprint scope built so far**: UI automation/RPA connectors, JDBC, multi-business membership for one user.
+
+## Part 6 — Audit, October 2026
+
+What was found and changed, so nobody has to rediscover it:
+
+- **The scheduled detection job was added paused** (`next_run_time=None` creates a paused APScheduler job), so checks only ran right after new data arrived and a source that went quiet was never noticed. Fixed; `test_scheduled_jobs_are_not_paused` guards it.
+- **Alert wording**: every title names what it is compared with ("Sales are down 59% from your usual week"), every detail gives the figures, the gap and the currency, and changes past +100% read as multiples ("15 times"). One text builder (`comparison_text`) feeds every screen so they cannot disagree.
+- **One story, one alert**: the forecast-miss alert is suppressed while the main comparison alert is open or recently closed by a person.
+- **Alerts end when the problem does**: an untouched alert closes itself once the problem is well inside its threshold; alerts a person is working on stay open; self-closed alerts do not trigger the quiet period.
+- **One-off detection**: when one record (4x the average of the others, at least half the change) explains a rise, a drop or a loss, the alert names it and the next step says what to do if it was planned.
+- **API**: `GET /api/alerts/?state=open|closed` (and any single state), `limit` (default 300, max 1000); the detail response includes `related` (id and title of related alerts). The dashboard asks for open alerts only.
+- **Uploads** are read with a hard cap (limit + 1 byte), so an oversized file is refused without being held in memory, whatever sits in front of the API.
+- **Housekeeping**: a daily job removes expired revoked-login records.
+- **Owners' screens**: period buttons (Last 7 days / 30 / 90 / 180), currency on amounts, quiet hours and digest hour shown in the business's own time (stored in UTC), plain names for alert types, a prompt when no one is set up to be notified.
+- Removed: unused sample-data module (`scripts/seed_demo.py` does the job), two unused components, unused imports.
+- Checked: every route that takes a business id refuses another business's login (68 routes probed); `pip-audit` and `npm audit` report no known vulnerabilities.
+- Still open: alert text is English only; the Docker images were not built in the audit environment.

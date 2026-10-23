@@ -8,7 +8,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core import coverage as coverage_mod
-from app.core.detection import _be, _in_cooldown, _noun, money_formatter, METRIC_FIELDS, _find_open_alert, _sum_metric, close_if_cleared, resolve_alert
+from app.core.detection import _be, _in_cooldown, _noun, _one_off_driver, money_formatter, METRIC_FIELDS, _find_open_alert, _sum_metric, close_if_cleared, resolve_alert
 from app.core.detectors import _period_phrase, _r_squared, _upsert
 from app.core.forecasting import _least_squares, forecast_next_period
 from app.models.alerts import Alert, AlertSeverity
@@ -77,6 +77,21 @@ def _already_explained(db: Session, tenant_id: str, entity: str, field: str, per
 LOSS_WINDOW_DAYS, LOSS_MIN_DAYS_WITH_SALES = 30, 2
 
 
+def _loss_one_off(db: Session, tenant_id: str, start: datetime, end: datetime, spent: float, sold: float, fmt) -> Optional[tuple[str, str]]:
+    """If ONE payment is behind most of a loss: (sentence for the alert, next step). A big planned purchase is a timing
+    effect, not a failing business, and the owner should be able to tell which it is."""
+    big = _one_off_driver(db, tenant_id, "expense", "payment", True, start, end, start, end, spent, sold, fmt)
+    if not big:
+        return None
+    rec = big["record"]
+    after = sold - (spent - rec["amount"])
+    sentence = (f"One payment of {rec['amount_text']} on {rec['date']} is the main reason: without it you would have "
+                f"{'made a profit of ' + fmt(after) if after > 0 else 'lost only ' + fmt(-after)}.")
+    action = (f"Start with the payment of {rec['amount_text']} on {rec['date']}. If it was planned (stock, equipment, a loan repayment), "
+              f"this is a timing effect, so compare it with your plan. If you do not recognise it, find out who approved it.")
+    return sentence, action
+
+
 def _current_loss(db: Session, tenant_id: str, now: datetime, period_days: int) -> Optional[Alert]:
     """Plain arithmetic over the last 30 days (or as many as exist): did spending exceed sales? Needs no baseline, so it
     speaks from the first days of data. It stays quiet when no sales are recorded at all, since that usually means the
@@ -95,15 +110,20 @@ def _current_loss(db: Session, tenant_id: str, now: datetime, period_days: int) 
         return None
     sev = AlertSeverity.high if spent >= 1.25 * sold else AlertSeverity.medium
     fmt = money_formatter(db, tenant_id)
+    what_happened = (f"Over the last {LOSS_WINDOW_DAYS} days (or since your records began) you spent {fmt(spent)} and sold {fmt(sold)}, "
+                     f"which is a loss of {fmt(loss)}. This is simple subtraction of your records, not a forecast.")
+    action = "Look at your biggest costs, and check that every sale is being recorded. If this is a launch or a big stock purchase, compare it with your plan."
+    why = _loss_one_off(db, tenant_id, start, now, spent, sold, fmt)
+    if why:
+        what_happened, action = f"{what_happened} {why[0]}", why[1]
     return _upsert(
         db, tenant_id, key, now,
         {"metric": "profit.net", "window_days": LOSS_WINDOW_DAYS, "sales": round(sold, 2), "expenses": round(spent, 2), "net": round(-loss, 2), "projection": False},
         dict(kind="risk", severity=sev, title="Spending exceeds sales",
-             what_happened=(f"Over the last {LOSS_WINDOW_DAYS} days (or since your records began) you spent {fmt(spent)} and sold {fmt(sold)}, "
-                            f"which is a loss of {fmt(loss)}. This is simple subtraction of your records, not a forecast."),
+             what_happened=what_happened,
              magnitude=None, period_start=start, period_end=now, confidence=0.9,
              data_coverage_pct=coverage_mod.coverage_pct_for_entity(db, tenant_id, "sale", now=now),
-             recommended_action="Look at your biggest costs, and check that every sale is being recorded. If this is a launch or a big stock purchase, compare it with your plan."),
+             recommended_action=action),
     )
 
 
@@ -132,16 +152,22 @@ def detect_profit_risk(db: Session, tenant_id: str, period_days: int = 7, horizo
     fmt = money_formatter(db, tenant_id)
     msg = (f"In the last {period_days} days you spent {fmt(-current)} more than you sold." if already else
            f"Your sales minus spending is shrinking. If it keeps going this way you could start losing money within about {crossing * period_days} days.")
+    text = msg if already else msg + " This is a forecast based on your past weeks, not a certainty."
+    action = "See which costs grew and whether sales are softening, and decide what to cut or fix before it turns into a loss."
+    if already:
+        why = _loss_one_off(db, tenant_id, now - timedelta(days=period_days), now, exp[-1], sales[-1], fmt)
+        if why:
+            text, action = f"{text} {why[0]}", why[1]
     return _upsert(
         db, tenant_id, f"risk:profit:{period_days}d", now,
         {"metric": "profit.net", "net_by_period": [round(v, 2) for v in net], "slope_per_period": round(slope, 2),
          "trend_fit_r2": round(fit, 2), "periods_to_zero": crossing, "projection": True},
         dict(kind="risk", severity=sev, title="Your profit is shrinking" if not already else "Spending exceeds sales",
-             what_happened=msg if already else msg + " This is a forecast based on your past weeks, not a certainty.",
+             what_happened=text,
              magnitude=None, period_start=now - timedelta(days=period_days * 6), period_end=now,
              confidence=round(min(0.7, 0.35 + fit * 0.35), 2),
              data_coverage_pct=coverage_mod.coverage_pct_for_entity(db, tenant_id, "sale", now=now),
-             recommended_action="See which costs grew and whether sales are softening, and decide what to cut or fix before it turns into a loss."),
+             recommended_action=action),
     )
 
 
