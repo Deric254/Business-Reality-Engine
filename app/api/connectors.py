@@ -11,6 +11,7 @@ from app.core.db import get_db
 from app.core.ingestion import NormalizedEvent
 from app.connectors.file_connector import (
     ColumnMapping, read_upload, validate_upload, parse_file_to_dataframe, dataframe_to_normalized_events, add_row_ids, with_default_id,
+    extra_sheet_events, other_sheet_names,
 )
 from app.connectors.inspect import describe, mapping_provider
 from app.connectors import url_connector
@@ -257,8 +258,11 @@ async def upload_file(
 
     # Adds new records and updates edited ones (same id). With `replace`, the file is the whole truth: records it no
     # longer has are removed. Without it, files are batches that add up (a month at a time), so nothing is removed.
-    done = snapshot.apply(db, connector, [NormalizedEvent(**e) for e in parsed.events], remove_missing=replace, confirmed=True)
-    return {**done, "rows_processed": len(done["results"]), "skipped": len(parsed.skipped), "skipped_examples": parsed.skipped[:3]}
+    extra_events, extra_skipped, sheet_notes = extra_sheet_events(content, ext, tenant_id, connector_id, connector.name)   # the other sheets of a workbook
+    done = snapshot.apply(db, connector, [NormalizedEvent(**e) for e in parsed.events + extra_events], remove_missing=replace, confirmed=True)
+    skipped_all = parsed.skipped + extra_skipped
+    return {**done, "rows_processed": len(done["results"]), "skipped": len(skipped_all), "skipped_examples": skipped_all[:3],
+            **({"other_sheets": sheet_notes} if sheet_notes else {})}
 
 
 def _sync_endpoint(connector_id, tenant_id, db, authorization, expected_type, confirmed=False):
@@ -291,7 +295,9 @@ async def inspect_file(tenant_id: str = Form(...), file: UploadFile = File(...),
     content = await read_upload(file)
     ext = validate_upload(file.filename or "", content)
     df = parse_file_to_dataframe(content, ext)
-    return await run_in_threadpool(lambda: describe(df, mapping_provider(db, tenant_id)))     # the AI call is slow and blocking
+    others = other_sheet_names(content, ext)
+    out = await run_in_threadpool(lambda: describe(df, mapping_provider(db, tenant_id)))
+    return {**out, "other_sheets": others} if others else out     # the AI call is slow and blocking
 
 
 class InspectUrl(BaseModel):

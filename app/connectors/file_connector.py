@@ -90,7 +90,8 @@ def _header_offset(rows: list[list]) -> int:
     return 0
 
 
-def parse_file_to_dataframe(content: bytes, ext: str) -> pd.DataFrame:
+def parse_file_to_dataframe(content: bytes, ext: str, sheet=0) -> pd.DataFrame:
+    """`sheet` only matters for .xlsx (a name or position); the default, the first sheet, is what every caller got before."""
     buf = io.BytesIO(content)
     offset = 0                                 # rows above the header (only csv and xlsx can have them)
     try:
@@ -109,8 +110,8 @@ def parse_file_to_dataframe(content: bytes, ext: str) -> pd.DataFrame:
             df = pd.read_csv(buf, skiprows=offset)
         else:  # .xlsx
             # data_only reads cached computed values, not formulas — no formula execution
-            offset = _header_offset(pd.read_excel(io.BytesIO(content), engine="openpyxl", header=None, nrows=_HEADER_SCAN_ROWS).values.tolist())
-            df = pd.read_excel(buf, engine="openpyxl", skiprows=offset)
+            offset = _header_offset(pd.read_excel(io.BytesIO(content), engine="openpyxl", sheet_name=sheet, header=None, nrows=_HEADER_SCAN_ROWS).values.tolist())
+            df = pd.read_excel(buf, engine="openpyxl", sheet_name=sheet, skiprows=offset)
     except HTTPException:
         raise
     except Exception as e:
@@ -278,3 +279,66 @@ def dataframe_to_normalized_events(
     if skipped and len(skipped) * 2 > nonblank:
         raise HTTPException(400, f"Most rows could not be read, so the column mapping is probably wrong. First problem: {skipped[0]}")
     return ParsedRows(events, skipped)
+
+
+# ---------------- workbooks with more than one sheet ----------------
+
+_EXPENSE_SHEET = re.compile(r"expens|cost|purchas|payment|spend|outgoing", re.I)
+_SALES_SHEET = re.compile(r"sale|revenue|income|receipt|takings", re.I)
+
+
+def other_sheet_names(content: bytes, ext: str) -> list[str]:
+    """Names of the sheets after the first in an .xlsx workbook (the first is read with the connector's own mapping)."""
+    if ext != ".xlsx":
+        return []
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        try:
+            return list(wb.sheetnames[1:])
+        finally:
+            wb.close()
+    except Exception:
+        return []
+
+
+def extra_sheet_events(content: bytes, ext: str, tenant_id: str, connector_id: str, source: str) -> tuple[list[dict], list[str], list[dict]]:
+    """Every sheet after the first, mapped by the same column rules the Data page suggests (a sheet called Expenses, or one
+    with an expense-like amount column, is read as expenses). Returns (events, skipped rows, a note per sheet saying what
+    happened). A sheet that cannot be understood is reported and left out; it never fails the upload of the first sheet."""
+    from app.connectors.inspect import suggest_mapping            # imported here: inspect imports this module
+    events: list[dict] = []
+    skipped: list[str] = []
+    notes: list[dict] = []
+    for name in other_sheet_names(content, ext):
+        try:
+            df = parse_file_to_dataframe(content, ext, sheet=name)
+        except HTTPException as e:
+            notes.append({"sheet": name, "status": "left out", "reason": str(e.detail)})
+            continue
+        try:
+            fields = suggest_mapping(df)
+            if _EXPENSE_SHEET.search(name):
+                fields["entity"] = "expense"
+            elif _SALES_SHEET.search(name) and not _EXPENSE_SHEET.search(name):
+                fields["entity"] = "sale"
+            has_money = fields.get("amount_col") or fields.get("amount_in_col") or fields.get("amount_out_col") or fields.get("price_col")
+            if not fields.get("timestamp_col") or not has_money:
+                notes.append({"sheet": name, "status": "left out", "reason": "no date column and amount column could be found"})
+                continue
+            fields["event_type"] = f"{fields['entity']}.created"
+            mapping = ColumnMapping(**{k: v for k, v in fields.items() if k in ColumnMapping.model_fields})
+            df = add_row_ids(df)
+            mapping = with_default_id(df, mapping)
+            parsed = dataframe_to_normalized_events(df, mapping, tenant_id=tenant_id, connector_id=connector_id, source=source)
+        except HTTPException as e:
+            notes.append({"sheet": name, "status": "left out", "reason": str(e.detail)})
+            continue
+        except Exception as e:
+            notes.append({"sheet": name, "status": "left out", "reason": f"could not be read: {e}"})
+            continue
+        events += parsed.events
+        skipped += [f"{name}: {s}" for s in parsed.skipped]
+        notes.append({"sheet": name, "status": "read", "as": mapping.entity if not (mapping.amount_in_col or mapping.amount_out_col) else "sales and expenses",
+                      "rows": len(parsed.events), "skipped": len(parsed.skipped)})
+    return events, skipped, notes

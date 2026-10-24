@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.connectors.database_connector import DatabaseColumnMapping, fetch_rows, rows_to_normalized_events
 from app.connectors.email_connector import list_new_emails
-from app.connectors.file_connector import (ColumnMapping, add_row_ids, dataframe_to_normalized_events, parse_file_to_dataframe, validate_upload, with_default_id)
+from app.connectors.file_connector import (ColumnMapping, add_row_ids, dataframe_to_normalized_events, extra_sheet_events, parse_file_to_dataframe, validate_upload, with_default_id)
 from app.connectors.url_connector import fetch_dataframe
 from app.connectors.folder_connector import MAX_TRACKED, list_new_files as list_folder_files, read_file
 from app.connectors.sftp_connector import fetch_file, list_new_files as list_sftp_files
@@ -50,9 +50,11 @@ def _ingest_frame(db, connector, mapping, content, filename):
     df = add_row_ids(parse_file_to_dataframe(content, ext))
     mapping = with_default_id(df, mapping)
     parsed = dataframe_to_normalized_events(df, mapping, tenant_id=connector.tenant_id, connector_id=connector.id, source=connector.name)
-    done = snapshot.apply(db, connector, [NormalizedEvent(**e) for e in parsed.events], remove_missing=False)
+    extra_events, extra_skipped, sheet_notes = extra_sheet_events(content, ext, connector.tenant_id, connector.id, connector.name)
+    done = snapshot.apply(db, connector, [NormalizedEvent(**e) for e in parsed.events + extra_events], remove_missing=False)
+    skipped_all = parsed.skipped + extra_skipped
     return {**{k: v for k, v in done.items() if k != "results"}, "rows_processed": len(done["results"]),
-            "skipped": len(parsed.skipped), "skipped_examples": parsed.skipped[:3]}
+            "skipped": len(skipped_all), "skipped_examples": skipped_all[:3], **({"other_sheets": sheet_notes} if sheet_notes else {})}
 
 
 def sync_database(db: Session, connector: Connector) -> dict:
