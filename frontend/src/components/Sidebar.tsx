@@ -3,6 +3,7 @@ import { Link, NavLink } from "react-router-dom";
 import type { Tenant, CoverageRow } from "../api/client";
 import { api, logout, masterApi } from "../api/client";
 import { cache } from "../api/cache";
+import { getTokens } from "../api/session";
 import { COVERAGE_COLOR } from "../lib/severity";
 import { useT, setLang, getLang, type Lang, type TKey } from "../lib/i18n";
 import { Logo } from "./Logo";
@@ -32,13 +33,21 @@ const COVERAGE_TEXT: Record<string, string> = {
   live: "Data is up to date", recent: "Data is recent", stale: "Some data is out of date", not_connected: "No data connected yet",
 };
 
-let masterKnown: boolean | null = null;                       // asked once per page load; only the master account ever sees the Licences link
+// Whether the signed-in account is the master, remembered per sign-in (never across different people on the same page),
+// so another person signing in after the master never inherits the Licences link.
+let masterKnown: { who: string; value: boolean } | null = null;
+const signInId = () => getTokens()?.refresh_token ?? "";
 
 export function Sidebar({ tenants, activeTenant, onTenantChange }: { tenants: Tenant[]; activeTenant: Tenant | null; onTenantChange: (t: Tenant) => void }) {
   const t = useT();
   const [coverage, setCoverage] = useState<CoverageRow[]>([]);
-  const [isMaster, setIsMaster] = useState(masterKnown === true);
-  useEffect(() => { if (masterKnown === null) masterApi.whoami().then((m) => { if (m) masterKnown = m; setIsMaster(m); }); }, []);
+  const [isMaster, setIsMaster] = useState(masterKnown !== null && masterKnown.who === signInId() && masterKnown.value);
+  useEffect(() => {
+    const who = signInId();
+    if (masterKnown && masterKnown.who === who) { setIsMaster(masterKnown.value); return; }
+    setIsMaster(false);
+    masterApi.whoami().then((m) => { if (signInId() === who) { masterKnown = { who, value: m }; setIsMaster(m); } });
+  }, []);
   const nav = isMaster ? [...NAV, { to: "/master", key: "nav.licences" as TKey, icon: "accuracy" }] : NAV;
 
   useEffect(() => {
