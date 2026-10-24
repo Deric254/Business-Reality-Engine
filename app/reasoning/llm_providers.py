@@ -31,7 +31,7 @@ class AnthropicProvider(LLMProvider):
         if not api_key:
             raise RuntimeError("ANTHROPIC_API_KEY is not configured")
         from anthropic import Anthropic
-        self._client = Anthropic(api_key=api_key)
+        self._client = Anthropic(api_key=api_key, timeout=25.0, max_retries=0)   # fail fast so the next provider is tried at once
         self._model = model
 
     @property
@@ -59,7 +59,7 @@ class OpenAIProvider(LLMProvider):
             key_name = "OPENAI_API_KEY" if not base_url else "LLM_API_KEY"
             raise RuntimeError(f"{key_name} is not configured")
         from openai import OpenAI
-        self._client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
+        self._client = OpenAI(api_key=api_key, base_url=base_url, timeout=25.0, max_retries=0) if base_url else OpenAI(api_key=api_key, timeout=25.0, max_retries=0)
         self._model = model
         self._base_url = base_url
 

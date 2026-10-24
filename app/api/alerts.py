@@ -44,6 +44,7 @@ class AlertOut(BaseModel):
     escalated: bool = False
     kind: Optional[str] = None
     created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None   # when the check last confirmed this alert still holds
     period_label: Optional[str] = None      # the exact days the figures cover, on the business's calendar
 
     class Config:

@@ -38,7 +38,7 @@ export function Sidebar({ tenants, activeTenant, onTenantChange }: { tenants: Te
   const t = useT();
   const [coverage, setCoverage] = useState<CoverageRow[]>([]);
   const [isMaster, setIsMaster] = useState(masterKnown === true);
-  useEffect(() => { if (masterKnown === null) masterApi.whoami().then((m) => { masterKnown = m; setIsMaster(m); }); }, []);
+  useEffect(() => { if (masterKnown === null) masterApi.whoami().then((m) => { if (m) masterKnown = m; setIsMaster(m); }); }, []);
   const nav = isMaster ? [...NAV, { to: "/master", key: "nav.licences" as TKey, icon: "accuracy" }] : NAV;
 
   useEffect(() => {

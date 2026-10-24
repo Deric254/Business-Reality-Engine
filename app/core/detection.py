@@ -156,11 +156,11 @@ def resolve_alert(db: Session, alert: Alert, now: datetime) -> None:
 
 
 def close_if_cleared(db: Session, tenant_id: str, dedup_key: str, now: datetime) -> None:
-    """The problem has clearly gone. An alert nobody has touched is closed, so the list only shows what is still true
-    (otherwise 'Sales are down 59%' would sit there, with old numbers, after sales recovered). One a person is
-    working on is left for them to close."""
+    """The problem has clearly gone, so the alert is closed whatever state it was in (new, acknowledged, being worked
+    on), and the list only shows what is still true. Otherwise 'Sales are down 59%' would sit there, with old numbers,
+    after sales recovered. The record stays (state resolved, with when it recovered); nothing is deleted."""
     open_alert = _find_open_alert(db, tenant_id, dedup_key)
-    if open_alert and open_alert.state == AlertState.detected:
+    if open_alert:
         resolve_alert(db, open_alert, now)
 
 

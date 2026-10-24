@@ -90,10 +90,10 @@ def test_untouched_alert_closes_when_the_problem_is_gone_but_one_in_progress_sta
     assert a.state == AlertState.resolved and a.evidence["recovered_at"]
     assert not _in_cooldown(db, tid, KEY, NOW)         # recovering by itself must not silence a real repeat
 
-    # the same rule applied to an alert a person has engaged with leaves it alone
+    # an alert a person is working on closes too once the problem is gone, and keeps its record
     close_if_cleared(db, tid, "historical_deviation:sale:amount:30d", NOW)
     db.refresh(b)
-    assert b.state == AlertState.investigating
+    assert b.state == AlertState.resolved and b.evidence["recovered_at"]
 
 
 def test_a_person_dismissing_an_alert_still_silences_it(db, tid):  # noqa: F811

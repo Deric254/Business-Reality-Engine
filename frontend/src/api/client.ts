@@ -111,6 +111,8 @@ export interface Alert {
   correlated_alert_ids?: string[] | null;
   escalated?: boolean;
   period_label?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 export interface AlertDetail extends Alert {
@@ -179,6 +181,7 @@ export interface CoverageRow {
 export const api = {
   listTenants: () => request<Tenant[]>("/api/tenants/"),
 
+  runChecks: (tenantId: string) => request<{ alerts: { id: string | null; title: string | null }[]; errors: number }>("/api/detection/run/all", { method: "POST", body: JSON.stringify({ tenant_id: tenantId }) }),
   listAlerts: (tenantId: string, filters: { severity?: string; state?: string } = {}) => {
     const params = new URLSearchParams({ tenant_id: tenantId });
     // Skip unset filters: URLSearchParams would otherwise send the literal string "undefined".

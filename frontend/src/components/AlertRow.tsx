@@ -1,6 +1,10 @@
 import { Link } from "react-router-dom";
 import type { Alert } from "../api/client";
-import { SEVERITY_COLOR, SEVERITY_LABEL, SEVERITY_TEXT, SEVERITY_TINT } from "../lib/severity";
+import { SEVERITY_COLOR, SEVERITY_LABEL, SEVERITY_TEXT, SEVERITY_TINT, parseApiDate, timeAgo } from "../lib/severity";
+
+function stamp(iso: string): string {
+  return parseApiDate(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
 
 export function AlertRow({ alert, tenantId }: { alert: Alert; tenantId: string }) {
   const sev = alert.severity;
@@ -17,6 +21,12 @@ export function AlertRow({ alert, tenantId }: { alert: Alert; tenantId: string }
         </div>
         <div className="text-base font-semibold text-ink-text mt-1.5 leading-snug">{alert.title}</div>
         <p className="text-sm text-ink-muted mt-0.5 line-clamp-3">{alert.what_happened}</p>
+        {alert.created_at && (
+          <p className="text-xs text-ink-faint mt-0.5 kpi-figure" title={`First detected ${stamp(alert.created_at)}`}>
+            First detected {stamp(alert.created_at)} ({timeAgo(alert.created_at)})
+            {alert.updated_at && ` · last checked ${timeAgo(alert.updated_at)}`}
+          </p>
+        )}
         {alert.period_label && <p className="text-xs text-ink-faint mt-0.5 kpi-figure">Days covered: {alert.period_label}, complete days only</p>}
         {alert.recommended_action && <p className="text-sm text-ink-text mt-1.5"><span className="font-medium">Next step:</span> {alert.recommended_action}</p>}
       </div>
