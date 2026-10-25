@@ -157,3 +157,21 @@ def test_the_detection_cycle_runs_them_and_counts_no_errors(db, tid):
     put(db, tid, "sale", 0, 40_000, place="Maua"); put(db, tid, "sale", 0, 160_000, place="Meru"); db.commit()
     res = run_tenant_cycle(db, tid, [{"entity": "sale", "field": "amount", "direction": "drop"}], now=NOW, replay=True)
     assert res["errors"] == 0 and any(a.kind == "branch" for a in res["alerts"])
+
+
+def test_an_open_alert_headline_follows_the_numbers_when_they_change(db, tid):
+    """A refreshed alert must not keep an old figure in its headline while its text shows the new one."""
+    for w in (1, 2, 3):
+        put(db, tid, "expense", w, 10000, cat="Transport")
+    for w in (0, 1, 2, 3):
+        put(db, tid, "expense", w, 200000, cat="Stock")
+    put(db, tid, "expense", 0, 100000, cat="Transport"); db.commit()
+    DD.run_dimension_detectors(db, tid, now=NOW)
+    first = [a.title for a in db.query(Alert).filter(Alert.tenant_id == tid).all()]
+    assert "Transport spending is 10 times your usual 30 days" in first
+    put(db, tid, "expense", 0, 200000, cat="Transport", day_in_window=5); db.commit()
+    DD.run_dimension_detectors(db, tid, now=NOW)
+    rows = db.query(Alert).filter(Alert.tenant_id == tid, Alert.kind == "category").all()
+    assert len(rows) == 1                                          # same alert, refreshed, not a duplicate
+    db.refresh(rows[0])
+    assert "30 times" in rows[0].title and "300,000" in rows[0].what_happened

@@ -7,9 +7,9 @@ import { Empty, Notice, Skeleton, btnCls, money, primaryCls } from "../component
 import { CalendarHeatmap, ChartCard, Change, ForecastChart, HRow, Legend, MarginChart, MonthlyChart, Spark, WeekdayChart } from "../components/charts";
 import { C, dayLong, dayShort, fmtFull } from "../lib/chartKit";
 
-const PERIODS = [30, 90, 180, 365, 0];
-const periodLabel = (d: number) => (d === 0 ? "All time" : d === 365 ? "12 months" : `${d} days`);
-const before = (d: number) => (d === 0 ? "" : ` on the ${d} days before`);
+const PERIODS = [1, 7, 30, 90, 180, 365, 0];
+const periodLabel = (d: number) => (d === 0 ? "All time" : d === 1 ? "Today" : d === 365 ? "12 months" : `${d} days`);
+const before = (d: number) => (d === 0 ? "" : d === 1 ? " on yesterday" : ` on the ${d} days before`);
 
 /* ---------------------------------------------------------------- headline tiles */
 
@@ -105,6 +105,7 @@ function Body({ tenant }: { tenant: Tenant }) {
   const top = useMemo(() => [...alerts].sort((x, y) => (y.priority_rank ?? 0) - (x.priority_rank ?? 0)), [alerts]);
   const empty = a != null && a.headline.sales.current === 0 && a.headline.spending.current === 0 && a.monthly.every((m) => m.sales === 0 && m.spending === 0);
   const m = (n: number) => money(n, cur);
+  const sofar = <span className="text-ink-muted">so far today; the day is not over</span>;
 
   return (
     <>
@@ -112,7 +113,7 @@ function Body({ tenant }: { tenant: Tenant }) {
         <div>
           <h1 className="display text-3xl sm:text-4xl">Analytics</h1>
           <p className="text-ink-muted mt-1.5 max-w-prose">
-            {a ? <>{dayShort(a.period.first_day)} to {dayLong(a.period.last_day)}. Whole days on your business's clock, from records that passed validation.</> : "Loading your figures."}
+            {a ? <>{dayShort(a.period.first_day)} to {dayLong(a.period.last_day)}. {a.period.days === 1 ? "Today counts up to the latest records that passed validation." : "Up to today on your business's clock, from records that passed validation."}</> : "Loading your figures."}
           </p>
           <p className="hidden print:block text-sm mt-1">{tenant.name}. Prepared {new Date().toLocaleDateString("en-KE", { day: "numeric", month: "long", year: "numeric" })}.</p>
         </div>
@@ -136,22 +137,25 @@ function Body({ tenant }: { tenant: Tenant }) {
 
       {a && !empty && (
         <div className={`space-y-9 transition-opacity ${stale ? "opacity-60" : ""}`} aria-busy={stale}>
+          {days === 1 && a.headline.sales.current === 0 && a.headline.spending.current === 0 && (
+            <p role="status" className="text-sm text-ink-text bg-panel border border-border rounded-sm px-3 py-2">Nothing has been recorded today yet. New records show here after your next sync or upload. The charts below still show your recent history.</p>
+          )}
           {/* Headline figures */}
           <section aria-label="Headline figures" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <Tile label={`Sales, ${periodLabel(days).toLowerCase()}`} value={m(a.headline.sales.current)} spark={series(a, (d) => d.sales)} sparkColor={C.sales}
-              sub={<><Change pct={a.headline.sales.change_pct} goodWhen="up" /> <span className="text-ink-muted">{before(days) || "all your records"}</span></>} />
+              sub={days === 1 ? sofar : <><Change pct={a.headline.sales.change_pct} goodWhen="up" /> <span className="text-ink-muted">{before(days) || "all your records"}</span></>} />
             <Tile label={`Spending, ${periodLabel(days).toLowerCase()}`} value={m(a.headline.spending.current)} spark={series(a, (d) => d.spending)} sparkColor={C.spending}
-              sub={<><Change pct={a.headline.spending.change_pct} goodWhen="down" /> <span className="text-ink-muted">{before(days) || "all your records"}</span></>} />
+              sub={days === 1 ? sofar : <><Change pct={a.headline.spending.change_pct} goodWhen="down" /> <span className="text-ink-muted">{before(days) || "all your records"}</span></>} />
             <Tile label={`Profit, ${periodLabel(days).toLowerCase()}`} value={m(a.headline.profit.current)} spark={series(a, (d) => d.sales - d.spending)} sparkColor={C.profit}
-              sub={<><Change pct={a.headline.profit.change_pct} goodWhen="up" /> <span className="text-ink-muted">{before(days) || "after recorded spending"}</span></>} />
+              sub={days === 1 ? sofar : <><Change pct={a.headline.profit.change_pct} goodWhen="up" /> <span className="text-ink-muted">{before(days) || "after recorded spending"}</span></>} />
             <Tile label="Profit margin" value={a.headline.margin_pct.current == null ? "No sales" : `${a.headline.margin_pct.current.toFixed(1)}%`}
               spark={a.monthly.map((x) => x.margin_pct ?? 0)} sparkColor={C.profit}
-              sub={a.headline.margin_pct.change_points == null ? <span className="text-ink-muted">Kept from each sale after spending</span>
+              sub={days === 1 ? sofar : a.headline.margin_pct.change_points == null ? <span className="text-ink-muted">Kept from each sale after spending</span>
                 : <span className="kpi-figure" style={{ color: a.headline.margin_pct.change_points >= 0 ? C.good : C.bad }}>{a.headline.margin_pct.change_points >= 0 ? "▲" : "▼"} {Math.abs(a.headline.margin_pct.change_points).toFixed(1)} points <span className="text-ink-muted font-normal">{before(days)}</span></span>} />
             <Tile label="Average sale" value={m(a.headline.average_sale.current)}
-              sub={<><Change pct={a.headline.average_sale.change_pct} goodWhen="up" /> <span className="text-ink-muted">{a.headline.transactions.current.toLocaleString("en-US")} sales{days ? before(days) : ""}</span></>} />
+              sub={days === 1 ? sofar : <><Change pct={a.headline.average_sale.change_pct} goodWhen="up" /> <span className="text-ink-muted">{a.headline.transactions.current.toLocaleString("en-US")} sales{days ? before(days) : ""}</span></>} />
             <Tile label="Customers who bought" value={a.headline.customers.current.toLocaleString("en-US")}
-              sub={<><Change pct={a.headline.customers.change_pct} goodWhen="up" /> <span className="text-ink-muted">{a.customers.repeat_rate_pct != null ? `${a.customers.repeat_rate_pct.toFixed(0)}% of named customers came back` : before(days)}</span></>} />
+              sub={days === 1 ? sofar : <><Change pct={a.headline.customers.change_pct} goodWhen="up" /> <span className="text-ink-muted">{a.customers.repeat_rate_pct != null ? `${a.customers.repeat_rate_pct.toFixed(0)}% of named customers came back` : before(days)}</span></>} />
           </section>
 
           {/* What needs attention: the same alerts the engine raised from these records */}

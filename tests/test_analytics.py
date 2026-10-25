@@ -109,3 +109,14 @@ def test_endpoint_needs_a_sign_in_and_is_tenant_scoped(client, db):
     assert ok.status_code == 200 and set(ok.json()) >= {"headline", "monthly", "branches", "products", "spending", "weekdays", "customers", "daily", "forecast", "insights"}
     other = _make_tenant("anapi-other")
     assert client.get(f"/api/business/analytics?tenant_id={other}&days=30", headers=h).status_code in (401, 403, 404)
+
+
+def test_today_and_last_7_days_are_real_periods(db):
+    t = _make_tenant("anatoday")
+    _seed(db, t, [(0, "sale", 1000, "A", "Tea", "Ann"), (0, "expense", 400, "A", "Rent", None),
+                  (3, "sale", 500, "A", "Tea", "Bob"), (10, "sale", 9000, "A", "Tea", "Cy")])
+    one, week = build_analytics(db, t, 1), build_analytics(db, t, 7)
+    assert one["period"]["days"] == 1 and one["period"]["first_day"] == one["period"]["last_day"]
+    assert one["headline"]["sales"]["current"] == 1000 and one["headline"]["spending"]["current"] == 400
+    assert one["insights"] == []                       # today is not over: no "down vs yesterday" verdicts
+    assert week["headline"]["sales"]["current"] == 1500 and week["period"]["days"] == 7

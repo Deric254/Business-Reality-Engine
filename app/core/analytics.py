@@ -371,5 +371,6 @@ def build_analytics(db: Session, tenant_id: str, days: int, now: Optional[dateti
         "daily": [{"date": d.isoformat(), "sales": round(v["sales"], 2), "spending": round(v["spending"], 2)}
                   for d, v in sorted(daily.items()) if d >= heat_from],
         "forecast": forecast,
-        "insights": _insights(headline, branches, products, spending, weekdays, customers, forecast, fmt, days),
+        # Today is not over, so comparing it with whole days would only say "down" every morning: no verdicts for it.
+        "insights": [] if days == 1 else _insights(headline, branches, products, spending, weekdays, customers, forecast, fmt, days),
     }

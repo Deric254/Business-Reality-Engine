@@ -53,8 +53,8 @@ def _upsert(db: Session, tenant_id: str, dedup_key: str, now: datetime, evidence
         keep = {k: v for k, v in (existing.evidence or {}).items() if k in ("escalated_at",)}
         existing.evidence = {**evidence, **keep}
         for k, v in fields.items():
-            if k not in ("title", "state"):
-                setattr(existing, k, v)
+            if k != "state":
+                setattr(existing, k, v)       # the headline carries the figures too ("4.7 times"), so it is refreshed with them
         db.commit(); db.refresh(existing)
         return existing
     if _in_cooldown(db, tenant_id, dedup_key, now):
