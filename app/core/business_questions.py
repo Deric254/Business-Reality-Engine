@@ -219,6 +219,13 @@ def _answer_question(db: Session, tenant_id: str, question: str, period_days: in
         provider = get_provider(db, tenant_id)
     except Exception:
         provider = None
+    if routed is None and provider and any(w in question.lower() for w in _COMPETITOR_WORDS):
+        # A market question can only come from the web: go straight there instead of first asking the model to plan
+        # and classify it (two slow round trips that cannot help).
+        from app.core.detection import currency_of
+        web = _web_answer(question, provider, lang, tenant.area if tenant else None, db, tenant_id, currency_of(db, tenant_id))
+        if web:
+            return web
     if provider and (routed is None or (routed["intent"] in PLANNABLE and query_plan.needs_plan(db, tenant_id, question))):
         # With a model connected, a question the fixed intents cannot express (a filter, a grouping, a comparison) is
         # PLANNED by the model and then run as SQL; the model never sees or writes numbers.

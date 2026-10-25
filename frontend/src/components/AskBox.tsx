@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import type { QuestionAnswer } from "../api/client";
@@ -58,6 +58,32 @@ function Answer({ text, sources }: { text: string; sources?: { title: string; ur
   );
 }
 
+const STEPS: [number, string][] = [
+  [0, "Working on your question"],
+  [3, "Looking for the answer"],
+  [7, "Writing the answer"],
+  [20, "Still working. Some answers take up to half a minute"],
+];
+
+/** Shown while a question is being answered: moving dots, what is happening, and seconds so far, so it never looks frozen. */
+function Working() {
+  const [sec, setSec] = useState(0);
+  useEffect(() => { const t = setInterval(() => setSec((x) => x + 1), 1000); return () => clearInterval(t); }, []);
+  const step = [...STEPS].reverse().find(([from]) => sec >= from)![1];
+  return (
+    <div role="status" aria-live="polite" className="mt-4 rounded-sm border border-border bg-panel-raised px-4 py-3">
+      <div className="flex items-center gap-3 text-sm text-ink-text">
+        <span className="flex gap-1" aria-hidden>
+          {[0, 1, 2].map((i) => <span key={i} className="h-2 w-2 rounded-full bg-info animate-bounce" style={{ animationDelay: `${i * 150}ms` }} />)}
+        </span>
+        <span>{step}…</span>
+        <span className="ml-auto text-ink-muted tabular-nums">{sec}s</span>
+      </div>
+      <div className="mt-2 h-1 rounded-full bg-border overflow-hidden"><div className="h-full w-1/3 bg-info rounded-full animate-pulse" style={{ marginLeft: `${Math.min(66, sec * 3)}%`, transition: "margin 1s linear" }} /></div>
+    </div>
+  );
+}
+
 export function AskBox({ tenantId, days }: { tenantId: string; days: number }) {
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
@@ -87,8 +113,9 @@ export function AskBox({ tenantId, days }: { tenantId: string; days: number }) {
           {EXAMPLES.map((e) => <button key={e} type="button" className={chip} onClick={() => { setQ(e); ask(e); }}>{e}</button>)}
         </div>
       )}
+      {busy && <Working />}
       {error && <p role="alert" className="text-sm text-critical mt-3">{error}</p>}
-      {result && (
+      {result && !busy && (
         <div className="border-l-4 border-info bg-info-soft/60 rounded-sm px-4 py-3 mt-4" aria-live="polite">
           {result.answer_source === "web" && (
             <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted mb-1">From the web, not from your numbers</p>

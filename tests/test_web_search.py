@@ -159,3 +159,13 @@ def test_competitor_question_searches_for_what_the_business_sells_and_where(db, 
     assert out["search_query"] == q and out["needs_area"] is True
     # only names reach the search: no amount appears in the query
     assert "500" not in q and "1300" not in q
+
+
+def test_a_competitor_question_goes_straight_to_the_web_without_extra_model_calls(db, monkeypatch):
+    t = _make_tenant("webfast")
+    p = Provider()
+    monkeypatch.setattr(bq, "get_provider", lambda *a, **k: p)
+    monkeypatch.setattr(bq.web_search, "search", lambda q: PAGES)
+    out = bq.answer_question(db, t, "who are my competitors")
+    assert out["answer_source"] == "web"
+    assert len(p.calls) == 1          # one model call (the answer), no planning or classifying first
