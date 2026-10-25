@@ -9,6 +9,7 @@ import { ConnectWizard, SecretOnce } from "../components/ConnectWizard";
 import { Card, Empty, Notice, PageTitle, Section, btnCls, inputCls, primaryCls } from "../components/ui";
 import { timeAgo } from "../lib/severity";
 import { useT } from "../lib/i18n";
+import { useOnLiveChange } from "../lib/liveContext";
 
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong. Try again.");
 const PULL = ["database", "url", "sftp", "email", "shared_folder"];
@@ -148,6 +149,7 @@ function DataBody({ tenantId, isOwner }: { tenantId: string; isOwner: boolean })
   const [contributions, setContributions] = useState<Record<string, Contribution>>({});
   const load = useCallback(() => Promise.all([connectorApi.list(tenantId), connectorApi.contributions(tenantId)])
     .then(([r, c]) => { setRows(r); setContributions(c); }).catch((e) => setErr(errText(e))), [tenantId]);
+  useOnLiveChange(load);                     // a scheduled sync, an upload elsewhere: the list and its "last checked" follow
   useEffect(() => { load(); }, [load]);
   useEffect(() => { if (window.location.hash === "#entry") document.getElementById("entry")?.scrollIntoView(); }, [rows]);
   return (

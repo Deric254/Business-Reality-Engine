@@ -81,10 +81,35 @@ def clear_local():
         _local.clear()
 
 
-def invalidate_tenant(tenant_id: str) -> None:
-    """Drop everything cached from a business's records: its numbers, merge suggestions and name lists."""
+def invalidate_tenant(tenant_id: str, detect: bool = True) -> None:
+    """A business's records changed. Drop everything cached from them (numbers, merge suggestions, name lists), tell every
+    open screen (the data version it polls moves), and have the alerts re-checked now: nothing derived from the old
+    records may outlive them, whichever path changed them (sync, upload, webhook, entry, delete, disconnect)."""
     for prefix in (f"kpis:{tenant_id}:", f"analytics:{tenant_id}:", f"overlaps:{tenant_id}", f"names:{tenant_id}", f"ask:{tenant_id}:"):
         invalidate_prefix(prefix)
+    bump_data_version(tenant_id)
+    if detect:
+        try:
+            from app.core import detection_kick
+            detection_kick.kick({tenant_id})
+        except Exception as e:
+            logger.error(f"Could not schedule the alert check after a data change: {e}")
+
+
+def bump_data_version(tenant_id: str) -> None:
+    """Move the business's data version on (its own short transaction, so it never joins or blocks the caller's). Never raises."""
+    try:
+        from sqlalchemy import update
+        from app.core.db import SessionLocal
+        from app.models.core import Tenant
+        db = SessionLocal()
+        try:
+            db.execute(update(Tenant).where(Tenant.id == tenant_id).values(data_version=Tenant.data_version + 1))
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Data version bump failed for tenant={tenant_id}: {e}")
 
 
 def invalidate_prefix(prefix: str) -> None:

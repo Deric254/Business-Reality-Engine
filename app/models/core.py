@@ -46,6 +46,9 @@ class Tenant(Base):
     country = Column(String, nullable=True)                         # ISO 3166 alpha-2; drives the holiday calendar (Section 42)
     language = Column(String, nullable=False, default="en", server_default="en")  # Section 57: UI and narrative language
     area = Column(String, nullable=True)                            # where the business trades, in the owner's words ("Westlands, Nairobi"); added to web searches
+    # Bumped every time this business's records change (see app.core.cache.invalidate_tenant). Open screens poll it
+    # (app.api.live) and reload the moment it moves, so nobody keeps looking at figures from before a sync.
+    data_version = Column(Integer, nullable=False, default=0, server_default="0")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

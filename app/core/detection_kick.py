@@ -15,7 +15,10 @@ from app.core.db import SessionLocal
 
 logger = logging.getLogger("business_reality_engine")
 
-MIN_GAP_SECONDS = 120
+# Alerts must follow the data within seconds. SETTLE waits briefly so a burst of batches (a big upload, a webhook flurry)
+# becomes one run; MIN_GAP bounds how often a continuously busy business is re-checked.
+SETTLE_SECONDS = float(os.getenv("DETECT_SETTLE_SECONDS", "3"))
+MIN_GAP_SECONDS = float(os.getenv("DETECT_MIN_GAP_SECONDS", "15"))
 _lock = threading.Lock()
 _state: dict[str, dict] = {}                 # tenant_id -> {running, waiting, pending, last}
 
@@ -34,7 +37,7 @@ def _schedule(tenant_id: str) -> None:
             st["pending"] = True                       # one more run will cover what arrived meanwhile
             return
         st["waiting"] = True
-        wait = max(0.0, MIN_GAP_SECONDS - (time.monotonic() - st["last"]))
+        wait = max(SETTLE_SECONDS, MIN_GAP_SECONDS - (time.monotonic() - st["last"]))
     timer = threading.Timer(wait, _run, args=(tenant_id,))
     timer.daemon = True
     timer.start()
@@ -62,5 +65,7 @@ def _execute(tenant_id: str) -> None:
     db = SessionLocal()
     try:
         run_tenant_cycle(db, tenant_id, _metrics_for_tenant(db, tenant_id))
+        from app.core.cache import bump_data_version
+        bump_data_version(tenant_id)          # alerts may have been raised, changed or resolved: open screens reload them
     finally:
         db.close()

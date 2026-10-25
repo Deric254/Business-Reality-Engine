@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import { Shell } from "../components/Shell";
 import { Card, Skeleton } from "../components/ui";
 import { SEVERITY_COLOR, SEVERITY_LABEL, SEVERITY_TEXT, SEVERITY_TINT, timeAgo } from "../lib/severity";
+import { useOnLiveChange } from "../lib/liveContext";
 
 const ACTIONS = [
   { state: "investigating", label: "I'm looking into it" },
@@ -19,6 +20,7 @@ function Body({ alertId, tenantId }: { alertId: string; tenantId: string }) {
   const [updating, setUpdating] = useState(false);
 
   const load = useCallback(() => api.getAlertDetail(alertId, tenantId).then(setAlert), [alertId, tenantId]);
+  useOnLiveChange(() => { load().catch(() => undefined); });       // detection may resolve or update this alert while it is open
   useEffect(() => {
     let current = true;                  // ignore an answer that arrives after the person has moved to another alert
     setAlert(null); setError(null);

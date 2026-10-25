@@ -190,3 +190,24 @@ class AIProvider(Base):
     priority = Column(Integer, nullable=False, default=100)       # lower = tried first
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Goal(Base):
+    """A target the owner sets for the current calendar week / month / quarter / year, e.g. "Sales this month: 2,000,000".
+    Sales and profit are 'reach at least'; spending is 'stay within'. Progress is computed on demand from validated records
+    (app.core.goals), never stored, so it can never disagree with the rest of the product."""
+    __tablename__ = "goals"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    tenant_id = Column(UUID(as_uuid=False), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String, nullable=False)
+    metric = Column(String, nullable=False)                        # sales | spending | profit
+    cadence = Column(String, nullable=False)                       # week | month | quarter | year
+    target_amount = Column(Numeric(18, 2), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_goal_name"),
+        Index("ix_goals_tenant", "tenant_id"),
+    )

@@ -7,6 +7,7 @@ import { Shell } from "../components/Shell";
 import { Bar, Card, Empty, Notice, Section, btnCls, inputCls, pct, primaryCls, today } from "../components/ui";
 import { SEVERITY_COLOR } from "../lib/severity";
 import { useT } from "../lib/i18n";
+import { useLive } from "../lib/liveContext";
 
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong. Try again.");
 const CHANGE_KINDS = ["location_added", "location_discontinued", "product_added", "product_discontinued", "source_added", "source_replaced", "restructure"];
@@ -18,7 +19,8 @@ function ReportSection({ tenantId }: { tenantId: string }) {
   const [days, setDays] = useState(180);
   const [r, setR] = useState<AccuracyReport | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { setErr(null); accuracyApi.report(tenantId, days).then(setR).catch((e) => setErr(errText(e))); }, [tenantId, days]);
+  const { tick } = useLive();            // alerts were raised or closed: the accuracy record follows
+  useEffect(() => { setErr(null); accuracyApi.report(tenantId, days).then(setR).catch((e) => setErr(errText(e))); }, [tenantId, days, tick]);
   const kinds = r ? Object.entries(r.by_kind) : [];
   const row = (k: string, s: KindStat) => (
     <div key={k} className="space-y-1">

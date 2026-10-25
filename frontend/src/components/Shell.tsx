@@ -4,6 +4,8 @@ import { cache } from "../api/cache";
 import { Sidebar } from "./Sidebar";
 import { RecoveryNudge } from "./RecoveryNudge";
 import { Skeleton, SlowHint, useSlow } from "./ui";
+import { LiveProvider } from "../lib/live";
+import { useLive } from "../lib/liveContext";
 
 /** Page frame: loads the caller's business(es), shows the navigation, and renders the page once a business is known. */
 export function Shell({ children, wide = false }: { children: (tenant: Tenant) => ReactNode; wide?: boolean }) {
@@ -25,10 +27,12 @@ export function Shell({ children, wide = false }: { children: (tenant: Tenant) =
   }, []);
 
   return (
+    <LiveProvider key={active?.id ?? "none"} tenantId={active?.id ?? null}>
     <div className="min-h-screen">
       <Sidebar tenants={tenants} activeTenant={active} onTenantChange={setActive} />
       <main className="lg:pl-64 print:!pl-0">
         <div className={`${wide ? "max-w-6xl" : "max-w-4xl"} mx-auto px-4 sm:px-8 py-8 lg:py-10 space-y-9`}>
+          <OfflineNotice />
           {error && <p role="alert" className="text-sm text-critical">{error}</p>}
           <RecoveryNudge />
           {loading && !error && (
@@ -44,5 +48,12 @@ export function Shell({ children, wide = false }: { children: (tenant: Tenant) =
         </div>
       </main>
     </div>
+    </LiveProvider>
   );
+}
+
+/** Shown only when the server cannot be reached: the figures on screen may be older than the data. Never shown otherwise. */
+function OfflineNotice() {
+  const { offline } = useLive();
+  return offline ? <p role="status" className="text-sm text-critical lg:hidden">Can't reach the server. Figures may be out of date.</p> : null;
 }

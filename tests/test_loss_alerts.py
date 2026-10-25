@@ -78,6 +78,7 @@ def test_new_records_trigger_detection_soon_after_and_a_burst_costs_one_extra_ru
     runs, first = [], threading.Event()
     monkeypatch.setenv("DETECT_AFTER_INGEST", "true")
     monkeypatch.setattr(detection_kick, "MIN_GAP_SECONDS", 0.3)
+    monkeypatch.setattr(detection_kick, "SETTLE_SECONDS", 0.0)
     monkeypatch.setattr(detection_kick, "_execute", lambda tenant_id: (runs.append(tenant_id), first.set()))
     t, h = make_owner(client, "kick")
     _load(client, t, h, "POS", SALES, 5, lambda d: 100)

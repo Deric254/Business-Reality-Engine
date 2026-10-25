@@ -614,3 +614,35 @@ export async function activateLicence(body: { licence_key: string; business_name
   if (!res.ok) throw await parseError(res);
   setTokens((await res.json()) as TokenPair);
 }
+
+// ---- live refresh ----
+export const liveApi = {
+  pulse: (t: string) => request<{ token: string; last_synced_at: string | null }>(`/api/live/pulse?tenant_id=${t}`),
+};
+
+// ---- targets ----
+export type GoalStatus = "met" | "on_track" | "at_risk" | "off_track" | "not_started" | "no_data";
+export interface GoalHistory { first_day: string; last_day: string; actual: number; met: boolean }
+export interface GoalProgress {
+  id: string; name: string; metric: "sales" | "spending" | "profit"; metric_label: string; cadence: "week" | "month" | "quarter" | "year";
+  direction: "reach" | "within"; target: number; actual: number; pct_of_target: number | null; status: GoalStatus; projected: number | null;
+  first_day: string; last_day: string; days_total: number; days_elapsed: number; days_remaining: number; data_through: string | null;
+  pace_gap: number | null; per_day_needed: number | null; summary: string; history: GoalHistory[];
+}
+export interface GoalInput { name: string; metric: GoalProgress["metric"]; cadence: GoalProgress["cadence"]; target_amount: number }
+export interface DriverRow { name: string; now: number; before: number; change: number; effect: number }
+export interface GoalExplanation {
+  progress: GoalProgress;
+  drivers: { compared: { days: number; this: [string, string]; before: [string, string] } | null; sections: { title: string; hurt: DriverRow[]; helped: DriverRow[] }[] };
+  ai: { explanation: string; next_step: string } | null; ai_error: string | null;
+}
+export interface ChangeLine { area: string; name: string; kind: "improved" | "worse"; now: number; before: number; change: number; change_pct: number | null; detail: string }
+export interface Changes { period: PeriodInfo; days: number; improved: ChangeLine[]; worse: ChangeLine[]; note?: string }
+export const goalsApi = {
+  list: (t: string) => request<GoalProgress[]>(`/api/goals?tenant_id=${t}`),
+  create: (t: string, g: GoalInput) => request<GoalProgress>("/api/goals", { method: "POST", ...json({ tenant_id: t, ...g }) }),
+  update: (t: string, id: string, patch: Partial<Pick<GoalInput, "name" | "target_amount">>) => request<GoalProgress>(`/api/goals/${id}?tenant_id=${t}`, { method: "PATCH", ...json(patch) }),
+  remove: (t: string, id: string) => requestVoid(`/api/goals/${id}?tenant_id=${t}`, "DELETE"),
+  explain: (t: string, id: string) => request<GoalExplanation>(`/api/goals/${id}/explain?tenant_id=${t}`, { method: "POST" }),
+  changes: (t: string, days = 30) => request<Changes>(`/api/goals/changes?tenant_id=${t}&days=${days}`),
+};

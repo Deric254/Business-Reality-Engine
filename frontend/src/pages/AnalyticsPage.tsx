@@ -6,6 +6,7 @@ import { AlertRow } from "../components/AlertRow";
 import { Empty, Notice, Skeleton, btnCls, money, primaryCls } from "../components/ui";
 import { CalendarHeatmap, ChartCard, Change, ForecastChart, HRow, Legend, MarginChart, MonthlyChart, Spark, WeekdayChart } from "../components/charts";
 import { C, dayLong, dayShort, fmtFull } from "../lib/chartKit";
+import { useOnLiveChange } from "../lib/liveContext";
 
 const PERIODS = [1, 7, 30, 90, 180, 365, 0];
 const periodLabel = (d: number) => (d === 0 ? "All time" : d === 1 ? "Today" : d === 365 ? "12 months" : `${d} days`);
@@ -92,14 +93,16 @@ function Body({ tenant }: { tenant: Tenant }) {
   const [pdf, setPdf] = useState<"idle" | "busy" | "failed">("idle");
   const latest = useRef(0);                                   // only the newest request may update the page
 
-  const load = useCallback(() => {
+  const load = useCallback((quiet = false) => {          // quiet: refreshed because the data changed, so nothing spins or dims
     const mine = ++latest.current;
-    setLoading(true); setError(null);
+    if (!quiet) setLoading(true);
+    setError(null);
     Promise.all([businessApi.analytics(tenant.id, days), api.listAlerts(tenant.id, { state: "open" }).catch(() => [] as Alert[]), tenantApi.me().then((m) => m.base_currency).catch(() => "")])
       .then(([an, al, c]) => { if (mine === latest.current) { setA(an); setAlerts(al); setCur(c); } })
       .catch((e) => { if (mine === latest.current) setError(e.message); })
       .finally(() => { if (mine === latest.current) setLoading(false); });
   }, [tenant.id, days]);
+  useOnLiveChange(() => load(true));
   useEffect(() => { load(); }, [load]);
 
   const stale = loading && a != null;                         // keep the last picture on screen, dimmed, while a new period loads

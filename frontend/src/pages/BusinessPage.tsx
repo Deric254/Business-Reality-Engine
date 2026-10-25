@@ -9,6 +9,7 @@ import { Shell } from "../components/Shell";
 import { Bar, Card, Empty, Notice, Section, Skeleton, Stat, btnCls, inputCls, money, pct, primaryCls, today } from "../components/ui";
 import { SEVERITY_COLOR } from "../lib/severity";
 import { useT } from "../lib/i18n";
+import { useLive, useOnLiveChange } from "../lib/liveContext";
 
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong. Try again.");
 const STATUS_COLOR: Record<string, string> = { healthy: "#1f9254", watch: "#d4a017", attention: "#e8590c", critical: "#d92d20" };
@@ -30,7 +31,8 @@ function HealthSection({ tenantId, cur, days, setDays }: { tenantId: string; cur
   const t = useT();
   const [h, setH] = useState<Health | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { setErr(null); businessApi.health(tenantId, days).then(setH).catch((e) => setErr(errText(e))); }, [tenantId, days]);
+  const { tick } = useLive();            // the data changed: ask again, and keep the old picture up until the new one arrives
+  useEffect(() => { setErr(null); businessApi.health(tenantId, days).then(setH).catch((e) => setErr(errText(e))); }, [tenantId, days, tick]);
   const busy = h == null || h.period_days !== days;           // never show another period's figures under this period's button
   const color = STATUS_COLOR[h?.status ?? ""] ?? "#2f6db5";
   return (
@@ -83,7 +85,8 @@ function HealthSection({ tenantId, cur, days, setDays }: { tenantId: string; cur
 function QualitySection({ tenantId, days }: { tenantId: string; days: number }) {
   const t = useT();
   const [q, setQ] = useState<Quality | null>(null);
-  useEffect(() => { businessApi.quality(tenantId, days).then(setQ).catch(() => setQ(null)); }, [tenantId, days]);
+  const { tick } = useLive();
+  useEffect(() => { businessApi.quality(tenantId, days).then(setQ).catch(() => setQ(null)); }, [tenantId, days, tick]);
   if (!q) return null;
   return (
     <Section title={t("biz.quality")} hint={`${q.events.toLocaleString()} events checked, ${q.failed} failed validation.`}>
@@ -122,6 +125,7 @@ function DiscoverySection({ tenantId, isOwner }: { tenantId: string; isOwner: bo
   const [err, setErr] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const load = useCallback(() => businessApi.discovery(tenantId).then(setD).catch((e) => setErr(errText(e))), [tenantId]);
+  useOnLiveChange(load);
   useEffect(() => { load(); }, [load]);
 
   async function monitor(m: Discovery["suggested_metrics"][number]) {

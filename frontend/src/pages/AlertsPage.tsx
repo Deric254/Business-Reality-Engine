@@ -5,6 +5,7 @@ import { FilterBar } from "../components/FilterBar";
 import { AlertRow } from "../components/AlertRow";
 import { Empty, PageTitle, Skeleton, btnCls } from "../components/ui";
 import { useT } from "../lib/i18n";
+import { useOnLiveChange } from "../lib/liveContext";
 
 const ALL = ["critical", "high", "medium", "informational", "opportunity"];
 
@@ -18,14 +19,16 @@ function Body({ tenant }: { tenant: Tenant }) {
   const [checking, setChecking] = useState(false);
   const [checked, setChecked] = useState<string | null>(null);
   const latest = useRef(0);       // only the newest request may update the page: a slow older answer must not overwrite it
-  const load = useCallback(() => {
+  const load = useCallback((quiet = false) => {          // quiet: refreshed because the data changed, so nothing spins or dims
     const mine = ++latest.current;
-    setLoading(true); setError(null);
+    if (!quiet) setLoading(true);
+    setError(null);
     api.listAlerts(tenant.id, { state: state || undefined })
       .then((a) => { if (mine === latest.current) setAlerts(a); })
       .catch((e) => { if (mine === latest.current) setError(e.message); })
       .finally(() => { if (mine === latest.current) setLoading(false); });
   }, [tenant.id, state]);
+  useOnLiveChange(() => load(true));
   useEffect(() => { load(); }, [load]);
   const checkNow = () => {
     setChecking(true); setChecked(null);
@@ -41,7 +44,7 @@ function Body({ tenant }: { tenant: Tenant }) {
       <PageTitle title={t("nav.alerts")} sub="Most important first. Alerts compare complete days, so today's records count from tomorrow."
         action={<div className="flex items-center gap-3"><button onClick={checkNow} disabled={checking} className={btnCls}>{checking ? "Checking…" : "Check now"}</button></div>} />
       {checked && <p role="status" className="text-sm text-ink-muted">{checked}</p>}
-      {error && <p role="alert" className="text-sm text-critical">Couldn't load alerts: {error} <button onClick={load} className="text-info font-medium hover:underline">Try again</button></p>}
+      {error && <p role="alert" className="text-sm text-critical">Couldn't load alerts: {error} <button onClick={() => load()} className="text-info font-medium hover:underline">Try again</button></p>}
       <section className="space-y-3">
         <FilterBar activeSeverities={sev} onToggleSeverity={toggle} state={state} onStateChange={setState} />
         {loading && !alerts.length && <div className="space-y-2"><Skeleton className="h-20" /><Skeleton className="h-20" /><Skeleton className="h-20" /></div>}

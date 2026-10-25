@@ -7,6 +7,8 @@ import { getTokens } from "../api/session";
 import { COVERAGE_COLOR } from "../lib/severity";
 import { useT, setLang, getLang, type Lang, type TKey } from "../lib/i18n";
 import { Logo } from "./Logo";
+import { LiveStamp } from "../lib/live";
+import { useOnLiveChange } from "../lib/liveContext";
 
 const I = ({ children }: { children: ReactNode }) => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{children}</svg>
@@ -18,6 +20,7 @@ const ICONS: Record<string, ReactNode> = {
   data: <I><ellipse cx="12" cy="6" rx="8" ry="3" /><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6" /><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" /></I>,
   business: <I><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" /></I>,
   accuracy: <I><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="4" /><path d="M12 3v3M12 18v3M3 12h3M18 12h3" /></I>,
+  goals: <I><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></I>,
   settings: <I><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></I>,
 };
 
@@ -25,6 +28,7 @@ const NAV: { to: string; key: TKey; icon: string; end?: boolean }[] = [
   { to: "/", key: "nav.overview", icon: "overview", end: true },
   { to: "/analytics", key: "nav.analytics", icon: "analytics" },
   { to: "/alerts", key: "nav.alerts", icon: "alerts" },
+  { to: "/goals", key: "nav.goals", icon: "goals" },
   { to: "/data", key: "nav.data", icon: "data" },
   { to: "/business", key: "nav.business", icon: "business" },
   { to: "/accuracy", key: "nav.accuracy", icon: "accuracy" },
@@ -59,6 +63,12 @@ export function Sidebar({ tenants, activeTenant, onTenantChange }: { tenants: Te
     api.getCoverage(id).then((rows) => { cache.coverage.set(id, rows); setCoverage(rows); }).catch(() => setCoverage([]));
   }, [activeTenant]);
 
+  useOnLiveChange(() => {                // data, sources or alerts changed: the "up to date" line must not trail them
+    if (!activeTenant) return;
+    const id = activeTenant.id;
+    api.getCoverage(id).then((rows) => { cache.coverage.set(id, rows); setCoverage(rows); }).catch(() => undefined);
+  });
+
   const rank = { live: 0, recent: 1, stale: 2, not_connected: 3 } as const;
   const worst = coverage.reduce<string>((w, r) => ((rank[r.status] ?? 0) > (rank[w as keyof typeof rank] ?? -1) ? r.status : w), "live");
 
@@ -90,6 +100,7 @@ export function Sidebar({ tenants, activeTenant, onTenantChange }: { tenants: Te
           {coverage.length > 0 && (
             <div className="flex items-center gap-2 text-xs text-ink-muted">
               <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: COVERAGE_COLOR[worst] }} aria-hidden />{COVERAGE_TEXT[worst]}
+              <LiveStamp className="text-ink-faint" />
             </div>
           )}
           <div className="flex items-center justify-between gap-2">

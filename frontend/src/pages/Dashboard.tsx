@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, businessApi, connectorApi, settingsApi, tenantApi, type Alert, type ConnectorRow, type Health, type KpiBreakdown, type Trend } from "../api/client";
+import { api, businessApi, connectorApi, goalsApi, settingsApi, tenantApi, type Alert, type Changes, type ConnectorRow, type GoalProgress, type Health, type KpiBreakdown, type Trend } from "../api/client";
 import { Shell } from "../components/Shell";
 import { AskBox } from "../components/AskBox";
 import { DataCheck } from "../components/DataCheck";
 import { AlertRow } from "../components/AlertRow";
 import { TrendChart } from "../components/TrendChart";
+import { ChangesCard, GoalSummary } from "../components/Targets";
 import { Card, Empty, Notice, Skeleton, btnCls, money, primaryCls } from "../components/ui";
 import { useT } from "../lib/i18n";
+import { useOnLiveChange } from "../lib/liveContext";
 import type { Tenant } from "../api/client";
 
 /** Today usually has no (or partial) sales yet; a last day with no sales would draw a false crash to zero, so leave it out. */
@@ -90,6 +92,8 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
   const [trend, setTrend] = useState<Trend | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [sources, setSources] = useState<ConnectorRow[]>([]);
+  const [goals, setGoals] = useState<GoalProgress[]>([]);
+  const [changes, setChanges] = useState<Changes | null>(null);
   const [cur, setCur] = useState("");
   const [channelCount, setChannelCount] = useState<number | null>(null);   // null = unknown (for example a viewer who may not see Settings)
   const [loading, setLoading] = useState(true);
@@ -98,18 +102,22 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
   const [showCheck, setShowCheck] = useState(false);
 
   const latest = useRef(0);       // only the newest request may update the page (a slow answer for 30 days must not replace 90)
-  const load = useCallback(() => {
+  // `quiet` is a refresh because the data changed: nothing dims or spins, the figures just become the new ones.
+  const load = useCallback((quiet = false) => {
     const mine = ++latest.current;
-    setLoading(true); setError(null);
+    if (!quiet) setLoading(true);
+    setError(null);
     Promise.all([
       api.listAlerts(tenant.id, { state: "open" }), api.getKpis(tenant.id, days), businessApi.trend(tenant.id, days),
       businessApi.health(tenant.id, days).catch(() => null), connectorApi.list(tenant.id).catch(() => [] as ConnectorRow[]),
       tenantApi.me().then((m) => m.base_currency).catch(() => ""), settingsApi.listChannels(tenant.id).then((l) => l.filter((c) => c.enabled).length).catch(() => null),
+      goalsApi.list(tenant.id).catch(() => [] as GoalProgress[]), goalsApi.changes(tenant.id, days).catch(() => null),
     ])
-      .then(([a, k, tr, h, c, currency, channels]) => { if (mine === latest.current) { setAlerts(a); setKpis(k); setTrend(tr); setHealth(h); setSources(c); setCur(currency); setChannelCount(channels); } })
+      .then(([a, k, tr, h, c, currency, channels, gl, ch]) => { if (mine === latest.current) { setAlerts(a); setKpis(k); setTrend(tr); setHealth(h); setSources(c); setCur(currency); setChannelCount(channels); setGoals(gl); setChanges(ch); } })
       .catch((e) => { if (mine === latest.current) setError(e.message); })
       .finally(() => { if (mine === latest.current) setLoading(false); });
   }, [tenant.id, days]);
+  useOnLiveChange(() => load(true));        // declared before the first load on purpose: see lib/live.tsx
   useEffect(() => { load(); }, [load]);
 
   const open = alerts;
@@ -188,6 +196,18 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
           {!busy && kpis.largest_contributor && kpis.profit.change_pct != null && <p className="text-sm text-ink-muted border-t border-border pt-4">Biggest effect on your profit compared with the {days} days before: <span className="font-semibold text-ink-text">{kpis.largest_contributor}</span>.</p>}
         </Card>
       )}
+
+      {!noData && goals.length > 0 && (
+        <section className="space-y-3" aria-label="Targets">
+          <div className="flex items-end justify-between gap-3">
+            <h2 className="text-xl font-semibold tracking-tight">Your targets</h2>
+            <Link to="/goals" className="text-sm font-medium text-info hover:underline">All targets</Link>
+          </div>
+          <Card className="space-y-5">{goals.slice(0, 3).map((g) => <GoalSummary key={g.id} g={g} cur={cur} />)}</Card>
+        </section>
+      )}
+
+      {!noData && days > 1 && (busy ? <Skeleton className="h-40 w-full" /> : <ChangesCard changes={changes} busy={false} label={periodName(days)} />)}
 
       {!noData && (
         <section className="space-y-3" aria-label="Needs attention">

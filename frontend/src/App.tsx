@@ -10,6 +10,7 @@ const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ de
 const AnalyticsPage = lazy(() => import("./pages/AnalyticsPage").then((m) => ({ default: m.AnalyticsPage })));
 const BusinessPage = lazy(() => import("./pages/BusinessPage").then((m) => ({ default: m.BusinessPage })));
 const DataPage = lazy(() => import("./pages/DataPage").then((m) => ({ default: m.DataPage })));
+const GoalsPage = lazy(() => import("./pages/GoalsPage").then((m) => ({ default: m.GoalsPage })));
 const AccuracyPage = lazy(() => import("./pages/AccuracyPage").then((m) => ({ default: m.AccuracyPage })));
 const MasterPage = lazy(() => import("./pages/MasterPage").then((m) => ({ default: m.MasterPage })));
 const ActivatePage = lazy(() => import("./pages/ActivatePage").then((m) => ({ default: m.ActivatePage })));
@@ -47,6 +48,7 @@ export default function App() {
         <Route path="/accept-invite" element={<ResetPasswordPage invite />} />
         <Route path="/analytics" element={<RequireAuth><AnalyticsPage /></RequireAuth>} />
         <Route path="/alerts" element={<RequireAuth><AlertsPage /></RequireAuth>} />
+        <Route path="/goals" element={<RequireAuth><GoalsPage /></RequireAuth>} />
         <Route path="/business" element={<RequireAuth><BusinessPage /></RequireAuth>} />
         <Route path="/data" element={<RequireAuth><DataPage /></RequireAuth>} />
         <Route path="/accuracy" element={<RequireAuth><AccuracyPage /></RequireAuth>} />
