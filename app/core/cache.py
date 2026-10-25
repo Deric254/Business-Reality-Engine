@@ -80,7 +80,7 @@ def clear_local():
 
 def invalidate_tenant(tenant_id: str) -> None:
     """Drop everything cached from a business's records: its numbers, merge suggestions and name lists."""
-    for prefix in (f"kpis:{tenant_id}:", f"overlaps:{tenant_id}", f"names:{tenant_id}"):
+    for prefix in (f"kpis:{tenant_id}:", f"analytics:{tenant_id}:", f"overlaps:{tenant_id}", f"names:{tenant_id}"):
         invalidate_prefix(prefix)
 
 

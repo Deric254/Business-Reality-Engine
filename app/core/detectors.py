@@ -358,6 +358,14 @@ def run_tenant_cycle(db: Session, tenant_id: str, metrics: list[dict], now: Opti
     except Exception as e:
         db.rollback(); errors += 1
         logger.error(f"Profit risk detector failed for tenant={tenant_id}: {e}")
+    try:                                        # where and why: branches, cost categories, margins, customers, large payments
+        from app.core.detectors_dimension import run_dimension_detectors
+        found, failed = run_dimension_detectors(db, tenant_id, now=window)
+        alerts += found
+        errors += failed
+    except Exception as e:
+        db.rollback(); errors += 1
+        logger.error(f"Dimension detectors failed for tenant={tenant_id}: {e}")
     measured = 0
     try:
         measured = 0 if replay else measure_due_cases(db, tenant_id, now)

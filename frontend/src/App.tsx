@@ -7,6 +7,7 @@ import { getClaims, getTokens, isSignedIn, onSessionChange } from "./api/session
 
 const AlertDetailPage = lazy(() => import("./pages/AlertDetailPage").then((m) => ({ default: m.AlertDetailPage })));
 const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
+const AnalyticsPage = lazy(() => import("./pages/AnalyticsPage").then((m) => ({ default: m.AnalyticsPage })));
 const BusinessPage = lazy(() => import("./pages/BusinessPage").then((m) => ({ default: m.BusinessPage })));
 const DataPage = lazy(() => import("./pages/DataPage").then((m) => ({ default: m.DataPage })));
 const AccuracyPage = lazy(() => import("./pages/AccuracyPage").then((m) => ({ default: m.AccuracyPage })));
@@ -44,6 +45,7 @@ export default function App() {
         <Route path="/recover" element={<RecoverPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/accept-invite" element={<ResetPasswordPage invite />} />
+        <Route path="/analytics" element={<RequireAuth><AnalyticsPage /></RequireAuth>} />
         <Route path="/alerts" element={<RequireAuth><AlertsPage /></RequireAuth>} />
         <Route path="/business" element={<RequireAuth><BusinessPage /></RequireAuth>} />
         <Route path="/data" element={<RequireAuth><DataPage /></RequireAuth>} />

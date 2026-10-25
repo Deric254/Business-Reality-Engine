@@ -27,7 +27,7 @@ export function Shell({ children, wide = false }: { children: (tenant: Tenant) =
   return (
     <div className="min-h-screen">
       <Sidebar tenants={tenants} activeTenant={active} onTenantChange={setActive} />
-      <main className="lg:pl-64">
+      <main className="lg:pl-64 print:!pl-0">
         <div className={`${wide ? "max-w-6xl" : "max-w-4xl"} mx-auto px-4 sm:px-8 py-8 lg:py-10 space-y-9`}>
           {error && <p role="alert" className="text-sm text-critical">{error}</p>}
           <RecoveryNudge />

@@ -287,6 +287,9 @@ def _one_off_driver(db: Session, tenant_id: str, entity: str, what: str, rising:
     share = amount / move
     if amount < 4 * others_avg or share < 0.5:
         return None
+    from datetime import timezone as _tz
+    from app.core.tenant_time import tenant_zone
+    when = when.replace(tzinfo=_tz.utc).astimezone(tenant_zone(db, tenant_id))  # stored as naive UTC; say the business's own day
     day = f"{when:%d %b}"
     share_text = "all" if share >= 1 else f"{share * 100:.0f}% of"
     if rising:

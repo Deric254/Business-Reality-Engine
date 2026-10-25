@@ -13,6 +13,7 @@ const I = ({ children }: { children: ReactNode }) => (
 );
 const ICONS: Record<string, ReactNode> = {
   overview: <I><path d="M3 12 12 4l9 8" /><path d="M5 10v10h14V10" /></I>,
+  analytics: <I><path d="M4 19V5" /><path d="M4 19h16" /><path d="m7 15 3.5-4 3 2.5L19 7" /></I>,
   alerts: <I><path d="M6 17V11a6 6 0 1 1 12 0v6l1.5 2h-15z" /><path d="M10 21h4" /></I>,
   data: <I><ellipse cx="12" cy="6" rx="8" ry="3" /><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6" /><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" /></I>,
   business: <I><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" /></I>,
@@ -22,6 +23,7 @@ const ICONS: Record<string, ReactNode> = {
 
 const NAV: { to: string; key: TKey; icon: string; end?: boolean }[] = [
   { to: "/", key: "nav.overview", icon: "overview", end: true },
+  { to: "/analytics", key: "nav.analytics", icon: "analytics" },
   { to: "/alerts", key: "nav.alerts", icon: "alerts" },
   { to: "/data", key: "nav.data", icon: "data" },
   { to: "/business", key: "nav.business", icon: "business" },
@@ -75,7 +77,7 @@ export function Sidebar({ tenants, activeTenant, onTenantChange }: { tenants: Te
   return (
     <>
       {/* Desktop rail */}
-      <aside className="hidden lg:flex fixed inset-y-0 left-0 w-64 flex-col gap-6 border-r border-border bg-ink px-4 py-6">
+      <aside className="hidden lg:flex print:!hidden fixed inset-y-0 left-0 w-64 flex-col gap-6 border-r border-border bg-ink px-4 py-6">
         <Link to="/" aria-label="DericBI home" className="px-1 pt-1"><Logo size={60} /></Link>
         <div className="rounded-lg border border-border bg-panel px-3 py-2.5">
           <div className="text-xs text-ink-faint mb-0.5">Business</div>
@@ -100,7 +102,7 @@ export function Sidebar({ tenants, activeTenant, onTenantChange }: { tenants: Te
       </aside>
 
       {/* Mobile / tablet top bar */}
-      <header className="lg:hidden bg-ink border-b border-border sticky top-0 z-20">
+      <header className="lg:hidden print:!hidden bg-ink border-b border-border sticky top-0 z-20">
         <div className="flex items-center justify-between gap-3 px-4 py-3">
           <Link to="/" aria-label="DericBI home"><Logo size={36} /></Link>
           <div className="flex items-center gap-3">

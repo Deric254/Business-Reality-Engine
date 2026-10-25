@@ -160,6 +160,21 @@ def trend(tenant_id: str, days: int = Query(30, ge=0, le=3650), db: Session = De
     return build_trend(db, tenant_id, days)
 
 
+@router.get("/analytics")
+def analytics(tenant_id: str, days: int = Query(30, ge=0, le=3650), db: Session = Depends(get_db),
+              authorization: Optional[str] = Header(default=None)):
+    """Everything the Analytics page draws, in one answer: headline figures, monthly series, branches, products, spending,
+    weekdays, customers, the daily record, a forecast with its fit quality, and sentences generated from those figures.
+    Cached briefly; ingestion drops the cache so new records show at once. The key carries the business's date."""
+    authorize_tenant(authorization, tenant_id)
+    from fastapi.encoders import jsonable_encoder
+    from app.core import periods
+    from app.core.analytics import build_analytics
+    from app.core.cache import cached
+    day = periods.local_today(db, tenant_id).isoformat()
+    return cached(f"analytics:{tenant_id}:{days}:{day}", 30, lambda: jsonable_encoder(build_analytics(db, tenant_id, days)))
+
+
 def build_trend(db: Session, tenant_id: str, days: int, now=None) -> dict:
     """Sales and expenses per day for the period, plus the same length of time before it, for the dashboard chart.
     Days are the business's own calendar days (never UTC days), the boundaries are the same ones the totals use

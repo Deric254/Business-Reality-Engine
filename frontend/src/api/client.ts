@@ -357,6 +357,33 @@ export interface FxRow { id: string; currency: string; rate_to_base: number; eff
 
 export interface TrendDay { date: string; sales: number; expenses: number }
 export interface Trend { days: number; bucket: "day" | "week" | "month"; period: PeriodInfo; previous: TrendDay[]; current: TrendDay[] }
+export interface AMetric { current: number; previous: number | null; change_pct: number | null }
+export interface AMonth { month: string; sales: number; spending: number; profit: number; margin_pct: number | null; partial: boolean }
+export interface ABranch { name: string; sales: number; spending: number; profit: number; margin_pct: number | null; share_pct: number | null; transactions: number; average_sale: number; sales_change_pct: number | null }
+export interface ADimRow { name: string; amount: number; count: number; quantity: number; previous: number | null; change_pct: number | null; share_pct?: number | null; cumulative_pct?: number | null }
+export interface ACustomer { name: string; amount: number; orders: number; share_pct: number | null; generic: boolean }
+export interface AWeek { week_start: string; sales: number; spending: number }
+export interface AProjection { week_start: string; expected: number; low: number; high: number }
+export interface AInsight { tone: "good" | "warn" | "bad" | "info"; title: string; text: string }
+export interface Analytics {
+  period: PeriodInfo; days: number;
+  headline: {
+    sales: AMetric; spending: AMetric; profit: AMetric; average_sale: AMetric; transactions: AMetric; customers: AMetric;
+    margin_pct: { current: number | null; previous: number | null; change_points: number | null };
+    spending_ratio_pct: { current: number | null; previous: number | null };
+  };
+  monthly: AMonth[];
+  branches: ABranch[];
+  products: { top: ADimRow[]; count: number; others: { count: number; amount: number; share_pct: number | null }; products_for_80pct: number | null };
+  spending: { categories: ADimRow[]; total: number };
+  weekdays: { day: string; average_sales: number; days: number }[];
+  customers: { top: ACustomer[]; named_count: number; new_customers: number | null; returning_customers: number | null; repeat_rate_pct: number | null;
+               top_customer_share_pct: number | null; top5_share_pct: number | null; generic_share_pct: number | null };
+  daily: { date: string; sales: number; spending: number }[];
+  forecast: { weeks: AWeek[]; projection: AProjection[]; method: string; r_squared: number | null; reliable: boolean; note?: string;
+              slope_per_week?: number; average_week?: number; weekly_noise_pct?: number | null };
+  insights: AInsight[];
+}
 export interface SetupStatus { has_business: boolean; setup_key_configured: boolean }
 
 export const setupApi = {
@@ -391,6 +418,7 @@ export const aiApi = {
 
 export const businessApi = {
   trend: (t: string, days = 30) => request<Trend>(`/api/business/trend?tenant_id=${t}&days=${days}`),
+  analytics: (t: string, days = 90) => request<Analytics>(`/api/business/analytics?tenant_id=${t}&days=${days}`),
   dataCheck: (t: string, days = 30) => request<DataCheckResult>(`/api/business/data-check?tenant_id=${t}&period_days=${days}`),
   health: (t: string, days = 30) => request<Health>(`/api/business/health?tenant_id=${t}&days=${days}`),
   quality: (t: string, days = 30) => request<Quality>(`/api/business/quality?tenant_id=${t}&days=${days}`),
