@@ -39,8 +39,9 @@ def _client():
     return _redis
 
 
-def cached(key: str, ttl_seconds: int, compute: Callable[[], Any]) -> Any:
-    """Return the cached JSON-serializable value for `key`, computing and storing it on a miss."""
+def cached(key: str, ttl_seconds: int, compute: Callable[[], Any], store_if: Callable[[Any], bool] | None = None) -> Any:
+    """Return the cached JSON-serializable value for `key`, computing and storing it on a miss.
+    `store_if` (optional) decides whether a computed value is worth keeping: a failure must not be remembered."""
     if ttl_seconds <= 0:
         return compute()
     r = _client()
@@ -57,6 +58,8 @@ def cached(key: str, ttl_seconds: int, compute: Callable[[], Any]) -> Any:
             if entry and entry[0] > time.time():
                 return json.loads(entry[1])
     value = compute()
+    if store_if is not None and not store_if(value):
+        return value
     try:
         payload = json.dumps(value, default=str)
         if r is not None:
@@ -80,7 +83,7 @@ def clear_local():
 
 def invalidate_tenant(tenant_id: str) -> None:
     """Drop everything cached from a business's records: its numbers, merge suggestions and name lists."""
-    for prefix in (f"kpis:{tenant_id}:", f"analytics:{tenant_id}:", f"overlaps:{tenant_id}", f"names:{tenant_id}"):
+    for prefix in (f"kpis:{tenant_id}:", f"analytics:{tenant_id}:", f"overlaps:{tenant_id}", f"names:{tenant_id}", f"ask:{tenant_id}:"):
         invalidate_prefix(prefix)
 
 

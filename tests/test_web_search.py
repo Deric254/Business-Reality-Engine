@@ -169,3 +169,59 @@ def test_a_competitor_question_goes_straight_to_the_web_without_extra_model_call
     out = bq.answer_question(db, t, "who are my competitors")
     assert out["answer_source"] == "web"
     assert len(p.calls) == 1          # one model call (the answer), no planning or classifying first
+
+
+# --- speed and reliability of the AI calls ---------------------------------------------------------------------------
+
+def test_a_failing_provider_is_skipped_for_a_while_so_the_next_question_is_not_slow(monkeypatch):
+    from app.reasoning import llm_providers as L
+    calls = []
+
+    class Boom(L.AnthropicProvider):
+        def __init__(self):
+            self._model = "m"; self._health_key = L.health.key("anthropic", "m", "unique-key-1", None)
+            class C:
+                class messages:
+                    @staticmethod
+                    def create(**k):
+                        calls.append(1); raise TimeoutError("slow")
+            self._client = C()
+
+    p = Boom()
+    for _ in range(3):
+        with pytest.raises(Exception):
+            p.generate_json("s", "u")
+    assert len(calls) == 1          # the service was tried once; the next two were refused at once
+
+
+def test_a_rejected_request_does_not_mark_the_service_as_down():
+    from app.reasoning import llm_providers as L
+    k = L.health.key("openai", "m", "unique-key-2", None)
+    class E(Exception):
+        status_code = 400
+    L.health.failed(k, E())
+    assert L.health.is_down(k) is False
+    L.health.failed(k, TimeoutError())
+    assert L.health.is_down(k) is True
+    L.health.ok(k)
+
+
+def test_the_same_question_twice_is_answered_once_and_failures_are_not_remembered(client, monkeypatch):
+    from tests.conftest import bearer
+    from app.core import cache
+    cache.clear_local()
+    from tests.conftest import register
+    t = _make_tenant("askcache"); _, _, owner = register(client, t, "owner")
+    n = []
+    import app.api.questions as Q
+    def fake(db, t, q, d):
+        n.append(1)
+        return {"question": q, "answered": len(n) > 1, "answer": "x", "answer_source": "web"}
+    monkeypatch.setattr(Q, "answer_question", fake)
+    body = {"tenant_id": t, "question": "Hello there", "period_days": 7}
+    h = bearer(owner)
+    client.post("/api/questions/ask", json=body, headers=h)            # not answered: must not be kept
+    client.post("/api/questions/ask", json=body, headers=h)            # answered: kept
+    client.post("/api/questions/ask", json={**body, "question": "  hello   THERE "}, headers=h)   # same question, new spelling
+    assert len(n) == 2
+

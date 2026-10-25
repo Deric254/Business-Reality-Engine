@@ -226,6 +226,14 @@ def _answer_question(db: Session, tenant_id: str, question: str, period_days: in
         web = _web_answer(question, provider, lang, tenant.area if tenant else None, db, tenant_id, currency_of(db, tenant_id))
         if web:
             return web
+    # The two model steps that can place a free-form question (a database plan, an intent guess) do not depend on each
+    # other, so they run side by side: the wait is the slower of the two, not both added together.
+    guess_job = None
+    if routed is None and provider and classify(question) is None:
+        from concurrent.futures import ThreadPoolExecutor
+        pool = ThreadPoolExecutor(max_workers=1)
+        guess_job = pool.submit(classify_with_llm, question, provider)
+        pool.shutdown(wait=False)
     if provider and (routed is None or (routed["intent"] in PLANNABLE and query_plan.needs_plan(db, tenant_id, question))):
         # With a model connected, a question the fixed intents cannot express (a filter, a grouping, a comparison) is
         # PLANNED by the model and then run as SQL; the model never sees or writes numbers.
@@ -234,10 +242,10 @@ def _answer_question(db: Session, tenant_id: str, question: str, period_days: in
             return {"question": question, "answered": True, "intent": planned["intent"], "answer": planned["answer"],
                     "evidence": planned["evidence"], "answer_source": "deterministic", "classified_by": "llm_plan",
                     "advisory": advisory_text(lang)}
-    if routed is None and classify(question) is None:
-        # No keyword matched: let a configured model pick an intent (classification only; numbers stay in SQL).
+    if guess_job is not None:
+        # No keyword matched: a configured model picks an intent (classification only; numbers stay in SQL).
         try:
-            guessed = classify_with_llm(question, get_provider(db, tenant_id))
+            guessed = guess_job.result()
         except Exception as e:
             logger.warning(f"AI intent classification failed: {e}")
             guessed = None

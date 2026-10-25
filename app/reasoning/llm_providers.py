@@ -10,11 +10,60 @@ providers is a config change (LLM_PROVIDER env var), not a code change.
 Adding a new provider: subclass LLMProvider, implement generate_json(),
 register it in get_provider(). That's the whole contract.
 """
+import hashlib
 import logging
+import os
+import threading
+import time
 from abc import ABC, abstractmethod
 from app.core.config import get_settings
 
 logger = logging.getLogger("business_reality_engine")
+
+# How long to wait for one model call before giving up and trying the next provider (seconds).
+TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "20"))
+# After a provider fails, skip it for this long so the next question does not wait out the same failure again.
+COOLDOWN_SECONDS = float(os.getenv("LLM_FAILURE_COOLDOWN_SECONDS", "30"))
+
+
+class _Health:
+    """Remembers which connected AI service just failed. A dead or slow provider otherwise costs a full timeout on
+    every question; with this, the first failure costs one wait and the next questions go straight to a working
+    provider (or answer from the fixed rules at once). Keyed by service + model + a hash of the key, so one
+    business's bad key never blocks another's."""
+    def __init__(self):
+        self._down: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def key(kind: str, model: str, api_key: str, base_url: str | None) -> str:
+        return hashlib.sha256(f"{kind}|{model}|{base_url}|{api_key}".encode()).hexdigest()[:24]
+
+    def is_down(self, key: str) -> bool:
+        with self._lock:
+            until = self._down.get(key)
+            if until and until > time.monotonic():
+                return True
+            self._down.pop(key, None)
+            return False
+
+    def failed(self, key: str, exc: BaseException | None = None):
+        # A request the service rejected as malformed says nothing about whether the service is up.
+        if getattr(exc, "status_code", None) in (400, 404, 413, 422):
+            return
+        with self._lock:
+            self._down[key] = time.monotonic() + COOLDOWN_SECONDS
+
+    def ok(self, key: str):
+        with self._lock:
+            self._down.pop(key, None)
+
+
+health = _Health()
+
+
+class ProviderRecentlyFailed(RuntimeError):
+    pass
 
 
 class LLMProvider(ABC):
@@ -34,20 +83,28 @@ class AnthropicProvider(LLMProvider):
         if not api_key:
             raise RuntimeError("ANTHROPIC_API_KEY is not configured")
         from anthropic import Anthropic
-        self._client = Anthropic(api_key=api_key, timeout=25.0, max_retries=0)   # fail fast so the next provider is tried at once
+        self._client = Anthropic(api_key=api_key, timeout=TIMEOUT_SECONDS, max_retries=0)   # fail fast so the next provider is tried at once
         self._model = model
+        self._health_key = health.key("anthropic", model, api_key, None)
 
     @property
     def name(self) -> str:
         return f"anthropic:{self._model}"
 
     def generate_json(self, system_prompt: str, user_content: str, max_tokens: int = 400) -> str:
-        response = self._client.messages.create(
-            model=self._model,
-            max_tokens=max_tokens,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_content}],
-        )
+        if health.is_down(self._health_key):
+            raise ProviderRecentlyFailed(f"{self.name} failed a moment ago; skipped")
+        try:
+            response = self._client.messages.create(
+                model=self._model,
+                max_tokens=max_tokens,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_content}],
+            )
+        except Exception as exc:
+            health.failed(self._health_key, exc)
+            raise
+        health.ok(self._health_key)
         return "".join(block.text for block in response.content if hasattr(block, "text"))
 
 
@@ -62,23 +119,31 @@ class OpenAIProvider(LLMProvider):
             key_name = "OPENAI_API_KEY" if not base_url else "LLM_API_KEY"
             raise RuntimeError(f"{key_name} is not configured")
         from openai import OpenAI
-        self._client = OpenAI(api_key=api_key, base_url=base_url, timeout=25.0, max_retries=0) if base_url else OpenAI(api_key=api_key, timeout=25.0, max_retries=0)
+        self._client = OpenAI(api_key=api_key, base_url=base_url, timeout=TIMEOUT_SECONDS, max_retries=0) if base_url else OpenAI(api_key=api_key, timeout=TIMEOUT_SECONDS, max_retries=0)
         self._model = model
         self._base_url = base_url
+        self._health_key = health.key("openai", model, api_key, base_url)
 
     @property
     def name(self) -> str:
         return f"openai_compatible:{self._model}" if self._base_url else f"openai:{self._model}"
 
     def generate_json(self, system_prompt: str, user_content: str, max_tokens: int = 400) -> str:
-        response = self._client.chat.completions.create(
-            model=self._model,
-            max_tokens=max_tokens,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-        )
+        if health.is_down(self._health_key):
+            raise ProviderRecentlyFailed(f"{self.name} failed a moment ago; skipped")
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                max_tokens=max_tokens,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+            )
+        except Exception as exc:
+            health.failed(self._health_key, exc)
+            raise
+        health.ok(self._health_key)
         return response.choices[0].message.content or ""
 
 

@@ -15,6 +15,9 @@ router = APIRouter()
 KPI_CACHE_TTL_SECONDS = int(os.environ.get("KPI_CACHE_TTL_SECONDS", "30"))
 
 
+ASK_CACHE_SECONDS = int(os.environ.get("ASK_CACHE_SECONDS", "120"))
+
+
 class AskRequest(BaseModel):
     tenant_id: str
     question: str = Field(min_length=1, max_length=500)
@@ -24,7 +27,13 @@ class AskRequest(BaseModel):
 @router.post("/ask")
 def ask(payload: AskRequest, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
     authorize_tenant(authorization, payload.tenant_id)
-    return answer_question(db, payload.tenant_id, payload.question, payload.period_days)
+    # The same question asked again within two minutes (an example chip, a double click, a refresh) is answered at once.
+    # Only real answers are kept, so a moment's outage is never remembered; new data drops the tenant's entries.
+    import hashlib
+    q = " ".join(payload.question.lower().split())
+    key = f"ask:{payload.tenant_id}:{payload.period_days}:{hashlib.sha256(q.encode()).hexdigest()[:20]}"
+    return cached(key, ASK_CACHE_SECONDS, lambda: answer_question(db, payload.tenant_id, payload.question, payload.period_days),
+                  store_if=lambda r: bool(r.get("answered")))
 
 
 @router.get("/kpis")
