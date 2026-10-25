@@ -145,7 +145,8 @@ def _answer_question(db: Session, tenant_id: str, question: str, period_days: in
         # No keyword matched: let a configured model pick an intent (classification only; numbers stay in SQL).
         try:
             guessed = classify_with_llm(question, get_provider(db, tenant_id))
-        except Exception:
+        except Exception as e:
+            logger.warning(f"AI intent classification failed: {e}")
             guessed = None
         if guessed:
             routed = route(db, tenant_id, question, period_days, intent=guessed)
@@ -175,7 +176,7 @@ def _answer_question(db: Session, tenant_id: str, question: str, period_days: in
         source = "llm"
     except Exception as e:
         # A business question always gets an answer: fall back to the deterministic template.
-        logger.info(f"Business question answered via deterministic fallback (no/failed LLM provider): {e}")
+        logger.warning(f"Business question answered via deterministic fallback (no/failed LLM provider): {e}")
         answer_text = _deterministic_fallback(evidence)
         source = "deterministic_fallback"
 

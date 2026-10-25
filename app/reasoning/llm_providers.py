@@ -10,8 +10,11 @@ providers is a config change (LLM_PROVIDER env var), not a code change.
 Adding a new provider: subclass LLMProvider, implement generate_json(),
 register it in get_provider(). That's the whole contract.
 """
+import logging
 from abc import ABC, abstractmethod
 from app.core.config import get_settings
+
+logger = logging.getLogger("business_reality_engine")
 
 
 class LLMProvider(ABC):
@@ -140,8 +143,11 @@ def get_provider(db=None, tenant_id: str | None = None) -> LLMProvider:
         for r in rows:
             try:
                 built.append(build_provider(r.kind, decrypt_secret(r.api_key), r.model, r.base_url))
-            except Exception:
-                continue  # an unreadable row must not take the others down
+            except Exception as e:
+                # An unreadable row must not take the others down, but it must not vanish either: the usual cause is
+                # CONNECTOR_ENCRYPTION_KEY having changed since the key was saved.
+                logger.warning(f"AI provider '{r.label}' for tenant={tenant_id} skipped: {e}")
+                continue
         if built:
             return built[0] if len(built) == 1 else FallbackProvider(built)
     return _env_provider()

@@ -5,6 +5,9 @@ import { getTokens, setTokens, type TokenPair } from "./session";
 // Production: the web app and API are one service, so calls are same-origin (empty base). Dev: the API on :8000.
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? (import.meta.env.DEV ? "http://localhost:8000" : "");
 
+// A request that gets no answer for this long is abandoned with a clear message, instead of spinning forever.
+const REQUEST_TIMEOUT_MS = 45_000;
+
 class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -47,14 +50,21 @@ async function refreshTokens(): Promise<boolean> {
 
 async function request<T>(path: string, options: RequestInit = {}, retried = false): Promise<T> {
   const tokens = getTokens();
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(tokens ? { Authorization: `Bearer ${tokens.access_token}` } : {}),
-      ...options.headers,
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(tokens ? { Authorization: `Bearer ${tokens.access_token}` } : {}),
+        ...options.headers,
+      },
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "TimeoutError") throw new ApiError(0, "The server took too long to answer. Please try again.");
+    throw e;
+  }
   if (res.status === 401 && tokens && !retried) {
     if (await refreshTokens()) return request<T>(path, options, true);
     setTokens(null); // session is dead — listeners send the user to sign-in

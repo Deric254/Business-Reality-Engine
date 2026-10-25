@@ -10,10 +10,10 @@ import { Card, Empty, Notice, Skeleton, btnCls, money, primaryCls } from "../com
 import { useT } from "../lib/i18n";
 import type { Tenant } from "../api/client";
 
-/** Today usually has no (or partial) data yet; an empty last day would draw a false crash to zero, so leave it out. */
+/** Today usually has no (or partial) sales yet; a last day with no sales would draw a false crash to zero, so leave it out. */
 function chartDays(t: Trend): Trend {
   const last = t.current[t.current.length - 1];
-  if (last && last.sales === 0 && last.expenses === 0) {
+  if (last && last.sales === 0) {
     const n = t.current.length - 1;
     return { ...t, current: t.current.slice(0, n), previous: t.previous.slice(0, n) };
   }

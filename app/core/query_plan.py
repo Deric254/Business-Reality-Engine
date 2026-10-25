@@ -9,6 +9,7 @@ the answer; the answer states exactly what was computed, so a misread question i
 Customer names are never sent to the AI: it can group by customer but cannot filter by one.
 """
 import json
+import logging
 import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Literal, Optional
@@ -22,6 +23,8 @@ from app.core.cache import cached
 from app.core.question_router import _money
 from app.core.tenant_time import local_midnight_utc, tenant_zone
 from app.models.core import BusinessEvent as E
+
+logger = logging.getLogger("business_reality_engine")
 
 Measure = Literal["revenue", "expenses", "profit", "transactions", "average_sale", "units"]
 GroupBy = Literal["none", "branch", "product", "customer", "day", "week", "month", "weekday"]
@@ -247,7 +250,8 @@ def _ask(question: str, provider, now: datetime, tz: ZoneInfo, branches: list[st
         if data.get("answerable") is False:
             return None
         return QueryPlan(**{k: v for k, v in data.items() if v not in (None, "")})
-    except Exception:                                # not JSON, not a valid plan, provider down: the caller falls back
+    except Exception as e:                           # not JSON, not a valid plan, provider down: the caller falls back
+        logger.warning(f"AI query planning failed, falling back to fixed intents: {e}")
         return None
 
 

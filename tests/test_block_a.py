@@ -418,3 +418,35 @@ def test_cycle_sets_kind_and_attaches_drivers(db):
     assert "deviation" in kinds and None not in kinds
     dev = db.query(Alert).filter(Alert.tenant_id == t, Alert.kind == "deviation").one()
     assert "change_drivers" not in dev.evidence or isinstance(dev.evidence["change_drivers"]["statements"], list)
+
+
+def test_reasoning_cycle_explains_only_open_alerts_that_need_it(db, monkeypatch):
+    from app.core import scheduler
+    from app.reasoning import llm_reasoning as lr
+    t = _make_tenant("rsn")
+    def mk(sev, **kw):
+        a = Alert(tenant_id=t, severity=sev, state=AlertState.detected, title="x", what_happened="y", evidence={"k": 1},
+                  priority_rank=999, **kw)
+        db.add(a); db.commit(); return a
+    needs, done, minor = mk(AlertSeverity.high), mk(AlertSeverity.high, ai_summary="already"), mk(AlertSeverity.informational)
+    fake = FakeProvider('{"narrative": "n", "recommended_action": "r"}')
+    monkeypatch.setattr(lr, "get_provider", lambda *a, **k: fake)
+    scheduler.run_reasoning_cycle()
+    for a in (needs, done, minor):
+        db.refresh(a)
+    assert needs.ai_summary == "n" and done.ai_summary == "already" and minor.ai_summary is None
+
+
+def test_reasoning_cycle_survives_a_failing_provider(db, monkeypatch):
+    from app.core import scheduler
+    from app.reasoning import llm_reasoning as lr
+    t = _make_tenant("rsnf")
+    a = Alert(tenant_id=t, severity=AlertSeverity.critical, state=AlertState.detected, title="x", what_happened="y",
+              evidence={"k": 1}, priority_rank=999)
+    db.add(a); db.commit()
+    def boom(*args, **kwargs):
+        raise RuntimeError("no AI configured")
+    monkeypatch.setattr(lr, "get_provider", boom)
+    scheduler.run_reasoning_cycle()
+    db.refresh(a)
+    assert a.ai_summary is None

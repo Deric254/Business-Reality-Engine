@@ -178,6 +178,41 @@ def run_sync_cycle():
         db.close()
 
 
+_REASONING_BATCH = 5
+
+
+def run_reasoning_cycle():
+    """Write the plain-language explanation for open medium/high/critical alerts that have none yet, most important
+    first, a few per run so a burst of alerts cannot flood the AI provider. A tenant whose AI fails is skipped for the
+    rest of the run. Holds an advisory lock so only one worker does it at a time."""
+    from app.core.detection import ACTIVE_STATES
+    from app.core.locks import try_advisory_lock
+    from app.models.alerts import Alert
+    from app.reasoning.llm_reasoning import MIN_SEVERITY_FOR_REASONING, reason_about_alert
+    with try_advisory_lock("alert_reasoning_cycle") as got:
+        if not got:
+            return
+        db = SessionLocal()
+        try:
+            pending = (db.query(Alert.id, Alert.tenant_id)
+                       .filter(Alert.state.in_(ACTIVE_STATES), Alert.severity.in_(list(MIN_SEVERITY_FOR_REASONING)),
+                               Alert.ai_summary.is_(None))
+                       .order_by(Alert.priority_rank.desc().nullslast(), Alert.created_at.desc())
+                       .limit(_REASONING_BATCH).all())
+            failed: set[str] = set()
+            for alert_id, tenant_id in pending:
+                if tenant_id in failed:
+                    continue
+                try:
+                    reason_about_alert(db, db.get(Alert, alert_id))
+                except Exception as e:
+                    db.rollback()
+                    failed.add(tenant_id)
+                    logger.warning(f"Alert explanation skipped for tenant={tenant_id}: {e}")
+        finally:
+            db.close()
+
+
 def run_housekeeping():
     """Daily: forget revoked-login records that have expired anyway, so the table does not grow without end."""
     from app.core import revocation
@@ -206,6 +241,7 @@ def start_scheduler(interval_minutes: int):
     _scheduler.add_job(run_dispatch_cycle, "interval", minutes=1, id="notification_dispatch",
                        max_instances=1, coalesce=True)
     _scheduler.add_job(run_sync_cycle, "interval", minutes=1, id="connector_sync", max_instances=1, coalesce=True)
+    _scheduler.add_job(run_reasoning_cycle, "interval", minutes=5, id="alert_reasoning", max_instances=1, coalesce=True)
     _scheduler.add_job(run_housekeeping, "interval", hours=24, id="housekeeping", max_instances=1, coalesce=True)
     _scheduler.start()
     logger.info(f"Scheduler started — detection cycle every {interval_minutes} minute(s)")
