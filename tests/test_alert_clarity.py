@@ -59,7 +59,7 @@ def test_alert_gives_the_figures_and_the_gap(db, tid):  # noqa: F811
     weekly(db, tid, c.id, "sale", [400, 1000, 1000, 1000, 1000])
     a = detect_historical_deviation(db, tid, "sale", "amount", now=NOW)
     assert a.title == "Sales are down 60% from your usual week"
-    for part in ("In the last 7 days sales came to KES 400", "In a usual 7 days it is about KES 1,000", "KES 600 less than usual"):
+    for part in ("In the last 7 complete days sales came to KES 400", "In a usual 7 days it is about KES 1,000", "KES 600 less than usual"):
         assert part in a.what_happened
 
 

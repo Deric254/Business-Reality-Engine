@@ -100,7 +100,7 @@ def comparison_text(entity: str, field: str, current: float, usual: float, perio
     noun = _noun(entity, field).lower()
     fmt = fmt or (lambda v: f"{v:,.0f}")
     gap = abs(current - usual)
-    return (f"In the last {period_days} days {noun} came to {fmt(current)}. In a usual {period_days} days it is about {fmt(usual)} "
+    return (f"In the last {period_days} complete days {noun} came to {fmt(current)}. In a usual {period_days} days it is about {fmt(usual)} "
             f"(the average of the {periods_used} period{'s' if periods_used != 1 else ''} of {period_days} days before). "
             f"That is {fmt(gap)} {'more' if current > usual else 'less'} than usual.")
 

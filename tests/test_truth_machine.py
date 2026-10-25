@@ -80,7 +80,7 @@ def test_all_time_is_the_whole_sheet_with_nothing_to_compare(business, sheet):
         k = compute_profit_breakdown(db, business, 0, now=NOW)
         assert (k["revenue"]["current"], k["expenses"]["current"]) == (float(sheet[0].Amount.sum()), float(sheet[1]["Expense Amount"].sum()))
         assert k["revenue"]["previous"] == 0 and k["profit"]["change_pct"] is None
-        assert k["period"] == {"days": 296, "all_time": True, "first_day": "2026-01-01", "last_day": "2026-10-23", "timezone": "Africa/Nairobi", "includes_today": True}
+        assert k["period"] == {"days": 296, "all_time": True, "first_day": "2026-01-01", "last_day": "2026-10-23", "timezone": "Africa/Nairobi", "includes_today": True, "today": "2026-10-23"}
         t = build_trend(db, business, 0, NOW)
         assert t["previous"] == [] and len(t["current"]) == 296
         assert round(sum(d["sales"] for d in t["current"]), 2) == k["revenue"]["current"]

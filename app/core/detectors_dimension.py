@@ -115,7 +115,7 @@ def detect_category_spikes(db: Session, tenant_id: str, now: Optional[datetime] 
         one_off = bool(top and amt and float(top[0]) / amt >= 0.5 and float(top[0]) > 2 * usual / 3)
         if one_off and _payment_alert_covers(db, tenant_id, cat):
             continue
-        text = (f"{cat} came to {fmt(amt)} in the last {WINDOW} days. In a usual {WINDOW} days it is about {fmt(usual)} "
+        text = (f"{cat} came to {fmt(amt)} in the last {WINDOW} complete days. In a usual {WINDOW} days it is about {fmt(usual)} "
                 f"(the average of the {len(positives)} periods before). That is {fmt(extra)} more than usual, "
                 f"{extra / total_spent * 100:.0f}% of everything you spent.")
         if top_loc and len(where) > 1 and where[top_loc] / sum(where.values()) >= 0.6:
@@ -126,7 +126,7 @@ def detect_category_spikes(db: Session, tenant_id: str, now: Optional[datetime] 
             action = (f"Start with the payment of {fmt(float(top[0]))} on {day}. If it was planned (stock, equipment, a loan repayment), "
                       f"tap 'Not relevant' and this stays quiet. If you do not recognise it, find out who approved it.")
         else:
-            action = f"Look at what {cat.lower()} paid for in the last {WINDOW} days: which branch, which supplier, and whether the price or the quantity grew."
+            action = f"Look at what {cat.lower()} paid for in the last {WINDOW} complete days: which branch, which supplier, and whether the price or the quantity grew."
         severity = (AlertSeverity.critical if sold and extra >= 0.25 * sold else AlertSeverity.high if rise >= 1.0 else AlertSeverity.medium)
         joiner = "" if rise >= 1 else " from"
         a = _upsert(
@@ -179,7 +179,7 @@ def detect_branch_declines(db: Session, tenant_id: str, now: Optional[datetime] 
         prod_usual = {p: _mean([b.get(p, 0.0) for b in prod_before]) for p in set().union(*prod_before)}
         falls = sorted(((prod_usual[p] - prod_now.get(p, 0.0), p) for p in prod_usual), reverse=True)
         lost = usual - amt
-        text = (f"{place} sold {fmt(amt)} in the last {WINDOW} days. In a usual {WINDOW} days it sells about {fmt(usual)} "
+        text = (f"{place} sold {fmt(amt)} in the last {WINDOW} complete days. In a usual {WINDOW} days it sells about {fmt(usual)} "
                 f"(the average of the {len(positives)} periods before): {fmt(lost)} less, and it carries {share * 100:.0f}% of your sales.")
         if others_change is not None:
             text += (f" Your other branches together are {'up' if others_change >= 0 else 'down'} {abs(others_change) * 100:.0f}%"
@@ -248,12 +248,12 @@ def detect_margin_compression(db: Session, tenant_id: str, now: Optional[datetim
         driver = grew[0] if grew and grew[0][0] > 0 else None
         if loss:
             title = f"{name} spent more than it sold"
-            text = (f"In the last {WINDOW} days {name} sold {fmt(s_c)} and recorded {fmt(x_c)} of spending, a loss of {fmt(x_c - s_c)}. "
+            text = (f"In the last {WINDOW} complete days {name} sold {fmt(s_c)} and recorded {fmt(x_c)} of spending, a loss of {fmt(x_c - s_c)}. "
                     f"In a usual {WINDOW} days it keeps {m_u * 100:.0f}% of each sale.")
             severity = AlertSeverity.high
         else:
             title = f"{name} keeps {drop_pts:.0f} points less of each sale than usual"
-            text = (f"In the last {WINDOW} days {name} kept {m_c * 100:.0f}% of each sale after recorded spending; in a usual {WINDOW} days it keeps "
+            text = (f"In the last {WINDOW} complete days {name} kept {m_c * 100:.0f}% of each sale after recorded spending; in a usual {WINDOW} days it keeps "
                     f"{m_u * 100:.0f}%. On sales of {fmt(s_c)} that is about {fmt(drop_pts / 100 * s_c)} less profit than the usual margin would give.")
             severity = AlertSeverity.high if drop_pts >= 25 else AlertSeverity.medium
         if driver:
@@ -301,7 +301,7 @@ def detect_customer_concentration(db: Session, tenant_id: str, now: Optional[dat
          "orders": int(orders), "top3_share_pct": round(sum(top3) / total * 100, 1), "window_days": CONCENTRATION_DAYS},
         dict(kind="concentration", severity=AlertSeverity.high if share >= CONCENTRATION_HIGH else AlertSeverity.medium,
              title=f"{top} is {share * 100:.0f}% of your sales",
-             what_happened=(f"In the last {CONCENTRATION_DAYS} days {top} bought {fmt(named[top])} in {orders} orders, {share * 100:.0f}% of all your sales. "
+             what_happened=(f"In the last {CONCENTRATION_DAYS} complete days {top} bought {fmt(named[top])} in {orders} orders, {share * 100:.0f}% of all your sales. "
                             f"Your three biggest named customers together are {sum(top3) / total * 100:.0f}%. If {top} slows down or leaves, "
                             f"about {fmt(named[top] / CONCENTRATION_DAYS * 30)} a month goes with them."),
              magnitude=round(share, 4), period_start=start, period_end=now, where={"customer": top}, confidence=0.9,

@@ -161,7 +161,7 @@ export interface AlertDetail extends Alert {
   updated_at: string;
 }
 
-export interface PeriodInfo { days: number; all_time: boolean; first_day: string; last_day: string; timezone: string; includes_today: boolean }
+export interface PeriodInfo { days: number; all_time: boolean; first_day: string; last_day: string; timezone: string; includes_today: boolean; today: string }
 export interface KpiBreakdown {
   period_days: number;
   period: PeriodInfo;

@@ -478,7 +478,7 @@ def _story(a: dict, alerts: list[dict], business: str, cur: str, prepared: date)
         story.append(_p("No customer is recorded on your sales.", "body"))
 
     story += _section("Every day, the last 26 weeks", "Darker days sold more. Quiet stretches and gaps in your records show up at once.", need=50 * mm)
-    story += [_Fit(lambda w, h: _heatmap(a["daily"], p["last_day"], w, h), WIDTH, 95, 135),
+    story += [_Fit(lambda w, h: _heatmap(a["daily"], p.get("today", p["last_day"]), w, h), WIDTH, 95, 135),
               Spacer(1, 12),
               _p("Profit here is sales minus the spending you recorded, so stock purchases count as spending when they are paid. Records that failed "
                  "validation, and duplicates of a record already counted, are left out of every figure.", "note")]

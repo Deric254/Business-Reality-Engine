@@ -151,6 +151,9 @@ function Body({ tenant }: { tenant: Tenant }) {
 
       {a && !empty && (
         <div className={`space-y-9 transition-opacity ${stale ? "opacity-60" : ""}`} aria-busy={stale}>
+          {days > 1 && a.headline.sales.current === 0 && a.headline.spending.current === 0 && (
+            <p role="status" className="text-sm text-ink-text bg-panel border border-border rounded-sm px-3 py-2">No complete days are recorded in this period yet. Today's records count from tomorrow; choose Today to see them now.</p>
+          )}
           {days === 1 && a.headline.sales.current === 0 && a.headline.spending.current === 0 && (
             <p role="status" className="text-sm text-ink-text bg-panel border border-border rounded-sm px-3 py-2">Nothing has been recorded today yet. New records show here after your next sync or upload. The charts below still show your recent history.</p>
           )}
@@ -192,18 +195,18 @@ function Body({ tenant }: { tenant: Tenant }) {
             </section>
           )}
 
-          <ChartCard title="Sales, spending and profit by month" sub="The shape of the year. Profit is what is left after the spending you recorded."
+          <ChartCard title="Sales, spending and profit by month" sub="The shape of the year. Profit is what is left after the spending you recorded. Not affected by the period buttons."
             table={{ head: ["Month", "Sales", "Spending", "Profit", "Margin"], numeric: [1, 2, 3, 4], rows: a.monthly.map((x) => [x.month.slice(0, 7) + (x.partial ? " (so far)" : ""), x.sales, x.spending, x.profit, x.margin_pct == null ? "—" : `${x.margin_pct.toFixed(0)}%`]) }}>
             <MonthlyChart rows={a.monthly} cur={cur} />
           </ChartCard>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <ChartCard title="How much of each sale you keep" sub="Profit margin by month. A falling line means costs are growing faster than sales."
+            <ChartCard title="How much of each sale you keep" sub="Profit margin by month. A falling line means costs are growing faster than sales. Not affected by the period buttons."
               table={{ head: ["Month", "Margin"], numeric: [1], rows: a.monthly.map((x) => [x.month.slice(0, 7), x.margin_pct == null ? "—" : `${x.margin_pct.toFixed(1)}%`]) }}>
               <MarginChart rows={a.monthly} />
             </ChartCard>
             <ChartCard title="Where weekly sales are heading"
-              sub={a.forecast.projection.length ? `A straight-line view of your last ${a.forecast.weeks.length} complete weeks.${a.forecast.reliable ? "" : " Weekly sales swing a lot, so read the range, not the middle line."}` : a.forecast.note}
+              sub={a.forecast.projection.length ? `A straight-line view of your last ${a.forecast.weeks.length} complete weeks.${a.forecast.reliable ? "" : " Weekly sales swing a lot, so read the range, not the middle line."} Not affected by the period buttons.` : a.forecast.note}
               table={a.forecast.weeks.length ? { head: ["Week from", "Sales", "Spending", "Outlook"], numeric: [1, 2, 3], rows: [...a.forecast.weeks.map((x) => [x.week_start, x.sales, x.spending, "—"]), ...a.forecast.projection.map((p) => [p.week_start, "—", "—", `${fmtFull(p.low)} to ${fmtFull(p.high)}`])] } : undefined}>
               {a.forecast.weeks.length >= 2 ? <ForecastChart weeks={a.forecast.weeks} projection={a.forecast.projection} cur={cur} /> : <p className="text-sm text-ink-muted py-10 text-center">Needs a few complete weeks of sales before it can draw anything.</p>}
               {a.forecast.r_squared != null && <p className="text-xs text-ink-faint mt-2">How well a straight line fits: {(a.forecast.r_squared * 100).toFixed(0)}%. Weekly sales vary about {a.forecast.weekly_noise_pct?.toFixed(0)}% around their average.</p>}
@@ -283,9 +286,9 @@ function Body({ tenant }: { tenant: Tenant }) {
             </ChartCard>
           </div>
 
-          <ChartCard title="Every day, the last 26 weeks" sub="Darker days sold more. Quiet stretches and gaps in your records show up at once."
+          <ChartCard title="Every day, the last 26 weeks" sub="Darker days sold more. Quiet stretches and gaps in your records show up at once. Not affected by the period buttons."
             table={{ head: ["Day", "Sales", "Spending"], numeric: [1, 2], rows: [...a.daily].sort((x, y) => y.sales - x.sales).slice(0, 12).map((d) => [dayLong(d.date), d.sales, d.spending]) }}>
-            <CalendarHeatmap daily={a.daily} lastDay={a.period.last_day} cur={cur} />
+            <CalendarHeatmap daily={a.daily} lastDay={a.period.today} cur={cur} />
           </ChartCard>
 
           <p className="text-xs text-ink-faint">

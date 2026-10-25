@@ -45,7 +45,7 @@ class Period:
     def as_dict(self) -> dict:
         return {"days": self.days, "all_time": self.all_time, "first_day": self.first_day.isoformat(),
                 "last_day": self.last_day.isoformat(), "timezone": getattr(self.tz, "key", "UTC"),
-                "includes_today": self.last_day == self.today}
+                "includes_today": self.last_day == self.today, "today": self.today.isoformat()}
 
 
 def local_today(db: Session, tenant_id: str, now: Optional[datetime] = None) -> date:

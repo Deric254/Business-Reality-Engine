@@ -60,7 +60,7 @@ def detect_forecast_deviation(db: Session, tenant_id: str, entity: str, field: s
          "history": [round(v, 2) for v in history], "period_days": period_days, "direction": direction,
          "method": "linear trend of prior periods"},
         dict(kind="forecast", severity=sev, title=f"{noun} {_be(noun)} {abs(rel)*100:.0f}% {word} where your recent trend was heading",
-             what_happened=(f"In the last {period_days} days {noun.lower()} came to {fmt(actual)}. The direction of your previous {unit}s "
+             what_happened=(f"In the last {period_days} complete days {noun.lower()} came to {fmt(actual)}. The direction of your previous {unit}s "
                             f"pointed to about {fmt(pred)}, so the result is {fmt(abs(actual - pred))} {word} that."),
              magnitude=round(rel, 4), period_start=now - timedelta(days=period_days), period_end=now,
              confidence=0.55, data_coverage_pct=coverage_mod.coverage_pct_for_entity(db, tenant_id, entity, now=now),
@@ -153,7 +153,7 @@ def detect_profit_risk(db: Session, tenant_id: str, period_days: int = 7, horizo
         return None
     sev = AlertSeverity.high if already else AlertSeverity.medium
     fmt = money_formatter(db, tenant_id)
-    msg = (f"In the last {period_days} days you spent {fmt(-current)} more than you sold." if already else
+    msg = (f"In the last {period_days} complete days you spent {fmt(-current)} more than you sold." if already else
            f"Your sales minus spending is shrinking. If it keeps going this way you could start losing money within about {crossing * period_days} days.")
     text = msg if already else msg + " This is a forecast based on your past weeks, not a certainty."
     action = "See which costs grew and whether sales are softening, and decide what to cut or fix before it turns into a loss."
