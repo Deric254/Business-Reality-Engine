@@ -89,6 +89,7 @@ function Body({ tenant }: { tenant: Tenant }) {
   const [cur, setCur] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [pdf, setPdf] = useState<"idle" | "busy" | "failed">("idle");
   const latest = useRef(0);                                   // only the newest request may update the page
 
   const load = useCallback(() => {
@@ -107,6 +108,18 @@ function Body({ tenant }: { tenant: Tenant }) {
   const m = (n: number) => money(n, cur);
   const sofar = <span className="text-ink-muted">so far today; the day is not over</span>;
 
+  async function downloadPdf() {
+    if (!a) return;
+    setPdf("busy");
+    try {
+      const url = URL.createObjectURL(await businessApi.analyticsPdf(tenant.id, a.days));
+      const link = document.createElement("a");
+      link.href = url; link.download = `analytics-${a.period.first_day}-to-${a.period.last_day}.pdf`; link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setPdf("idle");
+    } catch { setPdf("failed"); }
+  }
+
   return (
     <>
       <header className="flex flex-wrap items-end justify-between gap-4">
@@ -122,11 +135,12 @@ function Body({ tenant }: { tenant: Tenant }) {
             {PERIODS.map((d) => <button key={d} aria-pressed={d === days} onClick={() => setDays(d)} className={`px-3 py-1.5 text-sm font-medium ${d === days ? "bg-info text-white" : "bg-panel text-ink-text hover:bg-panel-raised"}`}>{periodLabel(d)}</button>)}
           </div>
           <button className={btnCls} disabled={!a} onClick={() => a && download(`analytics-${a.period.first_day}-to-${a.period.last_day}.csv`, csvOf(a, cur))}>Download figures</button>
-          <button className={btnCls} onClick={() => window.print()}>Print or save as PDF</button>
+          <button className={btnCls} disabled={!a || pdf === "busy"} onClick={downloadPdf}>{pdf === "busy" ? "Preparing PDF…" : "Download PDF"}</button>
         </div>
       </header>
 
       {error && <Notice error={`Couldn't load your analytics: ${error}`} />}
+      {pdf === "failed" && <Notice error="Couldn't prepare the PDF. Please try again." />}
       {loading && !a && <div className="space-y-6" aria-busy="true"><Skeleton className="h-32 w-full" /><Skeleton className="h-72 w-full" /><Skeleton className="h-72 w-full" /></div>}
 
       {a && empty && (

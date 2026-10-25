@@ -2,7 +2,7 @@
 import re
 from datetime import date
 from typing import Optional
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -173,6 +173,24 @@ def analytics(tenant_id: str, days: int = Query(30, ge=0, le=3650), db: Session 
     from app.core.cache import cached
     day = periods.local_today(db, tenant_id).isoformat()
     return cached(f"analytics:{tenant_id}:{days}:{day}", 30, lambda: jsonable_encoder(build_analytics(db, tenant_id, days)))
+
+
+@router.get("/analytics.pdf")
+def analytics_pdf(tenant_id: str, days: int = Query(30, ge=0, le=3650), db: Session = Depends(get_db),
+                  authorization: Optional[str] = Header(default=None)):
+    """The Analytics page as a finished PDF report, built from the records alone (no AI service involved)."""
+    from app.core import periods
+    from app.core.analytics_pdf import build_analytics_pdf
+    from app.core.detection import ACTIVE_STATES, currency_of
+    from app.models.alerts import Alert
+    from app.models.core import Tenant
+    a = analytics(tenant_id, days, db, authorization)        # same authorisation and cache as the page itself
+    top = (db.query(Alert).filter(Alert.tenant_id == tenant_id, Alert.state.in_(ACTIVE_STATES))
+           .order_by(Alert.priority_rank.desc().nullslast(), Alert.created_at.desc()).limit(3).all())
+    pdf = build_analytics_pdf(a, [{"severity": al.severity.value, "title": al.title, "what_happened": al.what_happened} for al in top],
+                              db.get(Tenant, tenant_id).name, currency_of(db, tenant_id), periods.local_today(db, tenant_id))
+    name = f"analytics-{a['period']['first_day']}-to-{a['period']['last_day']}.pdf"
+    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
 
 
 def build_trend(db: Session, tenant_id: str, days: int, now=None) -> dict:

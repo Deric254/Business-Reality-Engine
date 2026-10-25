@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.13", cache: pip}
-      - run: pip install -r requirements.txt pytest httpx aiosmtpd pip-audit
+      - run: pip install -r requirements.txt pytest httpx aiosmtpd pypdf pip-audit
       - run: alembic upgrade head
       - name: Migrations match the models
         run: alembic check

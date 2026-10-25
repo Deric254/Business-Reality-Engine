@@ -73,6 +73,21 @@ async function request<T>(path: string, options: RequestInit = {}, retried = fal
   return res.json();
 }
 
+/** Downloads a binary file (the Analytics PDF): same token and one sign-in retry as request(), but returns the Blob. */
+async function requestBlob(path: string, retried = false): Promise<Blob> {
+  const tokens = getTokens();
+  const res = await fetch(`${API_BASE}${path}`, {
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    headers: tokens ? { Authorization: `Bearer ${tokens.access_token}` } : {},
+  });
+  if (res.status === 401 && tokens && !retried) {
+    if (await refreshTokens()) return requestBlob(path, true);
+    setTokens(null);
+  }
+  if (!res.ok) throw await parseError(res);
+  return res.blob();
+}
+
 export async function login(email: string, password: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/auth/login`, {
     method: "POST",
@@ -422,6 +437,7 @@ export const aiApi = {
 export const businessApi = {
   trend: (t: string, days = 30) => request<Trend>(`/api/business/trend?tenant_id=${t}&days=${days}`),
   analytics: (t: string, days = 90) => request<Analytics>(`/api/business/analytics?tenant_id=${t}&days=${days}`),
+  analyticsPdf: (t: string, days = 90) => requestBlob(`/api/business/analytics.pdf?tenant_id=${t}&days=${days}`),
   dataCheck: (t: string, days = 30) => request<DataCheckResult>(`/api/business/data-check?tenant_id=${t}&period_days=${days}`),
   health: (t: string, days = 30) => request<Health>(`/api/business/health?tenant_id=${t}&days=${days}`),
   quality: (t: string, days = 30) => request<Quality>(`/api/business/quality?tenant_id=${t}&days=${days}`),
