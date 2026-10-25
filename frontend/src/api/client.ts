@@ -169,6 +169,9 @@ export interface QuestionAnswer {
   suggestions?: string[];
   /** Pages a web answer was written from (answer_source "web"), numbered as the answer cites them. */
   sources?: { title: string; url: string }[];
+  /** The exact words searched (web answers), and whether the owner has not yet said where the business trades. */
+  search_query?: string;
+  needs_area?: boolean;
 }
 
 /** Why the dashboard shows what it shows: what each source read, counted and left out, and what is stopping anything showing. */

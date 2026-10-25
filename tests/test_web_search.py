@@ -130,3 +130,32 @@ def test_owner_can_set_and_clear_the_area(client):
     assert r.status_code == 200 and r.json()["area"] == "Kilimani, Nairobi"
     assert client.patch("/api/tenants/me", json={"area": "  "}, headers=bearer(owner)).json()["area"] is None
     assert client.patch("/api/tenants/me", json={"area": "x" * 101}, headers=bearer(owner)).status_code == 400
+
+
+def _sale(db, t, cid, place, product, amount):
+    import datetime as dt
+    from app.models.core import BusinessEvent
+    db.add(BusinessEvent(tenant_id=t, connector_id=cid, source="t", entity="sale", event_type="sale.x",
+                         timestamp=dt.datetime.utcnow() - dt.timedelta(days=10), amount=amount, location=place,
+                         product_id=product, validation_status="validated"))
+
+
+def test_competitor_question_searches_for_what_the_business_sells_and_where(db, monkeypatch):
+    """No area set: the search is built from the branches and top products in the owner's own records, so it finds
+    real businesses nearby instead of articles about how to find competitors."""
+    from app.models.core import Connector
+    t = _make_tenant("webctx")
+    c = Connector(tenant_id=t, name="B", connector_type="file", expected_frequency="periodic", is_active=True)
+    db.add(c); db.commit()
+    for place, prod, amt in [("Meru Town", "Sugar 2kg", 500), ("Meru Town", "Sugar 2kg", 400), ("Maua", "Rice 2kg", 300), ("Maua", "Cooking Oil 1L", 100)]:
+        _sale(db, t, c.id, place, prod, amt)
+    db.commit()
+    monkeypatch.setattr(bq, "get_provider", lambda *a, **k: Provider())
+    seen = []
+    monkeypatch.setattr(bq.web_search, "search", lambda q: seen.append(q) or PAGES)
+    out = bq.answer_question(db, t, "who are my competitors")
+    q = seen[0]
+    assert "Sugar 2kg" in q and "Meru Town" in q and "Maua" in q and "Kenya" in q and "who are my competitors" not in q
+    assert out["search_query"] == q and out["needs_area"] is True
+    # only names reach the search: no amount appears in the query
+    assert "500" not in q and "1300" not in q

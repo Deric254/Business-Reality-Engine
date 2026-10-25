@@ -13,7 +13,7 @@ from app.core.config import get_settings
 
 logger = logging.getLogger("business_reality_engine")
 
-MAX_RESULTS = 5
+MAX_RESULTS = 7
 _TIMEOUT_SECONDS = 10.0
 
 
