@@ -39,7 +39,19 @@ export function AskBox({ tenantId, days }: { tenantId: string; days: number }) {
       {error && <p role="alert" className="text-sm text-critical mt-3">{error}</p>}
       {result && (
         <div className="border-l-4 border-info bg-info-soft/60 rounded-sm px-4 py-3 mt-4" aria-live="polite">
+          {result.answer_source === "web" && (
+            <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted mb-1">From the web, not from your numbers</p>
+          )}
           <p className="text-base text-ink-text leading-relaxed">{result.answer}</p>
+          {result.sources && result.sources.length > 0 && (
+            <ol className="text-sm text-ink-muted mt-3 border-t border-border pt-3 space-y-1">
+              {result.sources.map((s, i) => (
+                <li key={s.url}>[{i + 1}]{" "}
+                  <a href={s.url} target="_blank" rel="noopener noreferrer" className="text-info hover:underline">{s.title}</a>
+                </li>
+              ))}
+            </ol>
+          )}
           {!result.answered && result.ai_connected === false && (
             <p className="text-sm text-ink-muted mt-3 border-t border-border pt-3">
               The AI assistant is not connected, so only the fixed questions below work. To ask about your sales, expenses and profit in your own words,{" "}

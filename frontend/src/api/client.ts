@@ -167,6 +167,8 @@ export interface QuestionAnswer {
   answered: boolean;
   ai_connected?: boolean;
   suggestions?: string[];
+  /** Pages a web answer was written from (answer_source "web"), numbered as the answer cites them. */
+  sources?: { title: string; url: string }[];
 }
 
 /** Why the dashboard shows what it shows: what each source read, counted and left out, and what is stopping anything showing. */

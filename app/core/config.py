@@ -62,6 +62,11 @@ class Settings:
         self.LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")         # for openai_compatible (Groq/Together/local/etc)
         self.LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")       # required for openai_compatible
 
+        # Web search for questions the business's own data cannot answer (app/reasoning/web_search.py).
+        # WEB_SEARCH_PROVIDER: "tavily" | "brave". A blank WEB_SEARCH_API_KEY turns web search off.
+        self.WEB_SEARCH_PROVIDER: str = os.getenv("WEB_SEARCH_PROVIDER", "tavily").lower()
+        self.WEB_SEARCH_API_KEY: str = os.getenv("WEB_SEARCH_API_KEY", "")
+
         # Section 17-18: background detection cycle interval.
         self.DETECTION_INTERVAL_MINUTES: int = int(os.getenv("DETECTION_INTERVAL_MINUTES", "15"))
         self.SCHEDULER_ENABLED: bool = os.getenv("SCHEDULER_ENABLED", "true").lower() == "true"

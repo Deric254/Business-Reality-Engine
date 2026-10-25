@@ -36,3 +36,7 @@ services:
         value: anthropic
       - key: ANTHROPIC_API_KEY
         sync: false         # optional: plain-language explanations of alerts
+      - key: WEB_SEARCH_PROVIDER
+        value: tavily       # tavily | brave
+      - key: WEB_SEARCH_API_KEY
+        sync: false         # optional: lets the Ask box answer questions your own data cannot (competitors, the market)
