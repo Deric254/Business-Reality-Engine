@@ -30,7 +30,7 @@ function Tile({ label, value, sub, spark, sparkColor, children }: { label: strin
 /** Daily records of the period, bucketed so a long period still draws a readable line. */
 function series(a: Analytics, pick: (d: { sales: number; spending: number }) => number): number[] {
   const first = a.period.first_day;
-  const days = a.daily.filter((d) => d.date >= first);
+  const days = a.daily.filter((d) => d.date >= first && d.date <= a.period.last_day);
   const size = days.length <= 45 ? 1 : days.length <= 120 ? 3 : 7;
   const out: number[] = [];
   for (let i = 0; i < days.length; i += size) out.push(days.slice(i, i + size).reduce((s, d) => s + pick(d), 0));
@@ -126,7 +126,7 @@ function Body({ tenant }: { tenant: Tenant }) {
         <div>
           <h1 className="display text-3xl sm:text-4xl">Analytics</h1>
           <p className="text-ink-muted mt-1.5 max-w-prose">
-            {a ? <>{dayShort(a.period.first_day)} to {dayLong(a.period.last_day)}. {a.period.days === 1 ? "Today counts up to the latest records that passed validation." : "Up to today on your business's clock, from records that passed validation."}</> : "Loading your figures."}
+            {a ? <>{dayShort(a.period.first_day)} to {dayLong(a.period.last_day)}. {a.period.days === 1 ? "Today counts up to the latest records that passed validation." : "Complete days only, ending yesterday on your business's clock, so today's records count from tomorrow. Records that passed validation."}</> : "Loading your figures."}
           </p>
           <p className="hidden print:block text-sm mt-1">{tenant.name}. Prepared {new Date().toLocaleDateString("en-KE", { day: "numeric", month: "long", year: "numeric" })}.</p>
         </div>

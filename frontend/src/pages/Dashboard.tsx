@@ -183,7 +183,7 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
             <Kpi busy={busy} days={days} cur={cur} label={`Spending, ${periodName(days)}`} value={kpis.expenses.current} delta={change(kpis.expenses.current, kpis.expenses.previous)} goodWhen="down" />
             <Kpi busy={busy} days={days} cur={cur} label={`Profit, ${periodName(days)}`} value={kpis.profit.current} delta={kpis.profit.change_pct} goodWhen="up" />
           </div>
-          {!busy && kpis && <p className="text-xs text-ink-muted -mt-3 kpi-figure">{shortDay(kpis.period.first_day, true)} to {shortDay(kpis.period.last_day, true)}, whole days on your business's clock, today so far included.</p>}
+          {!busy && kpis && <p className="text-xs text-ink-muted -mt-3 kpi-figure">{shortDay(kpis.period.first_day, true)} to {shortDay(kpis.period.last_day, true)}, {kpis.period.includes_today ? "the day so far" : "complete days on your business's clock, so today's records count from tomorrow"}.</p>}
           {busy ? <Skeleton className="h-[260px] w-full" /> : trend && <TrendChart current={chartDays(trend).current} previous={chartDays(trend).previous} bucket={trend.bucket} />}
           {!busy && kpis.largest_contributor && kpis.profit.change_pct != null && <p className="text-sm text-ink-muted border-t border-border pt-4">Biggest effect on your profit compared with the {days} days before: <span className="font-semibold text-ink-text">{kpis.largest_contributor}</span>.</p>}
         </Card>

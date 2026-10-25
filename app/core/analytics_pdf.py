@@ -407,7 +407,7 @@ def _story(a: dict, alerts: list[dict], business: str, cur: str, prepared: date)
     pct = lambda v, digits=0: "-" if v is None else f"{v:.{digits}f}%"
     story: list = [_p("Analytics", "title"),
                    _p(f"{business}  |  {_day(p['first_day'])} to {_day(p['last_day'])}  |  Prepared {_day(prepared.isoformat())}", "meta"),
-                   _p("Whole days on your business's clock, from records that passed validation.", "note"), Spacer(1, 12), _tiles(a, cur)]
+                   _p("Whole days on your business's clock" + (", today so far included" if p.get("includes_today") else ", ending yesterday") + ", from records that passed validation.", "note"), Spacer(1, 12), _tiles(a, cur)]
     story += _alerts_block(alerts)
     if a["insights"]:
         story += _insights_block(a["insights"])

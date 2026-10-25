@@ -248,7 +248,7 @@ def test_trend_series_zero_filled(client):
     assert client.post(f"/api/connectors/{cid}/upload", data={"tenant_id": t}, files={"file": ("s.csv", ("Date,Total\n" + rows).encode(), "text/csv")}, headers=h).status_code == 200
     r = client.get(f"/api/business/trend?tenant_id={t}&days=30", headers=h).json()
     assert len(r["current"]) == 30 and len(r["previous"]) == 30
-    assert sum(x["sales"] for x in r["previous"]) > 0 and r["current"][-1]["date"] == dt.datetime.utcnow().date().isoformat()
+    assert sum(x["sales"] for x in r["previous"]) > 0 and r["current"][-1]["date"] == (dt.datetime.utcnow().date() - dt.timedelta(days=1)).isoformat()      # complete days: ends yesterday
 
 
 def test_dashboard_numbers_refresh_right_after_new_data(client):

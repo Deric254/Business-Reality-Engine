@@ -119,4 +119,14 @@ def test_today_and_last_7_days_are_real_periods(db):
     assert one["period"]["days"] == 1 and one["period"]["first_day"] == one["period"]["last_day"]
     assert one["headline"]["sales"]["current"] == 1000 and one["headline"]["spending"]["current"] == 400
     assert one["insights"] == []                       # today is not over: no "down vs yesterday" verdicts
-    assert week["headline"]["sales"]["current"] == 1500 and week["period"]["days"] == 7
+    assert week["headline"]["sales"]["current"] == 500 and week["period"]["days"] == 7       # complete days: today's 1000 counts from tomorrow
+    assert week["period"]["last_day"] != one["period"]["last_day"] and week["period"]["includes_today"] is False and one["period"]["includes_today"] is True
+
+
+def test_a_steady_business_is_not_shown_falling_because_today_is_unfinished(db):
+    """10,000 of sales every day and nothing yet today must read 0%, not 'down 14%': the period holds complete days only."""
+    t = _make_tenant("anasteady")
+    _seed(db, t, [(d, "sale", 10000, "A", "Tea", f"c{d % 5}") for d in range(1, 61)])
+    for days in (7, 30):
+        h = build_analytics(db, t, days)["headline"]["sales"]
+        assert h["current"] == h["previous"] == 10000 * days and h["change_pct"] == 0

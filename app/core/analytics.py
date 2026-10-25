@@ -13,8 +13,8 @@ validated records and nothing else.
   forecast           a straight-line projection of weekly sales, with its fit quality and an honest band
   insights           plain sentences generated from the figures above, never from a model's guess
 
-Every total uses the same period boundaries as the rest of the product (app/core/periods.py: whole days on the
-business's own calendar), so a figure here can never disagree with the Overview. Only validated records count.
+Every total uses the same period boundaries as the rest of the product (app/core/periods.py: complete days on the
+business's own calendar, ending yesterday; "Today" is the day so far), so a figure here can never disagree with the Overview. Only validated records count.
 """
 import math
 import re
@@ -105,7 +105,7 @@ def _headline(db, tenant_id, per) -> dict:
 def _monthly(db, tenant_id, per) -> list[dict]:
     """The last 12 calendar months (fewer if the records are younger), the current month marked partial."""
     local = func.timezone(per.tz.key, func.timezone("UTC", E.timestamp))
-    first_of_this = per.last_day.replace(day=1)
+    first_of_this = per.today.replace(day=1)
     y, m = first_of_this.year, first_of_this.month - 11
     while m < 1:
         m += 12; y -= 1
@@ -117,7 +117,7 @@ def _monthly(db, tenant_id, per) -> list[dict]:
     cell: dict = {}
     for d, ent, amt in (db.query(func.date_trunc("month", local), E.entity, func.coalesce(func.sum(E.amount), 0))
                         .filter(E.tenant_id == tenant_id, E.entity.in_(("sale", "expense")), E.validation_status == "validated",
-                                E.timestamp >= lo, E.timestamp < per.end)
+                                E.timestamp >= lo, E.timestamp < per.today_end)      # the year's shape is not sliced by the period
                         .group_by(func.date_trunc("month", local), E.entity).all()):
         cell[(d.date(), ent)] = float(amt)
     out, d = [], lo_day
@@ -192,7 +192,7 @@ def _daily_rows(db, tenant_id, per, lo: datetime) -> dict:
     out: dict = defaultdict(lambda: {"sales": 0.0, "spending": 0.0})
     for d, ent, amt in (db.query(func.date(local), E.entity, func.coalesce(func.sum(E.amount), 0))
                         .filter(E.tenant_id == tenant_id, E.entity.in_(("sale", "expense")), E.validation_status == "validated",
-                                E.amount.isnot(None), E.timestamp >= lo, E.timestamp < per.end)
+                                E.amount.isnot(None), E.timestamp >= lo, E.timestamp < per.today_end)
                         .group_by(func.date(local), E.entity).all()):
         out[d]["sales" if ent == "sale" else "spending"] += float(amt)
     return out
@@ -204,7 +204,7 @@ def _weekdays(daily: dict, per) -> list[dict]:
     tot, n = [0.0] * 7, [0] * 7
     d = per.first_day
     while d <= per.last_day:
-        if d < per.last_day or d in daily:             # today is only counted once it has records: it is still in progress
+        if d < per.today or d in daily:                # today is only counted once it has records: it is still in progress
             tot[d.weekday()] += daily[d]["sales"] if d in daily else 0.0
             n[d.weekday()] += 1
         d += timedelta(days=1)
@@ -235,7 +235,7 @@ def _customers(db, tenant_id, per) -> dict:
 def _forecast(daily: dict, per) -> dict:
     """Straight-line trend of complete weeks (the 7 days ending yesterday, then the 7 before that...). It says how well the
     line fits; a noisy business gets a wide band and a plain warning, never a confident number it has not earned."""
-    today = per.last_day
+    today = per.today
     weeks = []
     for k in range(FORECAST_WEEKS - 1, -1, -1):
         start = today - timedelta(days=7 * (k + 1))
@@ -351,8 +351,8 @@ def _insights(h: dict, branches: list, products: dict, spending: dict, weekdays:
 def build_analytics(db: Session, tenant_id: str, days: int, now: Optional[datetime] = None) -> dict:
     per = periods.resolve(db, tenant_id, days, now)
     fmt = money_formatter(db, tenant_id)
-    heat_lo = min(per.start, periods.local_midnight_utc(per.last_day - timedelta(days=HEATMAP_DAYS - 1), per.tz),
-                  periods.local_midnight_utc(per.last_day - timedelta(days=7 * (FORECAST_WEEKS + 1)), per.tz))
+    heat_lo = min(per.start, periods.local_midnight_utc(per.today - timedelta(days=HEATMAP_DAYS - 1), per.tz),
+                  periods.local_midnight_utc(per.today - timedelta(days=7 * (FORECAST_WEEKS + 1)), per.tz))
     daily = _daily_rows(db, tenant_id, per, heat_lo)
     headline = _headline(db, tenant_id, per)
     branches = _branches(db, tenant_id, per)
@@ -361,7 +361,7 @@ def build_analytics(db: Session, tenant_id: str, days: int, now: Optional[dateti
     weekdays = _weekdays(daily, per) if (per.last_day - per.first_day).days >= 13 or per.all_time else []
     customers = _customers(db, tenant_id, per)
     forecast = _forecast(daily, per)
-    heat_from = per.last_day - timedelta(days=HEATMAP_DAYS - 1)
+    heat_from = per.today - timedelta(days=HEATMAP_DAYS - 1)
     return {
         "period": per.as_dict(), "days": days,
         "headline": headline,
