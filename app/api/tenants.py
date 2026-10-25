@@ -38,6 +38,7 @@ class TenantSettings(BaseModel):
     base_currency: str
     country: Optional[str] = None
     language: str = "en"
+    area: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -49,6 +50,7 @@ class TenantSettingsUpdate(BaseModel):
     base_currency: Optional[str] = None
     country: Optional[str] = None
     language: Optional[str] = None
+    area: Optional[str] = None
 
 
 def _me(authorization: Optional[str], need_owner: bool = False):
@@ -83,6 +85,10 @@ def update_my_tenant(payload: TenantSettingsUpdate, db: Session = Depends(get_db
         raise HTTPException(400, f"language must be one of {sorted(SUPPORTED_LANGUAGES)}")
     if "name" in data and not (data["name"] or "").strip():
         raise HTTPException(400, "name cannot be empty")
+    if "area" in data:
+        data["area"] = (data["area"] or "").strip() or None
+        if data["area"] and len(data["area"]) > 100:
+            raise HTTPException(400, "area must be 100 characters or fewer")
     for k, v in data.items():
         setattr(t, k, v.strip() if k == "name" else v)
     db.commit(); db.refresh(t)

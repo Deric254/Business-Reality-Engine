@@ -45,6 +45,7 @@ class Tenant(Base):
     base_currency = Column(String, nullable=False, default="KES")  # Section 57
     country = Column(String, nullable=True)                         # ISO 3166 alpha-2; drives the holiday calendar (Section 42)
     language = Column(String, nullable=False, default="en", server_default="en")  # Section 57: UI and narrative language
+    area = Column(String, nullable=True)                            # where the business trades, in the owner's words ("Westlands, Nairobi"); added to web searches
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

@@ -6,6 +6,7 @@ import { PasswordForm } from "../components/PasswordForm";
 import { SecurityQuestionsForm } from "../components/SecurityQuestionsForm";
 import { getClaims } from "../api/session";
 import { AiProviders } from "../components/AiProviders";
+import { BusinessArea } from "../components/BusinessArea";
 import { localHourToUtc, localToUtc, utcHourToLocal, utcToLocal } from "../lib/zone";
 
 const SEVERITIES = ["critical", "high", "medium", "informational"];
@@ -184,6 +185,8 @@ function SettingsBody() {
       <div className="space-y-10">
         {error && <p role="alert" className="text-sm text-critical">{error}</p>}
         {notice && <p role="status" className="text-sm text-opportunity">{notice}</p>}
+
+        {tenant && isOwner && <BusinessArea />}
 
         {tenant && (
           <section aria-labelledby="ai">

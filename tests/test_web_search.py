@@ -1,11 +1,11 @@
 """Web search for questions the business's own data cannot answer."""
-import json
 
 import pytest
 
 from app.core import business_questions as bq
 from app.core.config import get_settings
 from app.core.db import SessionLocal
+from app.models.core import Tenant
 from app.reasoning import web_search
 from tests.conftest import _make_tenant
 
@@ -109,3 +109,24 @@ def test_web_failure_falls_back_to_the_honest_refusal(db, monkeypatch, pages, pr
     monkeypatch.setattr(bq.web_search, "search", lambda q: pages)
     out = bq.answer_question(db, t, "zzqx plorv wibble competitors elsewhere")
     assert out["answered"] is False and "from your own numbers" in out["answer"]
+
+
+def test_the_business_area_is_added_to_the_search_unless_the_question_has_it(db, monkeypatch):
+    t = _make_tenant("webarea")
+    row = db.get(Tenant, t); row.area = "Westlands, Nairobi"; db.commit()
+    monkeypatch.setattr(bq, "get_provider", lambda *a, **k: Provider())
+    seen = []
+    monkeypatch.setattr(bq.web_search, "search", lambda q: seen.append(q) or PAGES)
+    out = bq.answer_question(db, t, "zzqx plorv wibble competitors elsewhere")
+    bq.answer_question(db, t, "zzqx plorv wibble competitors in westlands, nairobi")
+    assert seen == ["zzqx plorv wibble competitors elsewhere Westlands, Nairobi", "zzqx plorv wibble competitors in westlands, nairobi"]
+    assert out["answer_source"] == "web"
+
+
+def test_owner_can_set_and_clear_the_area(client):
+    from tests.conftest import bearer, register
+    t = _make_tenant("webset"); _, _, owner = register(client, t, "owner")
+    r = client.patch("/api/tenants/me", json={"area": "  Kilimani, Nairobi "}, headers=bearer(owner))
+    assert r.status_code == 200 and r.json()["area"] == "Kilimani, Nairobi"
+    assert client.patch("/api/tenants/me", json={"area": "  "}, headers=bearer(owner)).json()["area"] is None
+    assert client.patch("/api/tenants/me", json={"area": "x" * 101}, headers=bearer(owner)).status_code == 400

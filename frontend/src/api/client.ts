@@ -414,7 +414,7 @@ async function requestVoid(path: string, method: string): Promise<void> {
 }
 
 // ---- tenant settings ----
-export interface TenantSettings { id: string; name: string; timezone: string; base_currency: string; country: string | null; language: string }
+export interface TenantSettings { id: string; name: string; timezone: string; base_currency: string; country: string | null; language: string; area: string | null }
 export const tenantApi = {
   me: () => request<TenantSettings>("/api/tenants/me"),
   update: (patch: Partial<Omit<TenantSettings, "id">>) => request<TenantSettings>("/api/tenants/me", { method: "PATCH", ...json(patch) }),

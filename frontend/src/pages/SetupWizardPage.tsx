@@ -24,7 +24,7 @@ function Body({ tenantId }: { tenantId: string }) {
 
   async function saveBasics(e: FormEvent) {
     e.preventDefault(); if (!s) return; setErr(null);
-    try { await tenantApi.update({ name: s.name, timezone: s.timezone, base_currency: s.base_currency, country: s.country, language: s.language }); setLang((s.language as Lang) === "sw" ? "sw" : "en"); setStep(2); }
+    try { await tenantApi.update({ name: s.name, timezone: s.timezone, base_currency: s.base_currency, country: s.country, area: s.area, language: s.language }); setLang((s.language as Lang) === "sw" ? "sw" : "en"); setStep(2); }
     catch (x) { setErr(errText(x)); }
   }
   async function addChannel(e: FormEvent) {
@@ -51,6 +51,7 @@ function Body({ tenantId }: { tenantId: string }) {
               <select className={input} value={s.timezone} onChange={(e) => setS({ ...s, timezone: e.target.value })}>{[...new Set([s.timezone, ...ZONES])].map((z) => <option key={z}>{z}</option>)}</select></label>
             <label className="text-xs text-ink-muted">Main currency<input required maxLength={3} minLength={3} className={`${input} uppercase`} value={s.base_currency} onChange={(e) => setS({ ...s, base_currency: e.target.value.toUpperCase() })} /></label>
             <label className="text-xs text-ink-muted">Country (for public holidays, 2 letters)<input maxLength={2} className={`${input} uppercase`} value={s.country ?? ""} onChange={(e) => setS({ ...s, country: e.target.value.toUpperCase() || null })} placeholder="KE" /></label>
+            <label className="text-xs text-ink-muted sm:col-span-2">Where your business is (area or city, used when you ask about competitors or the market)<input maxLength={100} className={input} value={s.area ?? ""} onChange={(e) => setS({ ...s, area: e.target.value || null })} placeholder="Westlands, Nairobi" /></label>
             <label className="text-xs text-ink-muted">Language<select className={input} value={s.language} onChange={(e) => setS({ ...s, language: e.target.value })}><option value="en">English</option><option value="sw">Kiswahili</option></select></label>
             <div className="sm:col-span-2"><button className={primaryCls}>{t("common.next")}</button></div>
           </form>
