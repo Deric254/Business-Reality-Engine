@@ -5,7 +5,7 @@ Honest scope note: verified in a sandbox with real Postgres, Redis, OpenSSH, Dov
 
 ## Part 1 — What exists
 
-- Backend: FastAPI, SQLAlchemy 2.0, Alembic (17 migrations, `alembic check` clean), PostgreSQL 16, Pydantic v2. 22 routers, ~89 endpoints. 357 tests.
+- Backend: FastAPI, SQLAlchemy 2.0, Alembic (`alembic check` clean), PostgreSQL 16, Pydantic v2. Counts of migrations, routers, endpoints and tests are deliberately not written here because typed counts drift out of date: use `ls alembic/versions`, `ls app/api` and `pytest --collect-only -q | tail -1`.
 - Connectors: file/JSON/XML/TXT, webhook, database (driver registry), SFTP, IMAP email, shared folder, local agent, manual capture, scheduled sync.
 - Ingestion: universal `NormalizedEvent`, idempotent bulk path, batched entity resolution, FX conversion, coverage tracking.
 - Intelligence: deviation (direction-aware), opportunity, trend, daily anomaly, silence, threshold, forecast-miss, profit-risk and unknown-unknown detectors; correlation, ranking, escalation; business memory; forecasting and simulation; health score; model versioning; backtesting and calibration; LLM narrative layer (Anthropic / OpenAI / any OpenAI-compatible URL).
@@ -42,7 +42,7 @@ Honest scope note: verified in a sandbox with real Postgres, Redis, OpenSSH, Dov
 | 51 | Self-monitoring | DONE | `scheduler_runs`, `/api/system/*` |
 | 52 | Deployment | PARTIAL | Dockerfile (multi-worker), frontend nginx image (CSP, /api proxy), docker-compose (db, redis, migrate, api, web; SMTP/Twilio env passed through), GitHub Actions CI (tests, `alembic check`, pip-audit, tsc/build, npm audit, image builds), backup/restore scripts (restore verified against a real dump), runbook. **Docker images were never built here** (registry unreachable) and the CI workflow has not run on GitHub yet. No TLS termination bundled: put a reverse proxy/load balancer in front |
 | 53 | Versioning | DONE | Business-model versions (`model_changes`), auto-detected location/product changes, declared changes with re-baselining windows, version stamped on alerts. UI on the Accuracy page |
-| 54 | Testing | DONE (backend) | 357 pytest tests across auth, isolation, rate limits, bulk ingestion, delivery, detectors, lifecycle, memory, questions, connectors, model versions, backtesting, password recovery. Frontend verified by scripted headless-Chromium flows, not by a committed UI test suite |
+| 54 | Testing | DONE (backend) | pytest suite across auth, isolation, rate limits, bulk ingestion, delivery, detectors, lifecycle, memory, questions, connectors, model versions, backtesting, password recovery. Frontend verified by scripted headless-Chromium flows, not by a committed UI test suite |
 | 55 | Backtesting | DONE | `/api/accuracy/backtest` replays detectors over history at several sensitivities, precision/recall against logged incidents, suggested threshold; live accuracy report with calibration. Limits are stated in the output (silence and case-outcome checks are not replayed) |
 | 56 | Advisory text in UI | DONE | Plain-language headlines, hints and method notes on each screen; accuracy notes refuse to show rates below a minimum sample |
 | 57 | Localization | DONE (basic) | Tenant timezone and base currency, FX rates with date-effective conversion and reprocessing, UI in English and Kiswahili (navigation and main labels; deep screens fall back to English). Number formatting is fixed en-US grouping |
@@ -85,6 +85,32 @@ What was found and changed, so nobody has to rediscover it:
 - **Uploads** are read with a hard cap (limit + 1 byte), so an oversized file is refused without being held in memory, whatever sits in front of the API.
 - **Housekeeping**: a daily job removes expired revoked-login records.
 - **Owners' screens**: period buttons (Last 7 days / 30 / 90 / 180), currency on amounts, quiet hours and digest hour shown in the business's own time (stored in UTC), plain names for alert types, a prompt when no one is set up to be notified.
-- Removed: unused sample-data module (`scripts/seed_demo.py` does the job), two unused components, unused imports.
+- Removed: two unused components, unused imports. (The sample-data module was left in the tree unused; it is now rebuilt and wired in, see Part 4.)
 - Checked: every route that takes a business id refuses another business's login (68 routes probed); `pip-audit` and `npm audit` report no known vulnerabilities.
-- Still open: alert text is English only; the Docker images were not built in the audit environment.
+- Still open: see the end of Part 4.
+
+## Part 4 — Audit follow-up: what changed and what is still open
+
+Changed, each guarded by tests (`tests/test_hardening.py`, `tests/test_mpesa.py`, `tests/test_demo.py`):
+
+- **Payment now controls access.** With `LICENCE_ENFORCED=true`, a paid licence is paused once its paid period (or, if it never paid, the day it was activated) is more than `LICENCE_GRACE_DAYS` (default 7) in the past. Free licences are never paused; recording a payment restores access at once. The same rule (`licensing.access_state`) drives enforcement and the Licences list ("Paused, not paid").
+- **Reinstate** a revoked licence (`POST /api/master/licences/{id}/reinstate`, button on the Licences page). Before, revoking was one-way.
+- **Private-network block is on by default in production.** `BLOCK_PRIVATE_CONNECTOR_HOSTS` was set only in `render.yaml`; the compose files and the free deployment ran without it. It now defaults to on when `ENV=production`; `false` is the explicit single-business opt-out.
+- **The shared service key no longer writes events for any business in production.** Use a business sign-in or a connector's webhook token; `ALLOW_SERVICE_KEY_INGEST=true` restores the old behaviour for trusted installs.
+- **Webhook time zones.** A payload time with an offset or `Z` had its zone dropped and was then read as the business's local time, and an event with no time at all was stamped with the arrival time read as local time. Both were wrong by the business's UTC offset. Fixed; zone-bearing times are converted and arrival time is stamped in UTC.
+- **M-Pesa.** A live Paybill/Till preset (Daraja C2B confirmation, with the reply Daraja expects) and statement support: the `Withdraw` spelling is recognised, and rows that share an id but differ are kept instead of silently replacing each other (an M-Pesa receipt covers a charge and its transfer).
+- **Sample data and demo businesses.** Three samples (shop, pharmacy, workshop), each built around a problem the detectors find, loadable from the Data page into an empty business and removable while they are the only data; master-created demo businesses with logins and free licences; `scripts/seed_demo.py` is now a thin client of the same code. Before, the sample module existed but nothing used it, and the script carried a second, different generator.
+- **Tests and CI** use one database name (`business_reality`, as the README and compose do); the two tests that hardcoded another name now read `DATABASE_URL`.
+- **Docs.** One performance section with ranges instead of three that disagreed; periods described as the code defines them (complete days ending yesterday); typed counts removed; the runbook's private-host claim is now true.
+- **Dead code.** Unused imports removed from three application modules.
+
+Still open (nothing here is hidden by the changes above):
+
+- The Docker images have not been built or run by the authors; the CI smoke workflow exists, so confirm it is green.
+- The live M-Pesa feed follows Daraja's documented format and is tested with sample payloads only, never with live Safaricom traffic.
+- M-Pesa statements: withdrawals are read as expenses, including transfers and settlements to the owner's own accounts, which are not costs. The owner must remove those rows.
+- One email address belongs to one business; there is no membership across several businesses.
+- Alert text is English only. API events without a time zone are read as the business's local time (documented in the README).
+- `datetime.utcnow()` (deprecated since Python 3.12) and broad `except Exception` blocks are used widely; no frontend test suite; no installable app or persistent sign-in.
+- Detector thresholds were never tuned on real businesses, the AI narrative layer has never run against a real key, and the MySQL, SQL Server and Oracle connectors are unverified.
+- Single-event ingestion is slow (about 100 events a second); send batches.

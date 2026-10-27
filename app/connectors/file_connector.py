@@ -208,6 +208,25 @@ def _identity(mapped, row) -> Optional[str]:
     return None if generated is None or pd.isna(generated) else str(generated)
 
 
+def _shared_id_suffixes(df: pd.DataFrame, mapping: ColumnMapping) -> dict[int, str]:
+    """Row position -> suffix, for rows whose id is shared with a row that says something different. Some sources reuse one
+    id for several lines (an M-Pesa receipt has a charge row and a transfer row; an invoice number covers every line of
+    the invoice). Left alone, the later line would replace the earlier one and money would silently vanish. Rows that are
+    exact copies keep the same id on purpose, so a line repeated in the file is still counted once, as before."""
+    col = mapping.entity_id_col
+    if not col or col not in df.columns or col == ROW_ID_COL:
+        return {}
+    import hashlib
+    ids = df[col].astype(str).str.strip().where(df[col].notna(), "")
+    content = df.drop(columns=[ROW_ID_COL], errors="ignore").astype(str).agg("\x1f".join, axis=1)
+    out: dict[int, str] = {}
+    for _, group in content.groupby(ids[ids != ""]):
+        if group.nunique() > 1:
+            for pos, text in group.items():
+                out[pos] = hashlib.sha1(text.encode()).hexdigest()[:8]
+    return out
+
+
 class ParsedRows(NamedTuple):
     events: list[dict]
     skipped: list[str]      # why each unreadable row was left out, e.g. "Row 14: 'TOTAL' is not a date"
@@ -239,6 +258,7 @@ def dataframe_to_normalized_events(
     df = df.reset_index(drop=True)               # row numbers below must be 0, 1, 2... whatever index the parser produced
     stamps = pd.to_datetime(df[mapping.timestamp_col], errors="coerce", dayfirst=_day_first(df[mapping.timestamp_col]), format="mixed")
     blank = df.drop(columns=[ROW_ID_COL], errors="ignore").apply(lambda col: col.isna() | col.astype(str).str.strip().eq("")).all(axis=1)
+    shared = _shared_id_suffixes(df, mapping)
     events, skipped, nonblank = [], [], 0
     for idx, row in df.iterrows():
         if blank[idx]:
@@ -260,12 +280,15 @@ def dataframe_to_normalized_events(
         except HTTPException as e:
             skipped.append(e.detail)
             continue
+        entity_id = _identity(_get("entity_id_col"), row)
+        if entity_id is not None and idx in shared:
+            entity_id += f"#{shared[idx]}"
         events.append({
             "tenant_id": tenant_id,
             "connector_id": connector_id,
             "source": source,
             "entity": entity,
-            "entity_id": _identity(_get("entity_id_col"), row),
+            "entity_id": entity_id,
             "event_type": event_type,
             "timestamp": stamps[idx].to_pydatetime() if isinstance(stamps[idx], pd.Timestamp) else stamps[idx],   # a column mixing zones holds plain datetimes
             "amount": amount,

@@ -17,7 +17,9 @@ same commit as any security-relevant change — don't let it drift from the code
    doesn't mean it exists on every endpoint; check each one.
 2. **Service-level API key** — every endpoint except `/api/health` requires
    `x-api-key` (`app/core/auth.py`). Boot refuses to start in production
-   without `API_KEY` set (`app/core/config.py`).
+   without `API_KEY` set (`app/core/config.py`). With only that key, event
+   ingestion is refused in production unless `ALLOW_SERVICE_KEY_INGEST=true`
+   (see "Added with the audit follow-up").
 3. **No SQL injection surface** — all queries go through SQLAlchemy's ORM
    with bound parameters. No raw string-interpolated SQL anywhere.
 4. **No leaked internals on error** — global exception handlers
@@ -123,7 +125,7 @@ same commit as any security-relevant change — don't let it drift from the code
    key or an owner token of that tenant; login/refresh are public but
    throttled (10/min/IP). The browser bundle contains no API key. Production boot
    refuses to start without API_KEY, a >=32-char JWT_SECRET_KEY and
-   CONNECTOR_ENCRYPTION_KEY. Covered by `tests/` (24 tests). Earlier
+   CONNECTOR_ENCRYPTION_KEY. Covered by `tests/`. Earlier
    versions of this file called this closed while JWT was opt-in and
    several connector endpoints had no auth at all; both are fixed.
    **Closed since:** token revocation, single-use refresh tokens, account lockout, an
@@ -141,9 +143,8 @@ same commit as any security-relevant change — don't let it drift from the code
    `CONNECTOR_ENCRYPTION_KEY` would make every previously-stored credential
    undecryptable. Not urgent at current scale (one key, one deployment)
    but needs a re-encryption migration path before rotation is ever needed.
-5. **Audit logging** — who accessed/changed what, when. Not built.
-6. **Dependency scanning** — `requirements.txt` versions are pinned but not
-   yet checked against a CVE feed. Add before production.
+5. ~~Audit logging~~ — **closed**: security-relevant actions are written to the audit log (`app/core/audit.py`; see "Added with the security hardening pass").
+6. **Dependency scanning** — `requirements.txt` versions are pinned; `pip-audit` and `npm audit` were clean at the last audit (docs/PROGRESS_REPORT.md). Re-run before each release.
 7. **Tenant-ownership audit — completed.** Swept every endpoint with an id
    path param across all routers. Found and fixed 3 real gaps this way,
    not from design review: alert endpoints, `/api/entities/merge`
@@ -193,3 +194,10 @@ same commit as any security-relevant change — don't let it drift from the code
 - **Password recovery and invitations (built).** Tokens are 256-bit random, single-use, expiring (reset 60 min, invite 7 days); only their SHA-256 is stored; a newer token voids older ones; spending is one atomic UPDATE (concurrent use: exactly one wins). `forgot-password` answers identically for known and unknown addresses, sends mail in a background task (no timing signal), is limited per IP and 3/hour per address, and a bad new password does not burn the token. A reset revokes every session and clears lockout. Invited accounts hold an unusable random password until accepted. Residual risk: anyone who can read the recipient's mailbox can reset; keep SMTP credentials and `APP_BASE_URL` (links are built from it) correct. If SMTP is not configured, forgot-password reports `email_enabled: false` and sends nothing, and invitations are refused (use temporary passwords); people recover with security questions (below), and the holder of the admin key can issue a one-time reset link through `POST /api/system/reset-link` (audit-logged).
 - **Security questions (built).** Recovery that needs no email. A person picks 3 questions from a fixed list; every answer must be right. Answers are normalised (case, spacing, accents), SHA-256 digested, then bcrypt-hashed, so nothing readable is stored. Setting them needs the current password. `recovery-questions` returns a repeatable decoy set for unknown emails and for accounts with none set, and `recover-with-answers` always performs the same number of bcrypt checks, so neither reveals which accounts exist; failures are limited per IP and locked per email (5 in 15 minutes) separately from sign-in. Success revokes every session. Residual risk: answers are still guessable by someone who knows the person (a relative, a former colleague); treat this as weaker than email and encourage both.
 - **Delivery targets.** Slack, Teams and custom-webhook URLs go through the same SSRF guard (https only, no private/loopback/link-local, re-checked at send time, no redirects). SMS/WhatsApp numbers must be E.164 and are sent through Twilio with credentials from the environment only; stored errors never include credentials.
+
+## Added with the audit follow-up
+- **The shared service key cannot write events in production.** One key serves every business, so anyone holding it, plus a business's tenant and connector ids, could write records into that business. `/api/events/*` now needs a business sign-in or a connector's own webhook token when `ENV=production`. `ALLOW_SERVICE_KEY_INGEST=true` brings the old behaviour back for a trusted single-business install; outside production it stays allowed so development and tests are unchanged. Residual risk: the key is still required on those routes as a second gate, so keep it secret.
+- **Connector SSRF guard is on by default in production.** Database, SFTP, IMAP and URL connectors refuse private, loopback, link-local and metadata addresses when `ENV=production`, in every deployment (before, only `render.yaml` set it). `BLOCK_PRIVATE_CONNECTOR_HOSTS=false` is the explicit opt-out for a single-business install that must reach its own network. Same residual risk as the webhook guard: DNS rebinding between the check and the connection.
+- **Payment gates access.** With `LICENCE_ENFORCED=true`, a paid licence past its grace period (`LICENCE_GRACE_DAYS`, default 7) is refused like a revoked one until a payment is recorded. A revoked licence can be reinstated by the master account only (404 for everyone else, audit-logged).
+- **Demo businesses.** `POST /api/master/demo-businesses` is master-only. Passwords are generated server-side with `secrets`, returned once in that response and never stored in plain text. Their licences are free and revocable. The sample-data endpoints (`/api/demo/samples`) are owner-only per business and refuse to run on a business that has data.
+- **Live M-Pesa link.** The private confirmation link carries the connector's webhook token like any webhook connector (hashed, constant-time compared, throttled). Daraja does not sign its callbacks, so the link's secrecy is the protection: register it only with Safaricom, and replace the connector if it leaks.

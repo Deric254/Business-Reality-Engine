@@ -15,6 +15,7 @@ from app.connectors.file_connector import (
 )
 from app.connectors.inspect import describe, mapping_provider
 from app.connectors import url_connector
+from app.connectors.mpesa import expand_preset
 from app.connectors.webhook_connector import generate_webhook_token
 from app.connectors.database_connector import DRIVERS, _validate_read_only_query, driver_catalog
 from app.core.netguard import check_host_allowed, tenant_path
@@ -123,6 +124,8 @@ def create_connector(payload: ConnectorCreate, request: Request, db: Session = D
         raise HTTPException(400, f"expected_frequency must be one of {sorted(FREQUENCIES)}")
     if not payload.name.strip():
         raise HTTPException(400, "name cannot be empty")
+    if payload.connector_type == "webhook" and "preset" in (payload.config or {}):
+        payload.config = expand_preset(payload.config)         # e.g. {"preset": "mpesa_c2b"} becomes its full mapping
     _validate_config(payload.connector_type, payload.config or {}, payload.tenant_id)
     if payload.sync_interval_minutes is not None:
         _check_interval(payload.connector_type, payload.sync_interval_minutes)

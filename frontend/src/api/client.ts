@@ -508,6 +508,14 @@ export interface DbType { db_type: string; available: boolean; verified: boolean
 
 export interface Inspection { columns: string[]; row_count: number; sample: Record<string, unknown>[]; suggested_mapping: Record<string, string>; source: "ai" | "rules"; reasons: Record<string, string> }
 
+// ---- sample businesses ----
+export interface SampleKind { id: string; title: string; blurb: string }
+export const demoApi = {
+  list: (t: string) => request<{ samples: SampleKind[]; loaded: boolean }>(`/api/demo/samples?tenant_id=${t}`),
+  load: (t: string, kind: string) => request<{ kind: string; events: number; alerts: number }>("/api/demo/samples", { method: "POST", body: JSON.stringify({ tenant_id: t, kind }) }),
+  remove: (t: string) => request<{ removed: boolean }>(`/api/demo/samples?tenant_id=${t}`, { method: "DELETE" }),
+};
+
 export const connectorApi = {
   inspectUrl: (t: string, config: Record<string, unknown>) =>
     request<Inspection>("/api/connectors/inspect-url", { method: "POST", ...json({ tenant_id: t, config }) }),
@@ -593,20 +601,24 @@ export const accuracyApi = {
 
 // ---- licences (master account) ----
 export interface MasterOverview {
-  currency: string; as_of: string; paid_up: number; overdue: number; monthly_recurring: number; collected_total: number; collected_this_month: number;
+  currency: string; as_of: string; paid_up: number; overdue: number; paused: number; monthly_recurring: number; collected_total: number; collected_this_month: number;
   licences: { issued: number; unused: number; active: number; revoked: number };
 }
 export interface MasterAccount {
   id: string; hint: string; label: string | null; status: "unused" | "active" | "revoked"; price: number; currency: string; business: string | null;
   owner_email: string | null; sources: number; activated_at: string | null; last_record_at: string | null; paid_through: string | null;
   total_paid: number; revoked_at: string | null; revoked_reason: string | null; payment_state: "free" | "paid" | "unpaid" | null;
+  access: "unused" | "active" | "overdue" | "revoked";       // overdue: a paid licence past its grace period, paused until paid
 }
+export interface DemoBusiness { kind: string; business_name: string; email: string; password: string; tenant_id: string; licence_id: string; events: number; alerts: number }
 export const masterApi = {
   whoami: () => request<{ master: boolean }>("/api/master/whoami").then(() => true).catch(() => false),
   overview: () => request<MasterOverview>("/api/master/overview"),
   accounts: () => request<MasterAccount[]>("/api/master/accounts"),
   issue: (count: number, label: string, price: number) => request<{ keys: { id: string; key: string; hint: string }[] }>("/api/master/licences", { method: "POST", body: JSON.stringify({ count, label, price }) }),
   revoke: (id: string, reason: string) => request<{ status: string }>(`/api/master/licences/${id}/revoke`, { method: "POST", body: JSON.stringify({ reason }) }),
+  reinstate: (id: string) => request<{ status: string }>(`/api/master/licences/${id}/reinstate`, { method: "POST" }),
+  demoBusinesses: () => request<{ businesses: DemoBusiness[] }>("/api/master/demo-businesses", { method: "POST", body: JSON.stringify({}) }),
   pay: (id: string, amount: number, months: number, reference: string) => request<{ paid_through: string }>(`/api/master/licences/${id}/payments`, { method: "POST", body: JSON.stringify({ amount, months, reference: reference || null }) }),
 };
 export async function activateLicence(body: { licence_key: string; business_name: string; email: string; password: string }): Promise<void> {

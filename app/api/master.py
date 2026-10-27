@@ -4,6 +4,7 @@ door businesses come through: activating a key.
 Money shown here is only what has been recorded in the payments ledger. There is no estimate and no guess; a licence
 with no recorded payment shows as unpaid. (Collecting the $1 automatically needs a payment provider account; until
 one is connected, each payment is recorded here, and a provider's webhook can call the same function.)"""
+import secrets
 from datetime import datetime
 from typing import Optional
 
@@ -13,9 +14,9 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.auth import TokenPair, _check_new_password, _throttle, _tokens
-from app.core import audit, licensing
+from app.core import audit, demo, licensing
 from app.core.auth import require_admin_key
-from app.core.auth_users import decode_token, ensure_active, hash_password
+from app.core.auth_users import decode_token, hash_password
 from app.core.db import get_db
 from app.models.core import BusinessEvent, Connector, Tenant, User
 from app.models.licence import Licence, LicencePayment
@@ -80,12 +81,14 @@ def overview(db: Session = Depends(get_db), authorization: Optional[str] = Heade
     paying = db.query(Licence).filter(Licence.status == "active", Licence.price_cents > 0, Licence.paid_through > now).all()
     overdue = db.query(func.count(Licence.id)).filter(Licence.status == "active", Licence.price_cents > 0,
                                                       (Licence.paid_through.is_(None)) | (Licence.paid_through <= now)).scalar()
+    paused = sum(1 for l in db.query(Licence).filter(Licence.status == "active", Licence.price_cents > 0).all()
+                 if licensing.access_state(l.status, l.price_cents, l.paid_through, l.redeemed_at, now) == "overdue")
     collected = db.query(func.coalesce(func.sum(LicencePayment.amount_cents), 0)).scalar()
     this_month = db.query(func.coalesce(func.sum(LicencePayment.amount_cents), 0)).filter(LicencePayment.paid_at >= month_start).scalar()
     return {
         "currency": "USD",
         "licences": {"issued": sum(counts.values()), "unused": counts.get("unused", 0), "active": counts.get("active", 0), "revoked": counts.get("revoked", 0)},
-        "paid_up": len(paying), "overdue": overdue,
+        "paid_up": len(paying), "overdue": overdue, "paused": paused,
         "monthly_recurring": _money(sum(l.price_cents / max(1, l.interval_months) for l in paying)),
         "collected_total": _money(collected), "collected_this_month": _money(this_month),
         "as_of": now.isoformat(timespec="seconds") + "Z",
@@ -110,6 +113,7 @@ def accounts(db: Session = Depends(get_db), authorization: Optional[str] = Heade
             "business": names.get(l.tenant_id), "owner_email": owners.get(l.tenant_id), "sources": sources.get(l.tenant_id, 0),
             "activated_at": l.redeemed_at, "last_record_at": last.get(l.tenant_id), "paid_through": l.paid_through,
             "total_paid": _money(paid.get(l.id)), "revoked_at": l.revoked_at, "revoked_reason": l.revoked_reason,
+            "access": licensing.access_state(l.status, l.price_cents, l.paid_through, l.redeemed_at, now),
             "payment_state": ("free" if l.price_cents == 0 else "paid" if l.paid_through and l.paid_through > now else "unpaid") if l.status == "active" else None,
         })
     return rows
@@ -146,6 +150,18 @@ def revoke_licence(licence_id: str, body: RevokeIn, request: Request, db: Sessio
     return {"id": lic.id, "status": lic.status}
 
 
+@router.post("/licences/{licence_id}/reinstate")
+def reinstate_licence(licence_id: str, request: Request, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+    """Undo a revoke. Access returns on the business's next request."""
+    user = master_user(authorization, db)
+    lic = db.get(Licence, licence_id)
+    if not lic:
+        raise HTTPException(404, "Licence not found")
+    status = licensing.reinstate(db, lic)
+    audit.record(db, "master.licence_reinstated", request=request, tenant_id=user.tenant_id, actor_user_id=user.id, target=licence_id)
+    return {"id": lic.id, "status": status}
+
+
 class PaymentIn(BaseModel):
     amount: float = Field(gt=0, le=1000000)
     months: int = Field(default=1, ge=1, le=36)
@@ -165,6 +181,41 @@ def add_payment(licence_id: str, body: PaymentIn, request: Request, db: Session 
     audit.record(db, "master.payment_recorded", request=request, tenant_id=user.tenant_id, actor_user_id=user.id, target=licence_id,
                  detail={"amount": body.amount, "months": body.months, "reference": ref})
     return {"paid_through": pay.period_end}
+
+
+def _open_business(db: Session, lic: Licence, business_name: str, email: str, password: str, timezone: str, base_currency: str) -> User:
+    """Spend a licence on a new business and its owner, in one transaction (either all of it happens or none of it does)."""
+    tenant = Tenant(name=business_name.strip(), timezone=timezone, base_currency=base_currency.upper())
+    db.add(tenant); db.flush()
+    user = User(tenant_id=tenant.id, email=email, password_hash=hash_password(password), role="owner")
+    db.add(user)
+    lic.status, lic.redeemed_at, lic.tenant_id = "active", datetime.utcnow(), tenant.id
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+class DemoBusinessesIn(BaseModel):
+    kinds: list[str] = Field(default_factory=lambda: [k.id for k in demo.KINDS], min_length=1, max_length=len(demo.KINDS))
+
+
+@router.post("/demo-businesses")
+def create_demo_businesses(body: DemoBusinessesIn, request: Request, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+    """Ready-made businesses to show a prospect or to try the app: each has an owner login, a free licence (so it can be
+    revoked like any other) and four months of sample activity. The passwords are returned here once and kept nowhere."""
+    user = master_user(authorization, db)
+    kinds = [demo.kind_by_id(k) for k in dict.fromkeys(body.kinds)]
+    made = []
+    for kind in kinds:
+        issued = licensing.issue(db, 1, f"Demo: {kind.title}", 0, "USD", user.id)[0]
+        lic = licensing.lock_unused(db, issued["key"])
+        email, password = f"demo-{secrets.token_hex(4)}@example.com", secrets.token_urlsafe(9)
+        owner = _open_business(db, lic, kind.business_name, email, password, "Africa/Nairobi", "KES")
+        result = demo.load_sample(db, owner.tenant_id, kind.id)
+        audit.record(db, "master.demo_business_created", request=request, tenant_id=user.tenant_id, actor_user_id=user.id, target=lic.id, detail={"kind": kind.id})
+        made.append({"kind": kind.id, "business_name": kind.business_name, "email": email, "password": password, "tenant_id": owner.tenant_id,
+                     "licence_id": lic.id, "events": result["events"], "alerts": result["alerts"]})
+    return {"businesses": made}
 
 
 # ---------------- public: activate a key ----------------
@@ -195,12 +246,6 @@ def activate(body: ActivateIn, request: Request, db: Session = Depends(get_db)):
     if db.query(User.id).filter(User.email == body.email).first():
         db.rollback()
         raise HTTPException(409, "Could not activate with these details")
-    tenant = Tenant(name=body.business_name.strip(), timezone=body.timezone, base_currency=body.base_currency.upper())
-    db.add(tenant); db.flush()
-    user = User(tenant_id=tenant.id, email=body.email, password_hash=hash_password(body.password), role="owner")
-    db.add(user)
-    lic.status, lic.redeemed_at, lic.tenant_id = "active", datetime.utcnow(), tenant.id
-    db.commit()
-    db.refresh(user)
-    audit.record(db, "licence.activated", request=request, tenant_id=tenant.id, actor_user_id=user.id, target=lic.id)
+    user = _open_business(db, lic, body.business_name, body.email, body.password, body.timezone, body.base_currency)
+    audit.record(db, "licence.activated", request=request, tenant_id=user.tenant_id, actor_user_id=user.id, target=lic.id)
     return _tokens(user)

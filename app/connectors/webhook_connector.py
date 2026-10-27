@@ -16,6 +16,7 @@ plays for spreadsheet columns.
 import hashlib
 import hmac
 import secrets
+from datetime import datetime
 from typing import Optional
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -46,6 +47,7 @@ class WebhookMapping(BaseModel):
     entity: str
     event_type: str
     timestamp_path: Optional[str] = None   # dot path; None = use receipt time
+    timestamp_format: Optional[str] = None  # strptime format for senders that do not use ISO 8601, e.g. "%Y%m%d%H%M%S"
     amount_path: Optional[str] = None
     quantity_path: Optional[str] = None
     currency_path: Optional[str] = None
@@ -54,6 +56,7 @@ class WebhookMapping(BaseModel):
     product_id_path: Optional[str] = None
     entity_id_path: Optional[str] = None
     default_currency: str = "KES"
+    ack: Optional[str] = None               # "daraja": answer with the reply Safaricom's Daraja API waits for
 
 
 def _extract(payload: dict, path: Optional[str]):
@@ -71,19 +74,28 @@ def _extract(payload: dict, path: Optional[str]):
     return current
 
 
+def _parse_timestamp(raw, mapping: WebhookMapping) -> datetime:
+    """A time with a zone ("...Z", "...+03:00") keeps it and is converted to UTC later; a time with none (or one read with
+    `timestamp_format`) is the business's own clock, which is how every other source is read."""
+    text = str(raw).strip()
+    try:
+        if mapping.timestamp_format:
+            return datetime.strptime(text, mapping.timestamp_format)
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(400, f"Could not parse timestamp at '{mapping.timestamp_path}': {raw!r}")
+
+
 def webhook_payload_to_event_dict(
     payload: dict, mapping: WebhookMapping, tenant_id: str, connector_id: str, source: str, received_at
 ) -> dict:
-    from datetime import datetime
-
+    """`received_at` must carry a zone (UTC): it is the fallback timestamp, and a time without a zone would be read as
+    the business's local time."""
     timestamp = None
     if mapping.timestamp_path:
         raw_ts = _extract(payload, mapping.timestamp_path)
         if raw_ts:
-            try:
-                timestamp = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00")).replace(tzinfo=None)
-            except ValueError:
-                raise HTTPException(400, f"Could not parse timestamp at '{mapping.timestamp_path}': {raw_ts!r}")
+            timestamp = _parse_timestamp(raw_ts, mapping)
     if timestamp is None:
         timestamp = received_at  # Section 11: fall back to receipt time if the payload has none
 

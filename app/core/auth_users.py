@@ -161,6 +161,10 @@ def authorize_tenant_or_service(authorization: Optional[str], x_api_key: Optiona
     """
     if authorization:
         return authorize_tenant(authorization, tenant_id)
-    from app.core.auth import require_api_key
+    from app.core.auth import require_api_key, service_key_ingest_allowed
+    if not service_key_ingest_allowed():
+        # The service key is one credential for every business, so on a production server it cannot write events for
+        # a business of the caller's choosing. Use a business sign-in, or a connector's own webhook token.
+        raise HTTPException(401, "Sign in as the business, or use the connector's webhook token, to send events")
     require_api_key(x_api_key)
     return None

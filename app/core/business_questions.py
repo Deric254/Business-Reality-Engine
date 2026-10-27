@@ -56,7 +56,6 @@ def _business_context(db: Session, tenant_id: str, area: Optional[str]) -> tuple
     """(place, what it sells) used to point a web search at the owner's real market. The place is the owner's own
     wording when set, otherwise the branch names found in their records; what it sells is the top products by sales.
     Only these names reach the search service (never an amount, a customer or a date)."""
-    from datetime import timedelta
     from sqlalchemy import func
     from app.models.core import BusinessEvent
     since = datetime.utcnow() - timedelta(days=180)

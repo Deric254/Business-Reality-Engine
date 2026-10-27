@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
-import { masterApi, type MasterAccount, type MasterOverview } from "../api/client";
+import { masterApi, type DemoBusiness, type MasterAccount, type MasterOverview } from "../api/client";
 import { Shell } from "../components/Shell";
 import { Card, Notice, Skeleton, btnCls, inputCls, primaryCls } from "../components/ui";
 
@@ -17,6 +17,7 @@ function Body() {
   const [rows, setRows] = useState<MasterAccount[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [keys, setKeys] = useState<{ id: string; key: string }[] | null>(null);
+  const [demos, setDemos] = useState<DemoBusiness[] | null>(null);
   const [issue, setIssue] = useState({ count: "1", label: "", price: "1" });
   const [busy, setBusy] = useState(false);
   const load = useCallback(() => { Promise.all([masterApi.overview(), masterApi.accounts()]).then(([o, a]) => { setOv(o); setRows(a); }).catch((e) => setError(e.message)); }, []);
@@ -25,6 +26,8 @@ function Body() {
   async function act(fn: () => Promise<unknown>) { setBusy(true); setError(null); try { await fn(); load(); } catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(false); } }
   const issueKeys = () => act(async () => { const r = await masterApi.issue(Math.max(1, Number(issue.count) || 1), issue.label.trim(), Number(issue.price) || 0); setKeys(r.keys); });
   const revoke = (a: MasterAccount) => { const why = window.prompt(`Revoke ${a.business ?? a.hint}? They lose access at once. Reason (optional):`); if (why !== null) void act(() => masterApi.revoke(a.id, why)); };
+  const reinstate = (a: MasterAccount) => { if (window.confirm(`Reinstate ${a.business ?? a.hint}? They get access back on their next request.`)) void act(() => masterApi.reinstate(a.id)); };
+  const makeDemos = () => act(async () => setDemos((await masterApi.demoBusinesses()).businesses));
   const pay = (a: MasterAccount) => { const v = window.prompt(`Amount received from ${a.business} (USD), covering one month:`, String(a.price)); if (v === null) return; const ref = window.prompt("Payment reference (optional, for example the M-Pesa code):") ?? ""; void act(() => masterApi.pay(a.id, Number(v), 1, ref)); };
   const wait = ov == null;
 
@@ -39,7 +42,7 @@ function Body() {
           <Stat busy={wait} label="Collected, all time" value={ov ? usd(ov.collected_total) : ""} />
           <Stat busy={wait} label="Paid up / not paid" value={ov ? `${ov.paid_up} / ${ov.overdue}` : ""} />
         </div>
-        {ov && <p className="text-xs text-ink-muted">Money shown is only what you have recorded as received. Licences: {ov.licences.active} active, {ov.licences.unused} not yet activated, {ov.licences.revoked} revoked.</p>}
+        {ov && <p className="text-xs text-ink-muted">Money shown is only what you have recorded as received. Licences: {ov.licences.active} active, {ov.licences.unused} not yet activated, {ov.licences.revoked} revoked.{ov.paused > 0 && ` ${ov.paused} paused until paid.`}</p>}
       </Card>
 
       <Card className="!p-5 sm:!p-7 space-y-4">
@@ -59,6 +62,19 @@ function Body() {
         )}
       </Card>
 
+      <Card className="!p-5 sm:!p-7 space-y-4">
+        <h2 className="text-xl font-semibold">Demo businesses</h2>
+        <p className="text-sm text-ink-muted">Creates a shop, a pharmacy and a workshop, each with four months of sample activity, an owner login and a free licence you can revoke like any other. Use them to show the app to someone.</p>
+        <div><button className={primaryCls} disabled={busy} onClick={makeDemos}>Create demo businesses</button></div>
+        {demos && (
+          <div className="border border-border rounded-sm p-3 space-y-2" role="status">
+            <p className="text-sm font-semibold">Copy these logins now. The passwords are shown once and cannot be recovered.</p>
+            <pre className="kpi-figure text-sm whitespace-pre-wrap break-all select-all">{demos.map((d) => `${d.business_name}\n  ${d.email}\n  ${d.password}`).join("\n\n")}</pre>
+            <div className="flex gap-3"><button className={btnCls} onClick={() => navigator.clipboard?.writeText(demos.map((d) => `${d.business_name}\n${d.email}\n${d.password}`).join("\n\n"))}>Copy</button><button className={btnCls} onClick={() => setDemos(null)}>I have saved them</button></div>
+          </div>
+        )}
+      </Card>
+
       <Card className="!p-0 overflow-x-auto">
         {rows == null ? <div className="p-5"><Skeleton className="h-24 w-full" /></div> : (
           <table className="w-full text-sm">
@@ -69,13 +85,14 @@ function Body() {
                 <tr key={a.id}>
                   <td className="px-4 py-3"><div className="font-medium">{a.business ?? a.label ?? "Not activated"}</div><div className="text-xs text-ink-muted">{a.owner_email ?? "Waiting for activation"}</div></td>
                   <td className="px-4 py-3 kpi-figure text-xs">{a.hint}</td>
-                  <td className="px-4 py-3">{a.status === "active" ? (a.payment_state ? STATE[a.payment_state] : "Active") : a.status === "revoked" ? <span title={a.revoked_reason ?? ""}>Revoked</span> : "Not activated"}</td>
+                  <td className="px-4 py-3">{a.access === "overdue" ? <span title="Past its grace period without payment. Recording a payment restores access at once.">Paused, not paid</span> : a.status === "active" ? (a.payment_state ? STATE[a.payment_state] : "Active") : a.status === "revoked" ? <span title={a.revoked_reason ?? ""}>Revoked</span> : "Not activated"}</td>
                   <td className="px-4 py-3 kpi-figure">{date(a.paid_through)}</td>
                   <td className="px-4 py-3 kpi-figure">{usd(a.total_paid)}</td>
                   <td className="px-4 py-3 kpi-figure">{date(a.last_record_at)}</td>
                   <td className="px-4 py-3 whitespace-nowrap text-right space-x-2">
                     {a.status === "active" && a.price > 0 && <button className={btnCls} disabled={busy} onClick={() => pay(a)}>Record payment</button>}
                     {a.status !== "revoked" && a.label !== "Platform owner" && <button className={btnCls} disabled={busy} onClick={() => revoke(a)}>Revoke</button>}
+                    {a.status === "revoked" && <button className={btnCls} disabled={busy} onClick={() => reinstate(a)}>Reinstate</button>}
                   </td>
                 </tr>
               ))}

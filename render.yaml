@@ -14,6 +14,8 @@ services:
         generateValue: true # needed once, to create your first business
       - key: LICENCE_ENFORCED
         value: "false"      # switch to "true" after you create the master account (see README, Licences)
+      - key: LICENCE_GRACE_DAYS
+        value: "7"          # days a paid licence may run past its paid period before it is paused
       - key: APP_SECRET
         generateValue: true # every other secret is derived from this
       - key: ENV

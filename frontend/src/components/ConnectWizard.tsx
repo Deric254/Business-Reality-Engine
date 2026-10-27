@@ -6,12 +6,13 @@ import { Card, Notice, btnCls, inputCls, primaryCls } from "./ui";
 
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong. Try again.");
 
-type Kind = "sheets" | "file" | "woo" | "shopify" | "link" | "webhook" | "database" | "agent" | "sftp" | "email" | "folder";
+type Kind = "mpesa" | "sheets" | "file" | "woo" | "shopify" | "link" | "webhook" | "database" | "agent" | "sftp" | "email" | "folder";
 interface Entry { id: Kind; title: string; blurb: string; type: string; group: string; note?: string }
 
 const CATALOG: Entry[] = [
+  { id: "mpesa", title: "M-Pesa Paybill or Till (live)", blurb: "Every customer payment arrives as a sale the moment it happens, sent by Safaricom's Daraja service.", type: "webhook", group: "Start here", note: "You register the link we give you on Safaricom's Daraja portal. Not yet tried against live Safaricom traffic, so make one small test payment first." },
   { id: "sheets", title: "Google Sheets", blurb: "Paste a share link. Updates are picked up on a schedule.", type: "url", group: "Start here" },
-  { id: "file", title: "Excel or CSV file", blurb: "Upload an export from your till, accounting or any spreadsheet.", type: "file", group: "Start here" },
+  { id: "file", title: "Excel or CSV file", blurb: "Upload an export from your till, accounting, an M-Pesa statement or any spreadsheet.", type: "file", group: "Start here" },
   { id: "woo", title: "WooCommerce", blurb: "Online shop orders, pulled automatically.", type: "url", group: "Your shop or system", note: "Ready-made setup; not yet tried against a live store, so use Test first." },
   { id: "shopify", title: "Shopify", blurb: "Orders from your Shopify store.", type: "url", group: "Your shop or system", note: "Ready-made setup; not yet tried against a live store, so use Test first." },
   { id: "link", title: "Web link or API", blurb: "Any web address that returns CSV, Excel or JSON, with an optional key or login.", type: "url", group: "Your shop or system" },
@@ -167,7 +168,7 @@ export function ConnectWizard({ tenantId, onClose, onDone }: { tenantId: string;
     e.preventDefault(); setBusy(true); setErr(null);
     try {
       const pull = ["url", "database", "sftp", "email", "shared_folder"].includes(entry!.type);
-      const config = { ...sourceConfig(), ...(entry!.type === "webhook" || entry!.type === "local_agent" ? {} : {}), ...mappingConfig() };
+      const config = kind === "mpesa" ? { preset: "mpesa_c2b", default_currency: f.default_currency } : { ...sourceConfig(), ...mappingConfig() };
       const created = await connectorApi.create({
         tenant_id: tenantId, name: name.trim() || entry!.title, connector_type: entry!.type, config,
         expected_frequency: entry!.type === "webhook" ? "realtime" : pull && interval ? "periodic" : null,
@@ -219,7 +220,7 @@ export function ConnectWizard({ tenantId, onClose, onDone }: { tenantId: string;
   // ---------- step 2+: details, map, finish ----------
   const urlish = entry.type === "url";
   const pull = ["url", "database", "sftp", "email", "shared_folder"].includes(entry.type);
-  const needsMapping = entry.type !== "manual";
+  const needsMapping = entry.type !== "manual" && kind !== "mpesa";
   const savedAfterInspect = !canInspect || info != null;
   const sheetsHelp = kind === "sheets" && <p className="text-sm text-ink-muted">In Google Sheets choose <strong>Share</strong>, set General access to <strong>Anyone with the link: Viewer</strong>, then copy the link. Only that sheet is read, never your other files.</p>;
 
@@ -302,6 +303,7 @@ export function ConnectWizard({ tenantId, onClose, onDone }: { tenantId: string;
           {kind === "folder" && (<div className="grid sm:grid-cols-2 gap-3">
             <Field label="Folder inside your business folder" value={f.path ?? ""} onChange={(v) => set("path", v)} required placeholder="exports" /><Field label="File name pattern" value={f.file_pattern ?? "*"} onChange={(v) => set("file_pattern", v)} />
           </div>)}
+          {kind === "mpesa" && <p className="text-sm text-ink-muted">After you connect you'll get a private link, shown once. On Safaricom's Daraja portal, register it as the <strong>confirmation URL</strong> for your Paybill or Till (C2B). From then on each customer payment appears here as a sale, with the payer's number in place of a customer name.</p>}
           {kind === "agent" && <p className="text-sm text-ink-muted">After you connect, you'll get a one-time token. Copy <code className="bg-ink px-1 rounded">agent/reality_agent.py</code> from the project to the shop computer and follow <code className="bg-ink px-1 rounded">agent/README.md</code>. Say below which field in each row holds the amount and the time.</p>}
 
           {canInspect && (

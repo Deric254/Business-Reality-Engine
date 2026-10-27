@@ -16,7 +16,16 @@ from fastapi import HTTPException
 
 
 def _block_private() -> bool:
-    return os.environ.get("BLOCK_PRIVATE_CONNECTOR_HOSTS", "").lower() == "true"
+    """On unless switched off. With ENV=production the default is ON, so a deployment that forgets the setting is safe
+    (every compose file and the Render blueprint run with ENV=production). Set BLOCK_PRIVATE_CONNECTOR_HOSTS=false only
+    for a single-business install that must reach its own network. Outside production it stays off, as before, so local
+    development against localhost databases keeps working."""
+    explicit = os.environ.get("BLOCK_PRIVATE_CONNECTOR_HOSTS", "").strip().lower()
+    if explicit in ("true", "1", "yes", "on"):
+        return True
+    if explicit in ("false", "0", "no", "off"):
+        return False
+    return os.environ.get("ENV", "development").strip().lower() == "production"
 
 
 def check_host_allowed(host: str) -> None:

@@ -1,9 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.core.db import SessionLocal
 from app.core.ingestion import NormalizedEvent, ingest_events_bulk, ingest_normalized_event
+from app.connectors.mpesa import DARAJA_ACK
 from app.connectors.webhook_connector import verify_webhook_token, WebhookMapping, webhook_payload_to_event_dict
 from app.core.rate_limit import check_webhook_rate_limit
 from app.models.core import Connector
@@ -57,10 +58,10 @@ async def receive_webhook(connector_id: str, token: str, request: Request):
 
         event_dict = webhook_payload_to_event_dict(
             payload, mapping, tenant_id=connector.tenant_id, connector_id=connector.id,
-            source=connector.name, received_at=datetime.utcnow(),
+            source=connector.name, received_at=datetime.now(timezone.utc),
         )
         result = ingest_normalized_event(db, NormalizedEvent(**event_dict))
-        return result
+        return DARAJA_ACK if mapping.ack == "daraja" else result
     finally:
         db.close()
 
@@ -99,13 +100,14 @@ async def receive_batch(connector_id: str, token: str, request: Request):
             raise HTTPException(500, f"Mapping is misconfigured: {e}")
         events, rejected, index_map = [], [], []
         now = datetime.utcnow()
+        arrived = datetime.now(timezone.utc)
         for i, item in enumerate(items):
             if not isinstance(item, dict):
                 rejected.append({"index": i, "error": "each event must be a JSON object"})
                 continue
             try:
                 events.append(NormalizedEvent(**webhook_payload_to_event_dict(
-                    item, mapping, tenant_id=connector.tenant_id, connector_id=connector.id, source=connector.name, received_at=now)))
+                    item, mapping, tenant_id=connector.tenant_id, connector_id=connector.id, source=connector.name, received_at=arrived)))
                 index_map.append(i)
             except HTTPException as e:
                 rejected.append({"index": i, "error": e.detail})

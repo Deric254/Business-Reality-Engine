@@ -6,6 +6,7 @@ import { ApiError, captureApi, connectorApi, importSummary, type CaptureEntry, t
 import { getClaims } from "../api/session";
 import { Shell } from "../components/Shell";
 import { ConnectWizard, SecretOnce } from "../components/ConnectWizard";
+import { SampleData } from "../components/SampleData";
 import { Card, Empty, Notice, PageTitle, Section, btnCls, inputCls, primaryCls } from "../components/ui";
 import { timeAgo } from "../lib/severity";
 import { useT } from "../lib/i18n";
@@ -159,6 +160,7 @@ function DataBody({ tenantId, isOwner }: { tenantId: string; isOwner: boolean })
       <Notice error={err} notice={notice} />
       {created && (created.webhook_url || created.webhook_token) && <SecretOnce created={created} onClose={() => setCreated(null)} />}
       {adding && isOwner && <ConnectWizard tenantId={tenantId} onClose={() => setAdding(false)} onDone={(c, summary) => { setAdding(false); setCreated(c); setNotice(`Connected ${c.name}.${summary ? " " + summary : ""}`); load(); }} />}
+      {isOwner && <SampleData tenantId={tenantId} hasData={rows.length > 0} onChanged={load} setNotice={setNotice} setError={setErr} />}
       <details className="bg-panel border border-border rounded-xl px-5 py-3" onToggle={(e) => setChecking(e.currentTarget.open)}>
         <summary className="cursor-pointer text-sm font-medium">Is something missing? Check my data</summary>
         {checking && <div className="mt-3"><DataCheck tenantId={tenantId} days={30} /></div>}

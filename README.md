@@ -16,7 +16,7 @@ docker compose up -d --build  # db, redis, migrations, api, web  ->  http://loca
 ```
 
 Generate secrets with `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`; the encryption key must be a Fernet key (`python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`).
-Compose has not been built in the authoring environment; see the runbook's first-deploy checklist.
+The authors have not built these images by hand: `.github/workflows/deploy-smoke.yml` builds the compose stack and smoke-tests it in CI, so check that it is green and follow the runbook's first-deploy checklist before putting a customer on it.
 
 ## Local development
 
@@ -28,7 +28,7 @@ createdb business_reality && alembic upgrade head
 uvicorn app.main:app --reload                # API on :8000
 
 cd frontend && npm install && npm run dev    # UI on :5173 (set VITE_API_BASE if the API is elsewhere)
-python -m pytest tests -q -W ignore          # 357 tests; needs Postgres at DATABASE_URL
+python -m pytest tests -q -W ignore          # needs Postgres at DATABASE_URL (defaults to the business_reality database above)
 ```
 
 ## Licences and the master account
@@ -36,33 +36,22 @@ Every business comes in through a licence key: one key creates one business, onc
 - **Create the master account (once):** sign in as yourself, then `POST /api/master/bootstrap` with header `x-admin-key: <ADMIN_API_KEY>` and body `{"email": "<your email>"}`. A **Licences** link then appears in the sidebar for you and nobody else (everyone else gets a 404 on `/api/master/*`).
 - **Issue keys** on the Licences page (price per month, who it is for). A key is shown once and stored only as a hash. The customer opens `/activate`, enters the key, their business name, email and password, and is signed in. Two people submitting the same key at once create one business, never two.
 - **Revoke** from the same page: the business is refused on its next request (within about 20 seconds across several servers without Redis; at once with it) and cannot sign in. Your own master licence cannot be revoked.
-- **Money:** the page shows only what you have recorded as received (**Record payment**, with an optional reference such as the M-Pesa code; each payment extends *paid through* by a month). Monthly recurring, collected this month and all time are sums of that ledger. Charging the $1 automatically needs a payment provider account (Paystack, Stripe or similar); its webhook would call the same `licensing.record_payment`. Until then, payment is recorded by hand.
+- **Money:** the page shows only what you have recorded as received (**Record payment**, with an optional reference such as the M-Pesa code; each payment extends *paid through* by a month). Monthly recurring, collected this month and all time are sums of that ledger. Charging the $1 automatically needs a payment provider account (Paystack, Stripe or similar); its webhook would call the same `licensing.record_payment`. Until then, payment is recorded by hand. With enforcement on, a paid licence that is more than `LICENCE_GRACE_DAYS` (default 7) past its paid period, or past activation if it never paid, is paused: its people cannot sign in or use the app, the data is kept, and recording a payment restores access at once. A free licence (price 0) is never paused.
+- **Reinstate** a revoked licence from the same page (`POST /api/master/licences/{id}/reinstate`); access returns on the business's next request.
 - **Switch it on:** set `LICENCE_ENFORCED=true` and redeploy. The migration gives every business that exists today a free active licence, so nobody is locked out when you do. With the switch off (the default) licences are issued and tracked but not required.
 
+## M-Pesa
+Two ways in, both under **Add a source** on the Data page.
+- **Live payments (Paybill or Till).** Choose "M-Pesa Paybill or Till (live)". You get a private link, shown once; register it on Safaricom's Daraja portal as the C2B *confirmation URL*. Each customer payment then arrives as a sale at the time it happened (Daraja's `TransTime` is read as East Africa time), keyed on its `TransID`, so a payment delivered more than once is still counted once. The payer's number, as Daraja sends it (it may be masked or hashed), is stored as the customer. The reply is the one Daraja waits for (`ResultCode` 0). *Status: built to Daraja's documented format and tested with sample payloads; not yet tried against live Safaricom traffic, so make one small test payment first.*
+- **Statements.** Upload the CSV or Excel statement as a file source. Paid in is read as sales and Withdrawn as expenses; the wizard says so and lets you change it. Rows that share a receipt number are all kept. *Withdrawn includes everything that leaves the account, such as transfers to your own accounts and settlements, which are not business costs: remove those rows before uploading, or spending will look too high.*
+
+## Sample data and demo businesses
+- **Try before connecting.** A business with no data sees "Want to see it working first?" on the Data page: a neighbourhood shop, a pharmacy or a workshop, each with about four months of made-up activity and one problem hiding in it (a branch gone quiet; stock buying that has nearly doubled; one customer behind half the invoices and a very large bill). Owners only, and only into a business with no data. It can be removed while it is the only data there (`/api/demo/samples`); real data is never touched.
+- **Demo businesses for showing the app.** On the Licences page, "Create demo businesses" makes one business per sample, each with an owner login (the password is shown once) and a free licence that can be revoked and reinstated like any other.
+- **From the command line:** `python scripts/seed_demo.py --api http://localhost:8000 --admin-key $ADMIN_API_KEY --kind duka` (or `pharmacy`, `workshop`).
+
 ## Periods: one definition of "last N days"
-`app/core/periods.py` is the only place a period is defined: N whole days on the business's own calendar, ending with today, compared with the N days before it; **All time** runs from the first sale or expense to the end of today with nothing to compare. The Overview, the chart, the health strip, Ask and Check my data all take their boundaries from it, and the chart groups by the business's day, never the UTC day. Alerts compare complete days up to the end of yesterday and now say which days: that is why an alert's "7 days" can differ from the Overview's by today's sales.
-
-## Scale
-Measured on one business with 860,000 records from three sources (a POS, an M-Pesa statement, accounting), PostgreSQL on a small machine: dashboard numbers 0.3 to 0.5 s, a full detection cycle 3.9 s, a question planned by the AI 1.0 s, a 5,000-row upload into that business 3.6 s (a single row 0.1 s), disconnecting a 400,000-record source 3.5 s. Things that are one-off and slow: confirming a merge that pairs 320,000 records takes about 30 s and undoing it about 15 s. Design rules that keep it this way: reconciliation runs as set-based SQL inside the database (never rows pulled into Python) and incrementally, only against records near new arrivals; it uses grouping instead of joins so a stale query plan after a bulk import cannot turn it quadratic; per-business lookups (location spellings, branch and product names) live in small tables or short caches, so no request scans the whole history to find them. Not measured: much beyond a million records in one business, or many hundreds of businesses in one database; at that size the events table would need partitioning.
-
-## Built for volume and many sources
-Measured on one business with about 860,000 records across three sources (a POS, an M-Pesa statement, an accounting export) on a single small Postgres:
-
-| Operation | Time |
-|---|---|
-| Dashboard numbers (30 and 365 days) | about 1 s |
-| Business health, source contributions | 0.4 to 0.5 s |
-| Plain question / weekday / forecast | 0.1 s |
-| AI-planned question (grouping, comparison over a year) | about 1.2 s |
-| Full detection cycle | about 3 s |
-| Upload of 5,000 rows | about 3 s (5 s while a merge rule is active); one row: 0.03 s |
-| Suggest merges between sources (cached 5 min) | about 4 s |
-| Confirm a merge that pairs 320,000 records (one time) | about 30 s |
-| Undo that merge / disconnect a 400,000-record source | about 17 s / 3 s |
-
-How it stays that way: aggregation and matching happen in the database, never by loading records into Python; after a merge, new records are paired only against records near them in time; spellings of places live in a small lookup table; branch and product names for the AI planner are cached. Matching works from small temporary tables with fresh statistics, because the planner cannot estimate the big table right after a bulk import.
-
-Not measured: more than about 1 million records in one business, or more than about 8 sources compared pairwise (suggestions stop there). The events table is not partitioned; at tens of millions of rows per business, partition it by tenant and month.
+`app/core/periods.py` is the only place a period is defined: N **complete** days on the business's own calendar, ending **yesterday**, compared with the N days before them. Today is left out because it is not over, so a steady business never looks like it is falling in the morning. "Today" on its own is the day so far and is never presented as a verdict. **All time** runs from the first sale or expense to the end of today with nothing to compare. The Overview, the chart, the health strip, Ask, Check my data and the alerts all take their boundaries from it (the alerts use the same window, so an alert's "7 days" and the Overview's agree), and the chart groups by the business's day, never the UTC day.
 
 ## Ask anything, with numbers you can trust
 - **Common questions need no AI** (profit, sales, expenses, top customers, branches, best weekday, forecast, what needs attention).
@@ -88,15 +77,6 @@ A Google Sheet or file link is re-read on every sync and the stored records are 
 - Live detection compares **whole days**: the day in progress is incomplete and would make every week look like a drop.
 - **Spending exceeds sales** is raised from the first days of data, from plain arithmetic on the last 30 days (high when spending is at least 1.25 times sales). It stays quiet if no sales are recorded at all, which usually means the sales source is not connected.
 
-## Built for large histories and many sources
-Measured on one business with 860,000 records across three sources (a POS, an M-Pesa statement, accounting), on a small shared database:
-- Dashboard numbers 0.4 to 0.8 s, health score 1.1 s, a detection cycle 7 to 8 s, questions 0.1 to 2 s, disconnecting a 400,000-record source 7 s.
-- Ingesting 5,000 rows takes 4 to 6 s (about 1,000 rows a second, mostly entity resolution and index writes); one row takes under 0.1 s, even with a merge rule active.
-- Reconciliation runs entirely in the database (no rows are loaded into Python) and has no row limit. It pairs about 320,000 records in roughly 50 s and undoes that in about 30 s; a typical business (tens of thousands) takes seconds. After a merge, new records are paired incrementally, only against records near them in time.
-- Suggestions and the "only in one source" lists look at the last 60 days, are tried inside a transaction that is rolled back, and are cached for 5 minutes.
-- Place spellings live in a small per-business lookup table, so ingestion never scans the events table to normalise them; the lists of branch and product names the AI may filter by are cached.
-Not measured: more than about a million records in one business, or many dozens of sources. Beyond that the events table would want partitioning by tenant and time.
-
 ## Reads data as the business keeps it
 Nobody has to reshape their files. On connect, the columns are detected (by an AI when a provider key is set, by rules otherwise; every AI answer is checked against the real columns) and the person only confirms.
 - **Report titles above the header** (business name, date range) are skipped; error messages still quote the row number as the sheet shows it.
@@ -105,6 +85,7 @@ Nobody has to reshape their files. On connect, the columns are detected (by an A
 - **A Type column** (Sale, Purchase, Withdrawal...) decides sale or expense per row.
 - Dates day-first, amounts such as `KES 1,500` or `1,500/=`, blank and TOTAL rows: see below.
 Not handled yet: dates or months spread across columns, and one workbook with several tabs as one source (connect each tab separately).
+- A source that reuses one id for several lines (an M-Pesa statement gives a charge and its transfer the same receipt number; an invoice number covers every line) keeps every line that says something different. Exact copies of a line still count once.
 
 ## One shared dataset
 Every source (file, sheet, link, database, webhook, typed entries) is normalised into the same event table, so every total, alert and chart reads one place.
@@ -116,12 +97,37 @@ Every source (file, sheet, link, database, webhook, typed entries) is normalised
 - **Disconnect removes a source and its data** (`DELETE /api/connectors/{id}`, owner only, audit-logged). A record that another source also held stays counted. Use Pause to stop a source without deleting anything.
 - The Data page shows, per source, how many records are counted, how many were already counted from another source, and how many were rejected (`GET /api/connectors/contributions`).
 
+## Time and time zones
+A time that carries a zone (`…Z`, `…+03:00`) is converted to UTC. A time with **no** zone is read on the business's own clock: spreadsheet cells, typed entries, and API events sent without an offset. An API caller that sends UTC clock times without an offset will therefore see them shifted by the business's offset, so always send the offset. A webhook event with no time at all is stamped with the moment it arrived. Days start at the business's local midnight.
+
+## Performance
+Measured by the author on one business with about 860,000 records from three sources (a POS, an M-Pesa statement, an accounting export), PostgreSQL on a small machine. Several runs are on record and they differ with the machine and its load, so each figure is a range.
+
+| Operation | Time |
+|---|---|
+| Dashboard numbers (30 and 365 days) | 0.3 to 1 s |
+| Business health, source contributions | 0.4 to 1.1 s |
+| Plain question, weekday, forecast | about 0.1 s |
+| AI-planned question (grouping, comparison over a year) | 1 to 2 s |
+| Full detection cycle | 3 to 8 s |
+| Upload of 5,000 rows | 3 to 6 s (one row: under 0.1 s) |
+| Suggest merges between sources (cached 5 min) | about 4 s |
+| Confirm a merge that pairs 320,000 records (one time) | 30 to 50 s |
+| Undo that merge | 15 to 30 s |
+| Disconnect a 400,000-record source | 3 to 7 s |
+
+Re-run for the 1.0 audit on a single vCPU with 4 GB and no tuning: bulk ingestion about 4,800 events a second (5,000 events in about 1 s; re-sending the same 5,000 as duplicates about 3,200 a second). One event at a time, which is what a single-event webhook does, runs at about 105 a second, so send batches when you can.
+
+How it stays fast: aggregation and matching happen in the database, never by loading records into Python; reconciliation is set-based and incremental, only against records near new arrivals, and uses grouping instead of joins so a stale query plan after a bulk import cannot turn it quadratic; per-business lookups (place spellings, branch and product names) live in small tables or short caches, so no request scans the whole history; matching works from small temporary tables with fresh statistics.
+
+Not measured: more than about a million records in one business, many hundreds of businesses in one database, or more than about 8 sources compared pairwise (suggestions stop there). The events table is not partitioned; at tens of millions of rows per business, partition it by tenant and month.
+
 ## Who calls what
 
 | Caller | Credential | Reaches |
 |---|---|---|
 | People in the web app | per-user JWT (owner or staff) | everything in their own business; owners change settings |
-| Connected systems | per-connector webhook token; service key `x-api-key` for event ingestion only | `/api/webhooks/...`, `/api/events/...` |
+| Connected systems | per-connector webhook token; service key `x-api-key` for event ingestion only (off by default in production: set `ALLOW_SERVICE_KEY_INGEST=true` to allow it) | `/api/webhooks/...`, `/api/events/...` |
 | The operator | `x-admin-key` | `/api/system/*`, creating businesses |
 
 Create the first business and its owner: `POST /api/system/tenants` with `x-admin-key` (name, owner_email, owner_password).
@@ -139,8 +145,8 @@ app/api/        routers          app/core/       detection, ingestion, delivery,
 app/connectors/ source adapters  app/reasoning/  provider-agnostic LLM layer
 agent/          on-premise local agent           alembic/        migrations
 frontend/       React + TypeScript + Tailwind    scripts/        seed, load test, backup, restore
-tests/          357 tests                        .github/        CI
+tests/          the test suite                   .github/        CI
 ```
 
 ## Free hosting
-See [docs/FREE_DEPLOY.md](docs/FREE_DEPLOY.md): Neon + Render + Cloudflare Pages, no card, no monthly cost.
+See [docs/FREE_DEPLOY.md](docs/FREE_DEPLOY.md): Neon + Render + Cloudflare Pages, no card, no monthly cost. This suits demos and a first pilot. Free tiers can sleep when idle, and a sleeping server cannot run the scheduled checks that notice a source gone quiet, so put paying customers on an always-on server.

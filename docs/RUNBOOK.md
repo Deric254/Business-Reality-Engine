@@ -27,10 +27,13 @@
 | "held" deliveries never arrive | Channel is in daily digest mode; digest goes at its UTC hour, once a day |
 | Reset emails never arrive | SMTP unset, per-address limit (3/hour), or wrong `APP_BASE_URL` in the link |
 | 429 Too many attempts | Auth limiter (10/min/IP) or account lockout (5 wrong passwords -> 15 min). Behind a proxy set `TRUSTED_PROXY_HOPS` or all users share one IP |
-| Source shows "Waiting for data" or stale | Connectors page: Sync now shows the error; database/SFTP/IMAP hosts must be public (private hosts are blocked by design) |
+| Source shows "Waiting for data" or stale | Connectors page: Sync now shows the error; database/SFTP/IMAP hosts must be public (private hosts are blocked by default when `ENV=production`; set `BLOCK_PRIVATE_CONNECTOR_HOSTS=false` only for a single-business install that must reach its own network) |
 | Alerts too noisy or quiet | Accuracy page: log known incidents, run a backtest, adopt the suggested sensitivity; add promotions/holidays under Business |
 | Slow dashboard on a large tenant | KPIs are cached 30 s; measured reads stay sub-second to 500k events per tenant; beyond several million consider rollups/partitions |
+| A business is told its subscription is overdue | Licences page shows "Paused, not paid". Record a payment (access returns at once), or lengthen `LICENCE_GRACE_DAYS`. A revoked licence shows a Reinstate button |
+| M-Pesa payments do not arrive | The confirmation URL must be registered on Safaricom's Daraja portal exactly as shown once in the app (if lost, add a new M-Pesa source and register that). check when the source last received something on the Data page; a payment delivered twice is still counted once |
+| A prospect needs something to look at | Licences page, "Create demo businesses" (logins shown once); or a new business can load a sample from the Data page |
 | Locked-out sole owner, no email | Operator creates a new owner: `POST /api/auth/register` with `x-admin-key` |
 
 ## What has not been verified (read this)
-Docker image builds, the CI workflow on GitHub, real Slack/Teams/Twilio delivery, LLM narrative quality, MySQL/MSSQL/Oracle/ODBC servers, multi-machine load, screen readers. Each has a code path and tests against local stand-ins; confirm them once in your environment.
+Docker image builds, the CI workflow on GitHub, live Safaricom Daraja traffic for the M-Pesa feed, real Slack/Teams/Twilio delivery, LLM narrative quality, MySQL/MSSQL/Oracle/ODBC servers, multi-machine load, screen readers. Each has a code path and tests against local stand-ins; confirm them once in your environment.

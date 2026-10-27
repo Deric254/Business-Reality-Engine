@@ -11,7 +11,7 @@ from app.core.scheduler import start_scheduler, stop_scheduler
 from app.core.keepalive import start_keepalive, stop_keepalive
 from app.spa import mount_spa, SPA_CSP
 from app.core.rate_limit import RateLimitMiddleware
-from app.api import health, connectors, events, alerts, entities, detection, coverage, cases, questions, tenants, forecasting, simulation, webhooks, system, auth, notifications, monitoring, audit as audit_api, users, business, accuracy as accuracy_api, capture, ai as ai_api, master as master_api, live as live_api, goals as goals_api
+from app.api import health, connectors, events, alerts, entities, detection, coverage, cases, questions, tenants, forecasting, simulation, webhooks, system, auth, notifications, monitoring, audit as audit_api, users, business, accuracy as accuracy_api, capture, ai as ai_api, master as master_api, live as live_api, goals as goals_api, demo as demo_api
 
 # Without this, every logger.info() call in the app is silently dropped —
 # Python's root logger defaults to WARNING with no handler configured.
@@ -168,6 +168,7 @@ app.include_router(accuracy_api.router, prefix="/api/accuracy", tags=["accuracy"
 app.include_router(capture.router, prefix="/api/capture", tags=["capture"])
 app.include_router(live_api.router, prefix="/api/live", tags=["live"])
 app.include_router(goals_api.router, prefix="/api/goals", tags=["goals"])
+app.include_router(demo_api.router, prefix="/api/demo", tags=["demo"])
 
 # Must be last: the catch-all route that serves the web app can only come after every API route.
 if settings.SERVE_FRONTEND:

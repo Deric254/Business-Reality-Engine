@@ -3,7 +3,7 @@ Sections 12, 14, 34: data quality report, data discovery, and the one-screen
 business health summary. All numbers are computed from the tenant's own data
 at request time; nothing here is stored or estimated by a model.
 """
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 from sqlalchemy import func, case
 from sqlalchemy.orm import Session

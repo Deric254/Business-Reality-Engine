@@ -241,15 +241,22 @@ def pg_source(db, rows):
     return name
 
 
+def _this_database(password=None):
+    """Connection settings for the very database the tests run against, whatever DATABASE_URL names."""
+    from sqlalchemy.engine import make_url
+    u = make_url(os.environ["DATABASE_URL"])
+    return {"db_type": "postgres", "host": u.host, "port": u.port or 5432, "database": u.database, "username": u.username,
+            "password": password or u.password}
+
+
 def test_postgres_sync_end_to_end_encrypted_password_and_idempotent(client, db):
     t, h = make_owner(client, "pg")
     tbl = pg_source(db, [(dt.datetime(2026, 1, 1, 9), 100), (dt.datetime(2026, 1, 2, 9), 250.5)])
-    cfg = {**MAP, "db_type": "postgres", "host": "localhost", "port": 5432, "database": "reality_engine", "username": "postgres",
-           "password": "postgres", "query": f"SELECT id, ts, amt FROM {tbl}"}
+    cfg = {**MAP, **_this_database(), "query": f"SELECT id, ts, amt FROM {tbl}"}
     try:
         c = mk(client, t, h, connector_type="database", config=cfg).json()
         stored = db.get(Connector, c["id"]).config["password"]
-        assert stored != "postgres" and stored.startswith("gAAAA")                           # encrypted at rest
+        assert stored != _this_database()["password"] and stored.startswith("gAAAA")                           # encrypted at rest
         r = client.post(f"/api/connectors/{c['id']}/sync-database?tenant_id={t}", headers=h)
         assert r.status_code == 200 and r.json()["rows_fetched"] == 2 and r.json()["failed"] == 0, r.text
         assert sorted(float(e.amount) for e in events_for(db, c["id"])) == [100.0, 250.5]
@@ -264,8 +271,7 @@ def test_postgres_sync_end_to_end_encrypted_password_and_idempotent(client, db):
 
 def test_postgres_connection_failure_is_recorded_without_leaking_credentials(client, db):
     t, h = make_owner(client, "pgbad")
-    cfg = {**MAP, "db_type": "postgres", "host": "localhost", "port": 5432, "database": "reality_engine", "username": "postgres",
-           "password": "wrong-password-xyz", "query": "SELECT 1 AS id, now() AS ts, 1 AS amt"}
+    cfg = {**MAP, **_this_database(password="wrong-password-xyz"), "query": "SELECT 1 AS id, now() AS ts, 1 AS amt"}
     c = mk(client, t, h, connector_type="database", config=cfg).json()
     r = client.post(f"/api/connectors/{c['id']}/sync-database?tenant_id={t}", headers=h)
     assert r.status_code == 502 and "wrong-password-xyz" not in r.text and "postgres" not in r.text.lower().replace("postgresql", "")

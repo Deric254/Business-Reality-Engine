@@ -23,6 +23,18 @@ def require_api_key(x_api_key: str = Header(default=None)):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
+def service_key_ingest_allowed() -> bool:
+    """Whether the shared service key may send events for any business. Off by default in production, on elsewhere
+    (development and tests). ALLOW_SERVICE_KEY_INGEST=true/false overrides either way."""
+    import os
+    explicit = os.environ.get("ALLOW_SERVICE_KEY_INGEST", "").strip().lower()
+    if explicit in ("true", "1", "yes", "on"):
+        return True
+    if explicit in ("false", "0", "no", "off"):
+        return False
+    return os.environ.get("ENV", "development").strip().lower() != "production"
+
+
 def require_admin_key(x_admin_key: str = Header(default=None)):
     """
     SECURITY.md item 9/1: /api/system/* is deliberately cross-tenant (an

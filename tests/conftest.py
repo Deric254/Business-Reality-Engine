@@ -4,7 +4,7 @@ uniquely-named tenants, so runs don't collide with each other or real data."""
 import os
 import uuid
 
-os.environ.setdefault("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/reality_engine")
+os.environ.setdefault("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/business_reality")
 os.environ["API_KEY"] = "test-service-key"
 os.environ["ADMIN_API_KEY"] = "test-admin-key"
 os.environ["JWT_SECRET_KEY"] = "test-jwt-secret-test-jwt-secret-1234"

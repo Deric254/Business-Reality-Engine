@@ -23,7 +23,7 @@ _RULES: list[tuple[str, list[str]]] = [
 ]
 _MONEY_DIRECTION: list[tuple[str, list[str]]] = [         # statements and ledgers keep money in and money out apart
     ("amount_in_col", ["paid_in", "money_in", "amount_in", "cash_in", "deposits", "deposit", "received", "credit"]),
-    ("amount_out_col", ["withdrawn", "withdrawal", "money_out", "amount_out", "cash_out", "paid_out", "debit"]),
+    ("amount_out_col", ["withdrawn", "withdraw", "withdrawal", "money_out", "amount_out", "cash_out", "paid_out", "debit"]),
 ]
 _TYPE_WORDS = ["transaction_type", "txn_type", "type", "kind", "dr_cr"]
 _FIELD_HELP = {
