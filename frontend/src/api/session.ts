@@ -1,7 +1,8 @@
-// Token storage for the signed-in user. sessionStorage (tab-scoped, cleared on
-// tab close) rather than localStorage: a shorter exposure window if a token
-// is ever read by injected script. Every access is wrapped — storage can throw
-// (private mode, blocked site data) and the app must still render.
+// Token storage for the signed-in user. By default sessionStorage (tab-scoped, cleared on tab close): a shorter
+// exposure window if a token is ever read by injected script. A person who ticks "Keep me signed in on this device" at
+// sign-in is kept in localStorage instead, so the app opens signed in next time; that choice is theirs alone, it is
+// remembered for as long as the tokens are (a refresh keeps it), and signing out clears both. Every access is wrapped:
+// storage can throw (private mode, blocked site data) and the app must still render.
 const ACCESS_KEY = "bre.access";
 const REFRESH_KEY = "bre.refresh";
 
@@ -13,34 +14,53 @@ export interface TokenPair {
 let memoryTokens: TokenPair | null = null;
 const listeners = new Set<() => void>();
 
-function read(key: string): string | null {
+type Where = "session" | "device";
+
+function store(where: Where): Storage {
+  return where === "device" ? localStorage : sessionStorage;
+}
+
+function read(where: Where, key: string): string | null {
   try {
-    return sessionStorage.getItem(key);
+    return store(where).getItem(key);
   } catch {
     return null;
   }
 }
 
-function write(key: string, value: string | null) {
+function write(where: Where, key: string, value: string | null) {
   try {
-    if (value === null) sessionStorage.removeItem(key);
-    else sessionStorage.setItem(key, value);
+    if (value === null) store(where).removeItem(key);
+    else store(where).setItem(key, value);
   } catch {
     /* fall back to in-memory only */
   }
 }
 
-export function getTokens(): TokenPair | null {
-  if (memoryTokens) return memoryTokens;
-  const access = read(ACCESS_KEY);
-  const refresh = read(REFRESH_KEY);
+function saved(where: Where): TokenPair | null {
+  const access = read(where, ACCESS_KEY);
+  const refresh = read(where, REFRESH_KEY);
   return access && refresh ? { access_token: access, refresh_token: refresh } : null;
 }
 
-export function setTokens(tokens: TokenPair | null) {
+/** True when this device was told to stay signed in. */
+export function isRemembered(): boolean {
+  return saved("device") !== null;
+}
+
+export function getTokens(): TokenPair | null {
+  return memoryTokens ?? saved("session") ?? saved("device");
+}
+
+/** `remember` is only given at sign-in. Later calls (a refresh, a password change) keep whatever the person chose. */
+export function setTokens(tokens: TokenPair | null, remember?: boolean) {
+  const where: Where = tokens && (remember ?? isRemembered()) ? "device" : "session";
+  const other: Where = where === "device" ? "session" : "device";
   memoryTokens = tokens;
-  write(ACCESS_KEY, tokens?.access_token ?? null);
-  write(REFRESH_KEY, tokens?.refresh_token ?? null);
+  write(where, ACCESS_KEY, tokens?.access_token ?? null);
+  write(where, REFRESH_KEY, tokens?.refresh_token ?? null);
+  write(other, ACCESS_KEY, null);
+  write(other, REFRESH_KEY, null);
   listeners.forEach((fn) => fn());
 }
 

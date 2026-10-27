@@ -20,7 +20,7 @@ Honest scope note: verified in a sandbox with real Postgres, Redis, OpenSSH, Dov
 | 1–5 | Vision, principles, architecture | DONE | Reflected in code structure |
 | 6 | Relationship traversal | DONE | `relationships.py` + `/api/business/relationships/{id}`: what a customer/product/supplier is tied to, shares, share of business. UI explorer on the Business page |
 | 7 | Entity model | DONE | ResolvedEntity + EntityAlias |
-| 8 | Connectors | DONE (see caveats) | File (CSV/XLSX/JSON/XML/TXT), webhook, database (driver registry: Postgres + SQLite verified live; MySQL wired, unverified; MSSQL/Oracle/ODBC need server drivers and are unverified), SFTP, email (IMAP), shared folder (tenant-jailed, content-hash dedupe), local agent (`agent/`, outbound-only), manual capture (idempotent), scheduled pull sync with advisory locks. Setup UI built. Not built: UI-automation/RPA, JDBC |
+| 8 | Connectors | DONE (see caveats) | File (CSV/XLSX/JSON/XML/TXT), webhook, database (driver registry: Postgres, SQLite and MySQL verified live, MySQL against MariaDB 10.11 here and MySQL 8 in CI; MSSQL/Oracle/ODBC need server drivers and are unverified), SFTP, email (IMAP), shared folder (tenant-jailed, content-hash dedupe), local agent (`agent/`, outbound-only), manual capture (idempotent), scheduled pull sync with advisory locks. Setup UI built. Not built: UI-automation/RPA, JDBC |
 | 9–11 | Normalization, data contract | DONE | |
 | 12 | Quality checks | DONE | Validation on ingest plus `/api/business/quality` (failed %, missing fields, per-source) and a quality-driven alert kind; shown on the Business page |
 | 13 | Entity resolution | DONE (scaled) | Exact-match auto-link, ranked suggestions, human `/merge`. Now indexed + batched: denormalized alias columns, pg_trgm KNN (tenant-scoped GiST), one pass per chunk, unique alias identity so concurrent senders converge on one entity. Old version scanned every entity per new value (400 new customers: 7 events/s; 1,500 did not finish in 5 min). Trade-off: a weak fuzzy pair outside the 40 nearest trigram neighbours with a different surname is no longer suggested |
@@ -103,14 +103,25 @@ Changed, each guarded by tests (`tests/test_hardening.py`, `tests/test_mpesa.py`
 - **Tests and CI** use one database name (`business_reality`, as the README and compose do); the two tests that hardcoded another name now read `DATABASE_URL`.
 - **Docs.** One performance section with ranges instead of three that disagreed; periods described as the code defines them (complete days ending yesterday); typed counts removed; the runbook's private-host claim is now true.
 - **Dead code.** Unused imports removed from three application modules.
+- **Dead code.** Unused imports removed from application modules; CI now fails on any new one (`ruff --select F`).
+- **Clock.** The deprecated `datetime.utcnow()` is replaced everywhere in the product by one named helper (`app/core/clock.py`, same naive-UTC result); every class-based Pydantic `Config` is now `ConfigDict`. The app imports with deprecation warnings treated as errors.
+- **Nothing fails silently where it could hide a fault.** A failed cache refresh after ingest, an unknown business time zone (every day boundary would be wrong) and the failure paths in sync and outcome tracking are now logged. The remaining broad `except` blocks are probes that fall back by design.
+- **M-Pesa statements: leave out what is not a cost.** A details column and a list of words (`exclude_words`) leave matching money-out rows out of spending; off unless the owner lists words, never applied to money in, and every import reports how many rows and how much money were left out. File mappings are now validated when a connector is created.
+- **Installable app and opt-in sign-in memory.** Web-app manifest, icons and a service worker that never touches the API; "Keep me signed in on this device" (off by default); the web app answers HEAD requests; the service worker and manifest are always revalidated.
+- **MySQL verified live** against MariaDB 10.11, and CI runs the same tests against MySQL 8.
+- **Check tools** for what the authors cannot reach: `scripts/mpesa_simulate.py` and `scripts/check_ai.py`, each tested against the product.
+- **Frontend tests** (Vitest and Testing Library) for session storage, import summaries, the sample-data card, sign-in and translations, run in CI.
+- **A production-mode boot** of the whole app was run end to end here (health, web app, sample business, figures, service key refused, private host refused, simulated M-Pesa payments, repeat counted once) with no errors in the server log. That is not a Docker build.
 
-Still open (nothing here is hidden by the changes above):
+Still open, with the reason each is not done:
 
-- The Docker images have not been built or run by the authors; the CI smoke workflow exists, so confirm it is green.
-- The live M-Pesa feed follows Daraja's documented format and is tested with sample payloads only, never with live Safaricom traffic.
-- M-Pesa statements: withdrawals are read as expenses, including transfers and settlements to the owner's own accounts, which are not costs. The owner must remove those rows.
-- One email address belongs to one business; there is no membership across several businesses.
-- Alert text is English only. API events without a time zone are read as the business's local time (documented in the README).
-- `datetime.utcnow()` (deprecated since Python 3.12) and broad `except Exception` blocks are used widely; no frontend test suite; no installable app or persistent sign-in.
-- Detector thresholds were never tuned on real businesses, the AI narrative layer has never run against a real key, and the MySQL, SQL Server and Oracle connectors are unverified.
-- Single-event ingestion is slow (about 100 events a second); send batches.
+- **Docker images:** not built or run by the authors (no Docker in the audit environment). The pieces were each run (dependency install, migrations from empty, frontend build, production-mode boot), and CI builds the images; confirm it is green.
+- **Live Safaricom traffic:** the M-Pesa feed follows Daraja's documented format and is tested with sample payloads and the simulator, never with Safaricom itself. This needs your Paybill or Till registered on Daraja.
+- **A real AI key:** the AI layer has never run against a real provider. `scripts/check_ai.py` is the first thing to run.
+- **Detector thresholds on real businesses:** reasoned defaults only. They can be tuned only with real data, which is what the first pilot is for.
+- **SQL Server, Oracle, generic ODBC:** need a live server and drivers to verify.
+- **One email, one business.** Letting one login work across several businesses (an accountant's use) changes the sign-in model: tokens, revocation, removing people, invitations and the last-owner rule. It deserves its own release with its own review rather than being squeezed in; the design is a memberships table, a switch-business step that issues a token for the chosen business, and invitations that add a membership.
+- **Alert headlines in Kiswahili.** The interface, the AI narratives and answers are already translated, but alert headlines are assembled from English fragments, and Swahili needs grammar-aware templates (noun-class agreement) reviewed by a native speaker; machine-assembled Swahili would read badly.
+- **M-Pesa statements:** the leave-out words are the owner's choice. The authors do not claim to know every phrase Safaricom uses, so none are applied by default.
+- **Single-event ingestion** runs at about 40 to 100 events a second because each call does the full resolution work, all in code shared by every source. Batches are about 50 times faster and are what bulk senders should use. This is far above what one till produces, so it is a limit to know about, not a defect; speeding it up means changing ingestion for every source.
+- API events without a time zone are read as the business's local time (documented in the README).

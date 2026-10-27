@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 from app.core.secrets import decrypt_secret
 from app.models.alerts import Alert
 from app.models.config import NotificationChannel, NotificationDelivery
+from app.core.clock import utcnow
 
 logger = logging.getLogger("business_reality_engine")
 
@@ -387,7 +388,7 @@ def process_deliveries(db: Session, limit: int = 100) -> dict:
     """Send due deliveries. Safe to run from many workers at once: rows are claimed under SKIP LOCKED
     and leased (next_attempt_at pushed out) before the lock is released, so no other worker can pick
     them up while this one is sending. A crash mid-send means a retry after the lease, never a loss."""
-    now = datetime.utcnow()
+    now = utcnow()
     claimed = (
         db.query(NotificationDelivery)
         .filter(NotificationDelivery.status == "pending", NotificationDelivery.next_attempt_at <= now)
@@ -422,7 +423,7 @@ def process_deliveries(db: Session, limit: int = 100) -> dict:
                 stats["deferred"] += 1
             else:
                 send_to_channel(alert, channel, d.kind)
-                d.status, d.sent_at, d.last_error = "sent", datetime.utcnow(), None
+                d.status, d.sent_at, d.last_error = "sent", utcnow(), None
                 stats["sent"] += 1
         except Exception as e:   # one bad channel never blocks the rest
             d.attempts += 1
@@ -431,7 +432,7 @@ def process_deliveries(db: Session, limit: int = 100) -> dict:
                 d.status = "dead"
                 stats["dead"] += 1
             else:
-                d.next_attempt_at = datetime.utcnow() + timedelta(minutes=BACKOFF_MINUTES[d.attempts - 1])
+                d.next_attempt_at = utcnow() + timedelta(minutes=BACKOFF_MINUTES[d.attempts - 1])
                 stats["retry"] += 1
             logger.warning(f"Delivery {d.id} failed (attempt {d.attempts}): {d.last_error}")
         db.commit()   # commit per row: a crash later never re-sends earlier ones
@@ -452,7 +453,7 @@ def send_due_digests(db: Session, now: datetime | None = None) -> int:
     """Send each channel's daily digest once per UTC day, at or after its digest_hour. The channel row
     is locked (SKIP LOCKED) for the whole send, so concurrent workers can never send it twice; a failed
     send leaves the items held and is retried after DIGEST_RETRY_MINUTES."""
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     sent = 0
     ids = [r[0] for r in db.execute(text(
         "SELECT id FROM notification_channels WHERE enabled AND digest_mode = 'daily'")).all()]
@@ -480,7 +481,7 @@ def send_due_digests(db: Session, now: datetime | None = None) -> int:
             if alerts:
                 send_digest(ch, alerts)
             for r in rows:
-                r.status, r.sent_at, r.last_error = "sent", datetime.utcnow(), None
+                r.status, r.sent_at, r.last_error = "sent", utcnow(), None
             ch.last_digest_at = now
             sent += 1
         except Exception as e:

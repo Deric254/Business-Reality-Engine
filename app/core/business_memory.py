@@ -12,12 +12,16 @@ attribution_confidence is capped at "medium", never "high": a single
 before/after comparison with no control group cannot support high
 confidence in causation, only in the fact that something changed.
 """
+import logging
 from datetime import datetime, timedelta
 from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.models.alerts import Alert, Case
 from app.core.detection import _sum_metric
+from app.core.clock import utcnow
+
+logger = logging.getLogger("business_reality_engine")
 
 
 def create_case_from_alert(
@@ -64,7 +68,7 @@ def measure_case_outcome(db: Session, tenant_id: str, case_id: str, now: Optiona
     has elapsed since the case was opened — never fabricates a result from
     an incomplete window.
     """
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     case = db.query(Case).filter(Case.id == case_id, Case.tenant_id == tenant_id).first()
     if not case:
         raise ValueError("Case not found for this tenant")
@@ -165,7 +169,7 @@ def historical_experience(db: Session, tenant_id: str, alert: Alert, limit: int 
 def measure_due_cases(db: Session, tenant_id: str, now: Optional[datetime] = None, limit: int = 100) -> int:
     """Section 37: nobody should have to remember to measure. Every cycle, measure the cases whose
     window has fully elapsed. Cases that cannot be measured (no metric) are skipped, never retried noisily."""
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     due = (
         db.query(Case)
         .filter(Case.tenant_id == tenant_id, Case.actual_outcome.is_(None), Case.outcome_measured_at.is_(None))
@@ -182,5 +186,6 @@ def measure_due_cases(db: Session, tenant_id: str, now: Optional[datetime] = Non
             if measure_case_outcome(db, tenant_id, c.id, now)["status"] == "measured":
                 done += 1
         except Exception:
+            logger.warning("Could not measure the outcome of case %s", c.id, exc_info=True)
             db.rollback()
     return done

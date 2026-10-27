@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from app.core.detection import _sum_metric
 from app.core.tenant_time import local_midnight_utc, tenant_zone
 from app.models.core import BusinessEvent
+from app.core.clock import utcnow
 
 
 def _least_squares(xs: list[float], ys: list[float]) -> tuple[float, float]:
@@ -58,7 +59,7 @@ def forecast_next_period(
     db: Session, tenant_id: str, entity: str, field: str,
     period_days: int = 7, lookback_periods: int = 6, now: Optional[datetime] = None,
 ) -> PeriodTrend:
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     values = []
     for i in range(lookback_periods, 0, -1):
         end = now - timedelta(days=period_days * (i - 1))
@@ -123,7 +124,7 @@ def forecast_days(db: Session, tenant_id: str, entity: str, horizon_days: int = 
     stronger a Saturday is than a Tuesday, a straight-line trend on what is left once that pattern is removed, and a
     range from how far past days missed it. Closed weekdays stay at zero. None when there is less than four weeks of
     history, or too few days with records to show a pattern (weekly totals are not a daily rhythm): nothing is invented."""
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     tz = tenant_zone(db, tenant_id)
     today = now.replace(tzinfo=timezone.utc).astimezone(tz).date()
     yesterday = today - timedelta(days=1)                       # today is still incomplete, so it is not history
@@ -179,7 +180,7 @@ def forecast_threshold_crossing(
     business's actual current cash figure) — this engine doesn't have
     a notion of an absolute balance on its own, only transaction flow.
     """
-    now = now or datetime.utcnow()
+    now = now or utcnow()
 
     daily_net = []
     for i in range(lookback_days, 0, -1):

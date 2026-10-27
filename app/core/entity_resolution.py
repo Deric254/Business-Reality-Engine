@@ -19,7 +19,6 @@ customer's transaction history by merging them with someone else.
 import re
 import uuid
 from functools import lru_cache
-from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Optional
 from sqlalchemy import text, tuple_
@@ -28,6 +27,7 @@ from sqlalchemy.orm import Session
 from rapidfuzz import fuzz, process
 
 from app.models.core import ResolvedEntity, EntityAlias
+from app.core.clock import utcnow
 
 SUGGESTION_THRESHOLD = 55   # below this, too weak to even suggest
 SURNAME_MATCH_BONUS = 25    # ranking boost when last tokens match/abbreviate — suggestion only, never auto-link
@@ -309,7 +309,7 @@ def resolve_entities_bulk(
         if new_reps:
             db.execute(pg_insert(ResolvedEntity.__table__), [
                 {"id": ent_id[k], "tenant_id": tenant_id, "entity_type": entity_type, "canonical_name": k[3],
-                 "attributes": attributes_by_key.get(k) or {}, "confidence": 1.0, "created_at": datetime.utcnow()}
+                 "attributes": attributes_by_key.get(k) or {}, "confidence": 1.0, "created_at": utcnow()}
                 for k in new_reps
             ])
         for k in new_reps:

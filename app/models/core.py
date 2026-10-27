@@ -6,7 +6,6 @@ Section 15: Data Coverage Map
 Section 48: Multi-tenant isolation (tenant_id on every row)
 """
 import uuid
-from datetime import datetime
 from sqlalchemy import (
     Column, String, DateTime, Numeric, ForeignKey, Boolean,
     Index, JSON, Enum as SAEnum, BigInteger, Integer
@@ -15,6 +14,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy import MetaData, text
 import enum
+from app.core.clock import utcnow
 
 # Explicit naming convention — without this, Postgres/Alembic auto-generates
 # constraint names that autogenerate can't reliably reference later (we hit
@@ -49,7 +49,7 @@ class Tenant(Base):
     # Bumped every time this business's records change (see app.core.cache.invalidate_tenant). Open screens poll it
     # (app.api.live) and reload the moment it moves, so nobody keeps looking at figures from before a sync.
     data_version = Column(Integer, nullable=False, default=0, server_default="0")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
 
 class Connector(Base):
@@ -71,7 +71,7 @@ class Connector(Base):
     # Set once the owner confirms that this source records the SAME sales or expenses as another one (a POS and an
     # M-Pesa statement) without sharing an id: matching records are then counted once, in the source named here.
     merge_into = Column(UUID(as_uuid=False), ForeignKey("connectors.id", ondelete="SET NULL"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     __table_args__ = (Index("ix_connectors_tenant", "tenant_id"),)
 
@@ -119,7 +119,7 @@ class BusinessEvent(Base):
     metadata_json = Column(JSON, nullable=False, default=dict)
 
     # Section 11: provenance / ingestion tracking
-    imported_at = Column(DateTime, default=datetime.utcnow)
+    imported_at = Column(DateTime, default=utcnow)
     validation_status = Column(String, default="pending")  # pending | validated | failed | duplicate | matched
     validation_errors = Column(JSON, nullable=True)
     # "duplicate" = the same record (same id, amount, day) is already counted from ANOTHER source; "matched" = the owner
@@ -171,7 +171,7 @@ class ResolvedEntity(Base):
     canonical_name = Column(String, nullable=False)
     attributes = Column(JSON, nullable=False, default=dict)
     confidence = Column(Numeric(3, 2), nullable=False, default=1.0)  # 0-1, Section 13
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     aliases = relationship("EntityAlias", back_populates="entity")
 
@@ -243,7 +243,7 @@ class DataCoverage(Base):
     area = Column(String, nullable=False)  # e.g. "sales", "inventory", "payroll"
     status = Column(SAEnum(DataCoverageStatus), nullable=False)
     last_data_at = Column(DateTime, nullable=True)
-    checked_at = Column(DateTime, default=datetime.utcnow)
+    checked_at = Column(DateTime, default=utcnow)
 
     __table_args__ = (Index("ix_coverage_tenant_area", "tenant_id", "area", unique=True),)
 
@@ -271,7 +271,7 @@ class User(Base):
     email = Column(String, nullable=False)
     password_hash = Column(String, nullable=False)
     role = Column(String, nullable=False, default="staff")  # "owner" | "staff"
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
     # Every token issued at or before this instant (epoch ms) is invalid: sign-out-everywhere / password change.
     tokens_valid_after_ms = Column(BigInteger, nullable=False, default=0, server_default="0")
     # True while the password is one an owner generated: the account can do nothing but change it.
@@ -300,7 +300,7 @@ class AuditLog(Base):
     __tablename__ = "audit_log"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
-    ts = Column(DateTime, nullable=False, default=datetime.utcnow)
+    ts = Column(DateTime, nullable=False, default=utcnow)
     tenant_id = Column(UUID(as_uuid=False), nullable=True)      # no FK: the trail outlives and survives anything
     actor_user_id = Column(UUID(as_uuid=False), nullable=True)
     actor_type = Column(String, nullable=False, default="user")  # user | admin | service | anonymous
@@ -325,7 +325,7 @@ class SchedulerRun(Base):
     __tablename__ = "scheduler_runs"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
-    started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    started_at = Column(DateTime, nullable=False, default=utcnow)
     completed_at = Column(DateTime, nullable=True)
     tenants_checked = Column(String, nullable=True)
     checks_run = Column(String, nullable=True)
@@ -347,4 +347,4 @@ class PasswordResetToken(Base):
     purpose = Column(String, nullable=False)          # reset | invite
     expires_at = Column(DateTime, nullable=False)
     used_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)

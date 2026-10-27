@@ -42,6 +42,7 @@ const MAP_FIELDS: { key: string; label: string; required?: boolean; help?: strin
   { key: "amount_out", label: "Money out", help: "Money paid out. Rows with money out count as expenses." },
   { key: "price", label: "Unit price", help: "Only when there is no total: the amount is worked out as quantity × price." },
   { key: "type", label: "Type of row", help: "A column saying sale or expense. Words like Expense, Purchase or Withdrawal count as expenses." },
+  { key: "details", label: "Details", help: "What each payment was for (an M-Pesa statement's Details, a bank's narration). Only used by the box below that leaves out money that is not a cost." },
   { key: "quantity", label: "Quantity", help: "How many units, if your data has it." },
   { key: "currency", label: "Currency", help: "Only if each row carries its own currency. Otherwise use the currency box above." },
   { key: "location", label: "Branch or location", help: "The shop or branch, so locations can be compared." },
@@ -82,6 +83,19 @@ function Mapper({ f, set, info, webhook }: { f: F; set: (k: string, v: string) =
           );
         })}
       </div>
+      {!webhook && f.amount_out_col && f.details_col && (
+        <div className="space-y-2">
+          <label className="block text-sm text-ink-muted">Leave out money-out rows whose details contain
+            <input className={`${inputCls} mt-1`} value={f.exclude_words ?? ""} onChange={(e) => set("exclude_words", e.target.value)} placeholder="for example: settlement, transfer to" />
+            <span className="block text-xs text-ink-faint mt-1">A statement lists everything that leaves the account, including transfers to your own accounts and settlements, which are not costs of the business. List words that mark them (not case sensitive, separated by commas). Nothing is left out unless you list words, and every upload says how many rows and how much money were left out.</span>
+          </label>
+          <div className="flex flex-wrap gap-2 items-center text-xs text-ink-faint">Common examples, check them against your statement:
+            {["Settlement", "Transfer to", "Withdrawal at agent"].map((w) => (
+              <button type="button" key={w} className={btnCls} onClick={() => { const have = (f.exclude_words ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean); if (!have.includes(w.toLowerCase())) set("exclude_words", [...(f.exclude_words ?? "").split(",").map((s) => s.trim()).filter(Boolean), w].join(", ")); }}>{w}</button>
+            ))}
+          </div>
+        </div>
+      )}
     </fieldset>
   );
 }
@@ -141,6 +155,8 @@ export function ConnectWizard({ tenantId, onClose, onDone }: { tenantId: string;
   const mappingConfig = () => {
     const out: Record<string, unknown> = {};
     for (const k of Object.keys(f)) if (/(_col|_path)$/.test(k) || k === "entity" || k === "event_type" || k === "default_currency") if (f[k]) out[k] = f[k];
+    const words = (f.exclude_words ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    if (out.details_col && words.length) out.exclude_words = words;
     return out;
   };
 

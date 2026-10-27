@@ -9,7 +9,7 @@ not leak it either.
 import hashlib
 import os
 import secrets
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Optional
 
 from sqlalchemy import text
@@ -20,6 +20,7 @@ from app.core.notifications import DeliveryError, send_plain_email, smtp_configu
 from app.models.core import PasswordResetToken, User
 
 import logging
+from app.core.clock import utcnow
 logger = logging.getLogger("business_reality_engine")
 
 RESET_TTL = timedelta(minutes=60)
@@ -35,10 +36,10 @@ def issue_token(db: Session, user: User, purpose: str) -> str:
     assert purpose in ("reset", "invite")
     db.query(PasswordResetToken).filter(
         PasswordResetToken.user_id == user.id, PasswordResetToken.purpose == purpose,
-        PasswordResetToken.used_at.is_(None)).update({"used_at": datetime.utcnow()})
+        PasswordResetToken.used_at.is_(None)).update({"used_at": utcnow()})
     raw = secrets.token_urlsafe(32)
     db.add(PasswordResetToken(user_id=user.id, token_hash=_hash(raw), purpose=purpose,
-                              expires_at=datetime.utcnow() + (RESET_TTL if purpose == "reset" else INVITE_TTL)))
+                              expires_at=utcnow() + (RESET_TTL if purpose == "reset" else INVITE_TTL)))
     db.commit()
     return raw
 

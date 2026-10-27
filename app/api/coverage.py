@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Header
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -17,8 +17,7 @@ class CoverageOut(BaseModel):
     last_data_at: Optional[datetime]
     checked_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 @router.get("/", response_model=list[CoverageOut])

@@ -10,6 +10,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.models.alerts import Alert, AlertSeverity, AlertState
+from app.core.clock import utcnow
 
 SEVERITY_BASE = {
     AlertSeverity.critical: 100, AlertSeverity.high: 70, AlertSeverity.medium: 40,
@@ -79,7 +80,7 @@ def _attach_drivers(db: Session, a: Alert) -> None:
 
 
 def post_process_tenant(db: Session, tenant_id: str, now: Optional[datetime] = None) -> dict:
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     open_alerts = (
         db.query(Alert).filter(Alert.tenant_id == tenant_id, Alert.state.in_(ACTIVE))
         .order_by(Alert.created_at.desc()).limit(500).all()

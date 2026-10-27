@@ -7,6 +7,7 @@ import { getClaims } from "../api/session";
 import { Shell } from "../components/Shell";
 import { ConnectWizard, SecretOnce } from "../components/ConnectWizard";
 import { SampleData } from "../components/SampleData";
+import { SystemLinks } from "../components/SystemLinks";
 import { Card, Empty, Notice, PageTitle, Section, btnCls, inputCls, primaryCls } from "../components/ui";
 import { timeAgo } from "../lib/severity";
 import { useT } from "../lib/i18n";
@@ -14,7 +15,7 @@ import { useOnLiveChange } from "../lib/liveContext";
 
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong. Try again.");
 const PULL = ["database", "url", "sftp", "email", "shared_folder"];
-const TYPE_LABEL: Record<string, string> = { url: "Web link or API", file: "File upload", webhook: "Live feed", database: "Database", sftp: "SFTP", email: "Email", shared_folder: "Shared folder", local_agent: "Local agent", manual: "Typed in by hand" };
+const TYPE_LABEL: Record<string, string> = { url: "Web link or API", file: "File upload", webhook: "Live feed", database: "Database", sftp: "SFTP", email: "Email", shared_folder: "Shared folder", local_agent: "Local agent", system: "Local system", manual: "Typed in by hand" };
 
 function Text({ label, value, onChange, type = "text", required = false }: { label: string; value: string; onChange: (v: string) => void; type?: string; required?: boolean }) {
   return (
@@ -149,7 +150,7 @@ function DataBody({ tenantId, isOwner }: { tenantId: string; isOwner: boolean })
   const [created, setCreated] = useState<ConnectorRow | null>(null);
   const [contributions, setContributions] = useState<Record<string, Contribution>>({});
   const load = useCallback(() => Promise.all([connectorApi.list(tenantId), connectorApi.contributions(tenantId)])
-    .then(([r, c]) => { setRows(r); setContributions(c); }).catch((e) => setErr(errText(e))), [tenantId]);
+    .then(([r, c]) => { setRows(r.filter((x) => x.connector_type !== "system")); setContributions(c); }).catch((e) => setErr(errText(e))), [tenantId]);
   useOnLiveChange(load);                     // a scheduled sync, an upload elsewhere: the list and its "last checked" follow
   useEffect(() => { load(); }, [load]);
   useEffect(() => { if (window.location.hash === "#entry") document.getElementById("entry")?.scrollIntoView(); }, [rows]);
@@ -165,6 +166,9 @@ function DataBody({ tenantId, isOwner }: { tenantId: string; isOwner: boolean })
         <summary className="cursor-pointer text-sm font-medium">Is something missing? Check my data</summary>
         {checking && <div className="mt-3"><DataCheck tenantId={tenantId} days={30} /></div>}
       </details>
+      <Section title="Your systems" hint="smePro, Imara and Pharmacy ERP on your own computers, in any combination. The engine finds each one by itself and tells you plainly if it cannot.">
+        <SystemLinks tenantId={tenantId} isOwner={isOwner} onChanged={load} />
+      </Section>
       <Section title="Connected sources">
         {rows.length === 0 && !adding
           ? <Empty action={isOwner ? <button className={primaryCls} onClick={() => setAdding(true)}>{t("data.add")}</button> : undefined}>No data source connected yet. Connect one, or add entries by hand below.</Empty>

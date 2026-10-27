@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.core.detection import _sum_metric
 from app.reasoning import web_search
 from app.reasoning.llm_providers import get_provider
+from app.core.clock import utcnow
 
 logger = logging.getLogger("business_reality_engine")
 
@@ -58,7 +59,7 @@ def _business_context(db: Session, tenant_id: str, area: Optional[str]) -> tuple
     Only these names reach the search service (never an amount, a customer or a date)."""
     from sqlalchemy import func
     from app.models.core import BusinessEvent
-    since = datetime.utcnow() - timedelta(days=180)
+    since = utcnow() - timedelta(days=180)
     base = [BusinessEvent.tenant_id == tenant_id, BusinessEvent.entity == "sale", BusinessEvent.timestamp >= since,
             BusinessEvent.validation_status == "validated", BusinessEvent.amount.isnot(None)]
     def top(col, n):
@@ -163,7 +164,7 @@ def compute_profit_breakdown(
     return {
         "period_days": period_days,
         "period": per.as_dict(),
-        "as_of": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "as_of": utcnow().isoformat(timespec="seconds") + "Z",
         "revenue": {"current": revenue_current, "previous": revenue_previous},
         "expenses": {"current": expense_current, "previous": expense_previous},
         "profit": {

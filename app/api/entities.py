@@ -1,7 +1,7 @@
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from app.core import audit
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -40,8 +40,7 @@ class EntityOut(BaseModel):
     canonical_name: str
     confidence: float
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 @router.post("/resolve", response_model=ResolveResponse)

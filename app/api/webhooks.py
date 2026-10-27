@@ -8,6 +8,7 @@ from app.connectors.mpesa import DARAJA_ACK
 from app.connectors.webhook_connector import verify_webhook_token, WebhookMapping, webhook_payload_to_event_dict
 from app.core.rate_limit import check_webhook_rate_limit
 from app.models.core import Connector
+from app.core.clock import utcnow
 
 router = APIRouter()
 PUSH_TYPES = ('webhook', 'local_agent')
@@ -99,7 +100,7 @@ async def receive_batch(connector_id: str, token: str, request: Request):
         except Exception as e:
             raise HTTPException(500, f"Mapping is misconfigured: {e}")
         events, rejected, index_map = [], [], []
-        now = datetime.utcnow()
+        now = utcnow()
         arrived = datetime.now(timezone.utc)
         for i, item in enumerate(items):
             if not isinstance(item, dict):

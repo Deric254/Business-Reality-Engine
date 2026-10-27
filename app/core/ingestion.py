@@ -5,6 +5,7 @@ must go through this same function. This is what keeps validation and
 tenant-isolation rules consistent across every ingestion path instead of
 each connector re-implementing (and potentially drifting on) the checks.
 """
+import logging
 import hashlib
 import uuid
 from types import SimpleNamespace
@@ -21,6 +22,9 @@ from app.core import detection_kick, reconcile
 from app.core.fx import convert_event_fields
 from app.core.tenant_time import tenant_zone
 from app.core.entity_resolution import resolve_entities_bulk
+from app.core.clock import utcnow
+
+logger = logging.getLogger("business_reality_engine")
 
 
 class NormalizedEvent(BaseModel):
@@ -60,7 +64,7 @@ def _validate_event(event) -> list[str]:
     errors = []
     if event.amount is not None and event.amount < 0 and event.entity in {"sale", "expense"}:
         errors.append("negative amount on sale/expense — check source mapping")
-    if event.timestamp > datetime.utcnow():
+    if event.timestamp > utcnow():
         errors.append("event timestamp is in the future")
     if event.entity_id and len(event.entity_id) > 255:
         errors.append("entity_id exceeds max length")
@@ -245,7 +249,7 @@ def _ingest_chunk(db: Session, chunk: list[NormalizedEvent], connectors: dict[st
                 "errors": ev.validation_errors or [], "entity_review_flags": [], "duplicate": True, "merged": False,
             })
 
-    now = datetime.utcnow()
+    now = utcnow()
     for cid, had_errors in touched.items():
         connectors[cid].last_sync_at = now
         connectors[cid].last_sync_status = "partial" if had_errors else "success"
@@ -292,7 +296,8 @@ def ingest_events_bulk(db: Session, payloads: list[NormalizedEvent], chunk_size:
             invalidate_tenant(tid)
         detection_kick.kick({p.tenant_id for p in payloads})
     except Exception:
-        pass
+        # The records are saved; only the dashboard refresh failed, so carry on, but never silently.
+        logger.warning("Could not refresh caches or start detection after ingest", exc_info=True)
     return results
 
 

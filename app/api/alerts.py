@@ -1,7 +1,7 @@
 from typing import Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, model_validator, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.core import audit
@@ -47,8 +47,7 @@ class AlertOut(BaseModel):
     updated_at: Optional[datetime] = None   # when the check last confirmed this alert still holds
     period_label: Optional[str] = None      # the exact days the figures cover, on the business's calendar
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
     @model_validator(mode="wrap")
     @classmethod
@@ -109,8 +108,7 @@ class AlertDetailOut(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class StateUpdate(BaseModel):

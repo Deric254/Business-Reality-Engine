@@ -10,6 +10,7 @@ from app.models.core import Base as CoreBase
 from app.models.alerts import Base as AlertsBase  # noqa: F401 (same Base, ensures models are registered)
 from app.models import config as _config_models  # noqa: F401
 from app.models import licence as _licence_models  # noqa: F401
+from app.models import agent as _agent_models  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", get_settings().DATABASE_URL)

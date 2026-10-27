@@ -12,16 +12,25 @@ jobs:
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+      mysql:
+        image: mysql:8
+        env: {MYSQL_ROOT_PASSWORD: mysql, MYSQL_DATABASE: shop}
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -uroot -pmysql" --health-interval 5s --health-timeout 5s --health-retries 20
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/business_reality
+      MYSQL_TEST_URL: mysql+pymysql://root:mysql@127.0.0.1:3306/shop
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.13", cache: pip}
-      - run: pip install -r requirements.txt pytest httpx aiosmtpd pypdf pip-audit
+      - run: pip install -r requirements.txt pytest httpx aiosmtpd pypdf pip-audit ruff
       - run: alembic upgrade head
       - name: Migrations match the models
         run: alembic check
+      - name: No unused imports or undefined names in the application
+        run: ruff check --select F app agent scripts
       - run: python -m pytest tests -q -W ignore
       - name: Dependency vulnerabilities
         run: pip-audit -r requirements.txt
@@ -34,6 +43,7 @@ jobs:
         with: {node-version: 22, cache: npm, cache-dependency-path: frontend/package-lock.json}
       - run: npm ci
       - run: npx tsc -b
+      - run: npm test
       - run: npm run build
       - run: npm audit --audit-level=high --omit=dev
   images:

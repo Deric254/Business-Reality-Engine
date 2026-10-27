@@ -6,7 +6,6 @@ Each business watches its own monitored metrics (Section 50); one with none set 
 import logging
 import os
 import uuid
-from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import distinct
 
@@ -15,6 +14,7 @@ from app.core.detectors import run_tenant_cycle
 from app.core.notifications import dispatch_cycle
 from app.models.config import MonitoredMetric
 from app.models.core import Connector, SchedulerRun
+from app.core.clock import utcnow
 
 logger = logging.getLogger("business_reality_engine")
 
@@ -99,7 +99,7 @@ def run_detection_cycle():
         logger.info("Detection cycle skipped: another worker holds the lock")
         return
     db = SessionLocal()
-    run = SchedulerRun(started_at=datetime.utcnow(), status="running")
+    run = SchedulerRun(started_at=utcnow(), status="running")
     db.add(run)
     db.commit()
     db.refresh(run)
@@ -124,7 +124,7 @@ def run_detection_cycle():
                 logger.error(f"Detection cycle failed for tenant={tenant_id}: {e}")
                 errors.append({"tenant_id": tenant_id, "error": str(e)})
 
-        run.completed_at = datetime.utcnow()
+        run.completed_at = utcnow()
         run.tenants_checked = str(len(tenant_ids))
         run.checks_run = str(checked)
         run.errors_count = str(len(errors))
@@ -136,7 +136,7 @@ def run_detection_cycle():
         # A failure OUTSIDE the per-tenant loop (e.g. can't even list active
         # tenants — a DB connectivity issue) is different from a per-tenant
         # error: the whole cycle genuinely failed, not just one check.
-        run.completed_at = datetime.utcnow()
+        run.completed_at = utcnow()
         run.status = "failed"
         run.error_detail = [{"error": str(e)}]
         db.commit()
@@ -240,6 +240,8 @@ def start_scheduler(interval_minutes: int):
     )   # (passing next_run_time=None here would add the job PAUSED, and it would never run)
     _scheduler.add_job(run_dispatch_cycle, "interval", minutes=1, id="notification_dispatch",
                        max_instances=1, coalesce=True)
+    from app.core.systems import watch_all_links
+    _scheduler.add_job(watch_all_links, "interval", minutes=1, id="system_link_watch", max_instances=1, coalesce=True)
     _scheduler.add_job(run_sync_cycle, "interval", minutes=1, id="connector_sync", max_instances=1, coalesce=True)
     _scheduler.add_job(run_reasoning_cycle, "interval", minutes=5, id="alert_reasoning", max_instances=1, coalesce=True)
     _scheduler.add_job(run_housekeeping, "interval", hours=24, id="housekeeping", max_instances=1, coalesce=True)

@@ -5,7 +5,8 @@
 2. `docker compose up -d --build`. The `migrate` service runs `alembic upgrade head` once, then api and web start. Images have never been built by the authors; if the build fails, fix it before anything else and send the error.
 3. Put TLS in front (Caddy, nginx, a cloud load balancer). Nothing in this repo terminates TLS. Tokens travel in headers; do not expose plain HTTP.
 4. Create the first business: `curl -X POST $API/api/system/tenants -H "x-admin-key: $ADMIN_API_KEY" -H 'content-type: application/json' -d '{"name":"Acme","owner_email":"you@acme.com","owner_password":"..."}'`. Sign in at the web app; the dashboard links to the 3-step setup.
-5. In Settings add an email channel and press **Send test**. If SMTP is unset the test fails with a clear message and forgot-password/invitations are disabled.
+5. Check what could not be tried for you: `python scripts/check_ai.py ...` (if you connect an AI key) and, once an M-Pesa source exists, `python scripts/mpesa_simulate.py --url <its link>` (see the README).
+6. In Settings add an email channel and press **Send test**. If SMTP is unset the test fails with a clear message and forgot-password/invitations are disabled.
 
 ## Daily operation
 - Health: `GET /api/health` (public), `GET /api/system/scheduler-runs` and `/api/system/connector-health` (admin key) show scheduler runs, failures and stale sources. Detection runs on a schedule on exactly one worker (Redis lock); delivery runs on every worker safely.

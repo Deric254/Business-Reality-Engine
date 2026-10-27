@@ -1,7 +1,7 @@
 from typing import Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Header
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -33,8 +33,7 @@ class CaseOut(BaseModel):
     detected_at: datetime
     outcome_measured_at: Optional[datetime]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 def _get_owned_case(db: Session, case_id: str, tenant_id: str) -> Case:

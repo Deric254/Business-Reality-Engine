@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.connectors.database_connector import DatabaseColumnMapping, fetch_rows, rows_to_normalized_events
 from app.connectors.email_connector import list_new_emails
-from app.connectors.file_connector import (ColumnMapping, add_row_ids, dataframe_to_normalized_events, extra_sheet_events, parse_file_to_dataframe, validate_upload, with_default_id)
+from app.connectors.file_connector import (ColumnMapping, add_row_ids, dataframe_to_normalized_events, extra_sheet_events, left_out_note, parse_file_to_dataframe, validate_upload, with_default_id)
 from app.connectors.url_connector import fetch_dataframe
 from app.connectors.folder_connector import MAX_TRACKED, list_new_files as list_folder_files, read_file
 from app.connectors.sftp_connector import fetch_file, list_new_files as list_sftp_files
@@ -22,6 +22,7 @@ from app.core import snapshot
 from app.core.locks import try_advisory_lock
 from app.core.ingestion import NormalizedEvent
 from app.models.core import Connector
+from app.core.clock import utcnow
 
 logger = logging.getLogger("business_reality_engine")
 
@@ -33,7 +34,7 @@ def record_sync_failure(db: Session, connector: Connector, exc: HTTPException):
     """A connection-level failure must be visible: otherwise it looks identical to a connector never attempted."""
     connector.last_sync_status = "failed"
     connector.last_sync_error = str(exc.detail)[:500]
-    connector.last_sync_at = datetime.utcnow()
+    connector.last_sync_at = utcnow()
     db.commit()
     raise exc
 
@@ -54,7 +55,8 @@ def _ingest_frame(db, connector, mapping, content, filename):
     done = snapshot.apply(db, connector, [NormalizedEvent(**e) for e in parsed.events + extra_events], remove_missing=False)
     skipped_all = parsed.skipped + extra_skipped
     return {**{k: v for k, v in done.items() if k != "results"}, "rows_processed": len(done["results"]),
-            "skipped": len(skipped_all), "skipped_examples": skipped_all[:3], **({"other_sheets": sheet_notes} if sheet_notes else {})}
+            "skipped": len(skipped_all), "skipped_examples": skipped_all[:3], **left_out_note(parsed),
+            **({"other_sheets": sheet_notes} if sheet_notes else {})}
 
 
 def sync_database(db: Session, connector: Connector) -> dict:
@@ -147,7 +149,7 @@ def sync_url(db: Session, connector: Connector, confirmed: bool = False) -> dict
     done = snapshot.apply(db, connector, [NormalizedEvent(**e) for e in parsed.events],
                           remove_missing=bool(df.attrs.get("whole_file")), confirmed=confirmed)
     return {**{k: v for k, v in done.items() if k != "results"}, "rows_fetched": len(df), "rows_processed": len(done["results"]),
-            "skipped": len(parsed.skipped), "skipped_examples": parsed.skipped[:3]}
+            "skipped": len(parsed.skipped), "skipped_examples": parsed.skipped[:3], **left_out_note(parsed)}
 
 
 SYNCERS: dict[str, Callable[..., dict]] = {
@@ -169,12 +171,12 @@ def run_sync(db: Session, connector: Connector, confirmed: bool = False) -> dict
     if confirmed and connector.connector_type != "url":
         raise HTTPException(400, "Only a web link or sheet can be replaced this way")
     with try_advisory_lock(f"sync:{connector.id}") as got:
-        running = connector.last_attempt_at is None or (datetime.utcnow() - connector.last_attempt_at).total_seconds() < STALE_SYNC_SECONDS
+        running = connector.last_attempt_at is None or (utcnow() - connector.last_attempt_at).total_seconds() < STALE_SYNC_SECONDS
         if not got and running:
             raise HTTPException(409, "A sync of this connector is already running")
         if not got:           # the last sync started long ago, so the lock is left over (a pooled database connection can keep one): carry on
             logger.warning(f"Ignoring a stale sync lock for connector={connector.id}")
-        connector.last_attempt_at = datetime.utcnow()
+        connector.last_attempt_at = utcnow()
         db.commit()
         try:
             result = fn(db, connector, confirmed=True) if confirmed else fn(db, connector)
@@ -184,7 +186,7 @@ def run_sync(db: Session, connector: Connector, confirmed: bool = False) -> dict
             connector.last_sync_error = str(e.detail)[:500] if isinstance(e, HTTPException) else "Something unexpected went wrong while syncing. The server log has the details."
             db.commit()
             raise
-        connector.last_sync_at = datetime.utcnow()           # checking and finding nothing new still counts as a successful check
+        connector.last_sync_at = utcnow()           # checking and finding nothing new still counts as a successful check
         connector.last_sync_status = "partial" if result.get("failed") else "success"
         connector.last_sync_error = None
         db.commit()
@@ -199,7 +201,7 @@ def due_connectors(db: Session, now: datetime) -> list[Connector]:
 
 def run_due_syncs(db: Session, now: datetime | None = None) -> dict:
     """Scheduler entry: sync every due connector; one failing connector never stops the others."""
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     stats = {"due": 0, "ok": 0, "failed": 0, "busy": 0}
     for c in due_connectors(db, now):
         stats["due"] += 1
@@ -215,8 +217,9 @@ def run_due_syncs(db: Session, now: datetime | None = None) -> dict:
             logger.warning(f"Scheduled sync failed for connector={c.id}: {e.status_code} {e.detail}")
             try:
                 c2 = db.get(Connector, c.id)
-                c2.last_sync_status = "failed"; c2.last_sync_at = datetime.utcnow(); db.commit()
+                c2.last_sync_status = "failed"; c2.last_sync_at = utcnow(); db.commit()
             except Exception:
+                logger.warning("Could not record the failed sync for connector=%s", c.id, exc_info=True)
                 db.rollback()
         except Exception as e:
             db.rollback()

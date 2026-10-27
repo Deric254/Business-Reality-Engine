@@ -43,7 +43,7 @@ Every business comes in through a licence key: one key creates one business, onc
 ## M-Pesa
 Two ways in, both under **Add a source** on the Data page.
 - **Live payments (Paybill or Till).** Choose "M-Pesa Paybill or Till (live)". You get a private link, shown once; register it on Safaricom's Daraja portal as the C2B *confirmation URL*. Each customer payment then arrives as a sale at the time it happened (Daraja's `TransTime` is read as East Africa time), keyed on its `TransID`, so a payment delivered more than once is still counted once. The payer's number, as Daraja sends it (it may be masked or hashed), is stored as the customer. The reply is the one Daraja waits for (`ResultCode` 0). *Status: built to Daraja's documented format and tested with sample payloads; not yet tried against live Safaricom traffic, so make one small test payment first.*
-- **Statements.** Upload the CSV or Excel statement as a file source. Paid in is read as sales and Withdrawn as expenses; the wizard says so and lets you change it. Rows that share a receipt number are all kept. *Withdrawn includes everything that leaves the account, such as transfers to your own accounts and settlements, which are not business costs: remove those rows before uploading, or spending will look too high.*
+- **Statements.** Upload the CSV or Excel statement as a file source. Paid in is read as sales and Withdrawn as expenses; the wizard says so and lets you change it. Rows that share a receipt number are all kept. Withdrawn includes everything that leaves the account, including transfers to your own accounts and settlements, which are not business costs. Under **Leave out money-out rows whose details contain** list the words that mark them (for example `settlement, transfer to`; not case sensitive). Money in is never left out, nothing is left out unless you list words, and every upload says how many rows and how much money were left out.
 
 ## Sample data and demo businesses
 - **Try before connecting.** A business with no data sees "Want to see it working first?" on the Data page: a neighbourhood shop, a pharmacy or a workshop, each with about four months of made-up activity and one problem hiding in it (a branch gone quiet; stock buying that has nearly doubled; one customer behind half the invoices and a very large bill). Owners only, and only into a business with no data. It can be removed while it is the only data there (`/api/demo/samples`); real data is never touched.
@@ -96,6 +96,18 @@ Every source (file, sheet, link, database, webhook, typed entries) is normalised
 - **One currency.** Amounts are converted to the business's base currency on the way in.
 - **Disconnect removes a source and its data** (`DELETE /api/connectors/{id}`, owner only, audit-logged). A record that another source also held stays counted. Use Pause to stop a source without deleting anything.
 - The Data page shows, per source, how many records are counted, how many were already counted from another source, and how many were rejected (`GET /api/connectors/contributions`).
+
+## Database sources
+Postgres, SQLite and MySQL (MariaDB) are tried against live servers (`tests/test_mysql_live.py` runs against a real MySQL or MariaDB server whenever `MYSQL_TEST_URL` is set, and CI sets it). SQL Server, Oracle and generic ODBC are wired but have not been tried against a live server; `GET /api/connectors/database-types` reports which are which. Every database query must be a single read-only SELECT, the session is set read-only where the database supports it, and SQL Server and ODBC have no such switch, so give those a read-only login.
+
+## Signing in, and installing the app
+Sign-in lasts for the tab by default. **Keep me signed in on this device** (a checkbox on the sign-in form) keeps it on that device until the person signs out or the refresh token expires (7 days of not using the app); use it only on your own phone or computer, because the tokens then sit in the browser's local storage rather than the tab's. The app is installable ("Add to Home screen" or "Install"): it opens quickly from an icon and shows its last start page when offline, but it never caches data, and the API is never served by the offline worker (`frontend/public/sw.js`).
+
+## Checking your own setup
+Things the authors could not try from outside your server, as one-line checks:
+- `python scripts/mpesa_simulate.py --url <your M-Pesa source link> --amount 150 --count 3 [--repeat]` sends payments shaped like Daraja's confirmations and prints Safaricom-style acceptance; a `--repeat` payment is counted once.
+- `python scripts/check_ai.py --kind anthropic --key sk-...` asks your AI provider for the small JSON plan the app asks for and says whether it parsed. The key is never printed.
+- `python scripts/seed_demo.py --api URL --admin-key KEY --kind duka` makes a demo business; `scripts/bench_ingest.py` and `scripts/load_test.py` measure your machine.
 
 ## Time and time zones
 A time that carries a zone (`…Z`, `…+03:00`) is converted to UTC. A time with **no** zone is read on the business's own clock: spreadsheet cells, typed entries, and API events sent without an offset. An API caller that sends UTC clock times without an offset will therefore see them shifted by the business's offset, so always send the offset. A webhook event with no time at all is stamped with the moment it arrived. Days start at the business's local midnight.

@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.models.alerts import Alert, Case
 from app.models.config import ModelChange
 from app.models.core import BusinessEvent, Connector, ResolvedEntity
+from app.core.clock import utcnow
 
 logger = logging.getLogger("business_reality_engine")
 
@@ -67,7 +68,7 @@ def active_rebaseline(db: Session, tenant_id: str, now: datetime, window_days: i
 
 
 def detect_model_changes(db: Session, tenant_id: str, now: Optional[datetime] = None) -> list[ModelChange]:
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     first, last = db.query(func.min(BusinessEvent.timestamp), func.max(BusinessEvent.timestamp)).filter(
         BusinessEvent.tenant_id == tenant_id, BusinessEvent.validation_status == "validated").one()
     if not first or (now - first).days < YOUNG_TENANT_DAYS:

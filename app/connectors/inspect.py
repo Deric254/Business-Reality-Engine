@@ -39,6 +39,7 @@ _FIELD_HELP = {
     "amount_out_col": "money paid out, when money in and money out are separate columns (withdrawn, debit)",
     "price_col": "the price of ONE unit, only when the sheet has no total for the row",
     "type_col": "a column saying whether each row is a sale or an expense",
+    "details_col": "free text saying what each payment was for, only when money in and out are separate columns (details, narration)",
 }
 _NUMERIC_FIELDS = {"amount_col", "amount_in_col", "amount_out_col", "price_col"}
 _AI_SYSTEM_PROMPT = f"""You map the columns of a business's spreadsheet onto a fixed set of fields.
@@ -113,6 +114,10 @@ def suggest_mapping(df: pd.DataFrame) -> dict[str, Any]:
     kind = _best_column(cols, norm, used, _TYPE_WORDS)
     if kind and 2 <= df[kind].nunique() <= 12 and "amount_in_col" not in out and "amount_out_col" not in out:
         out["type_col"] = kind
+    if "amount_in_col" in out or "amount_out_col" in out:
+        details = _best_column(cols, norm, used, ["details", "narration", "particulars"])
+        if details:
+            out["details_col"] = details; used.add(details)
     joined = " ".join(norm.values())
     out["entity"] = "expense" if _EXPENSE_HINT.search(joined) and not re.search(r"sale|customer|revenue|order", joined) else "sale"
     return out

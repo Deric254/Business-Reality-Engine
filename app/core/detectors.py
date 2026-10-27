@@ -35,6 +35,7 @@ from app.core.detection import (
 )
 from app.models.alerts import Alert, AlertSeverity, AlertState
 from app.models.core import BusinessEvent, Connector
+from app.core.clock import utcnow
 
 logger = logging.getLogger("business_reality_engine")
 
@@ -78,7 +79,7 @@ def detect_opportunity(
     db: Session, tenant_id: str, entity: str = "sale", field: str = "amount", direction: str = "drop",
     period_days: int = 7, baseline_periods: int = 4, min_change: float = 0.20, now: Optional[datetime] = None,
 ) -> Optional[Alert]:
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     cur_start = now - timedelta(days=period_days)
     current = _sum_metric(db, tenant_id, entity, field, cur_start, now)
     base = [
@@ -136,7 +137,7 @@ def detect_sustained_trend(
     """A steady slide (or climb, for costs) across several periods — slow erosion that a
     single period-vs-baseline comparison can miss."""
     from app.core.forecasting import forecast_next_period
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     trend = forecast_next_period(db, tenant_id, entity, field, period_days, lookback_periods, now)
     vals = trend.historical_values
     if len(vals) < 4 or vals[0] <= 0 or vals[-1] <= 0 or sum(1 for v in vals if v > 0) < len(vals) - 1:
@@ -182,7 +183,7 @@ def detect_daily_anomaly(
     Robust statistics (median/MAD) so one odd past day doesn't hide or fake an anomaly."""
     if field not in METRIC_FIELDS:
         raise ValueError(f"field must be one of {METRIC_FIELDS}")
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     tz = tenant_zone(db, tenant_id)
     utc = ZoneInfo("UTC")
     local_today = now.replace(tzinfo=utc).astimezone(tz).date()
@@ -247,7 +248,7 @@ def detect_data_silence(db: Session, tenant_id: str, now: Optional[datetime] = N
     """A connector that HAS sent data but has gone quiet past its own expected frequency.
     Never-synced connectors are an onboarding state, not an incident. Resolves its own
     alert when data resumes."""
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     connectors = db.query(Connector).filter(Connector.tenant_id == tenant_id, Connector.is_active == True).all()  # noqa: E712
     last = dict(
         db.query(BusinessEvent.connector_id, func.max(BusinessEvent.timestamp))
@@ -256,7 +257,7 @@ def detect_data_silence(db: Session, tenant_id: str, now: Optional[datetime] = N
     out = []
     for c in connectors:
         last_at = last.get(c.id)
-        if last_at is None:
+        if last_at is None or c.connector_type == "system":      # a system is watched by its link (detect_system_links), not by how long it was quiet
             continue
         key = f"data_silence:{c.id}"
         status = coverage_mod._status_for_connector(c, last_at, now)
@@ -294,7 +295,7 @@ def run_metric_detectors(db: Session, tenant_id: str, *, entity: str, field: str
     """Every detector for one monitored metric. One failing detector never stops the others."""
     direction = direction or default_direction(entity)
     from app.core.model_versions import active_rebaseline
-    now_ = now or datetime.utcnow()
+    now_ = now or utcnow()
     rb = active_rebaseline(db, tenant_id, now_, period_days * (baseline_periods + 1))
     if rb:                                         # Section 53: do not compare across a declared structural change
         from app.core import detectors_extra as ex
@@ -339,7 +340,7 @@ def run_tenant_cycle(db: Session, tenant_id: str, metrics: list[dict], now: Opti
     A live run compares whole days: the day in progress is incomplete, and counting it would make every week look
     like a drop. A run for a given `now` (tests, replays) uses exactly that moment."""
     live = now is None
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     window = start_of_local_day(now, tenant_zone(db, tenant_id)) if live and not replay else now
     alerts, errors = [], 0
     for m in metrics:
@@ -350,6 +351,13 @@ def run_tenant_cycle(db: Session, tenant_id: str, metrics: list[dict], now: Opti
     except Exception as e:
         db.rollback(); errors += 1
         logger.error(f"Silence detector failed for tenant={tenant_id}: {e}")
+    try:
+        if not replay:
+            from app.core.systems import detect_system_links
+            alerts += detect_system_links(db, tenant_id, now)
+    except Exception as e:
+        db.rollback(); errors += 1
+        logger.error(f"System link detector failed for tenant={tenant_id}: {e}")
     try:
         from app.core import detectors_extra as ex
         a = ex.detect_profit_risk(db, tenant_id, now=window)

@@ -1,10 +1,10 @@
 """Licences: the keys that let a business onto the platform, and the payments recorded against them."""
-from datetime import datetime
 
 from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.models.core import Base, gen_uuid
+from app.core.clock import utcnow
 
 
 class Licence(Base):
@@ -20,7 +20,7 @@ class Licence(Base):
     price_cents = Column(Integer, nullable=False, default=100)   # what this licence is charged per interval
     currency = Column(String, nullable=False, default="USD")
     interval_months = Column(Integer, nullable=False, default=1)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
     created_by_user_id = Column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     redeemed_at = Column(DateTime, nullable=True)
     tenant_id = Column(UUID(as_uuid=False), ForeignKey("tenants.id", ondelete="SET NULL"), nullable=True)
@@ -41,7 +41,7 @@ class LicencePayment(Base):
     licence_id = Column(UUID(as_uuid=False), ForeignKey("licences.id", ondelete="CASCADE"), nullable=False)
     amount_cents = Column(Integer, nullable=False)
     currency = Column(String, nullable=False, default="USD")
-    paid_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    paid_at = Column(DateTime, nullable=False, default=utcnow)
     period_start = Column(DateTime, nullable=False)
     period_end = Column(DateTime, nullable=False)
     reference = Column(String, nullable=True)                    # a payment provider's transaction id, when there is one

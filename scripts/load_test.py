@@ -11,7 +11,7 @@ secs = int(sys.argv[7]) if len(sys.argv) > 7 else 15
 conc = int(sys.argv[8]) if len(sys.argv) > 8 else 64
 
 def batch():
-    ts = (dt.datetime.utcnow() - dt.timedelta(hours=1)).isoformat()
+    ts = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1)).isoformat()
     return [{"tenant_id": tenant, "connector_id": conn, "source": "load", "entity": "sale", "entity_id": uuid.uuid4().hex,
              "event_type": "sale", "timestamp": ts, "amount": 10.0, "customer_id": f"lc{i % 200}"} for i in range(50)]
 

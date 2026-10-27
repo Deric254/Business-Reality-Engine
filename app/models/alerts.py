@@ -1,7 +1,6 @@
 """
 Alert Engine (Sections 21-26) and Business Memory (Sections 36-41).
 """
-from datetime import datetime
 from sqlalchemy import (
     Column, String, DateTime, Numeric, Integer, Text, ForeignKey, JSON, Enum as SAEnum, Index, text
 )
@@ -9,6 +8,7 @@ from sqlalchemy.dialects.postgresql import UUID
 import enum
 
 from app.models.core import Base, gen_uuid
+from app.core.clock import utcnow
 
 
 class AlertSeverity(str, enum.Enum):
@@ -74,8 +74,8 @@ class Alert(Base):
     ai_evidence_hash = Column(String, nullable=True)  # cache key — skip re-calling LLM if evidence unchanged
     ai_generated_at = Column(DateTime, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
     resolved_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
@@ -112,5 +112,5 @@ class Case(Base):
     ), nullable=True)
 
     model_version = Column(Integer, nullable=True)     # Section 53
-    detected_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    detected_at = Column(DateTime, nullable=False, default=utcnow)
     outcome_measured_at = Column(DateTime, nullable=True)

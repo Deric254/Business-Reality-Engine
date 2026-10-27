@@ -6,6 +6,8 @@ Runs on a machine INSIDE the business's network, reads local data and pushes it 
 It never listens on a port, so nothing needs to be opened on the business's firewall. Standard library only
 (Python 3.9+); `pyodbc` is optional and only needed for the `odbc` source.
 
+Local systems (smePro, Imara, Pharmacy ERP): python reality_agent.py add <code> | check | run   (see README)
+
 Usage:   python reality_agent.py config.json            # run forever, every interval_seconds
          python reality_agent.py config.json --once     # one pass (use with Task Scheduler / cron)
          python reality_agent.py config.json --dry-run  # read and print counts, send nothing
@@ -212,12 +214,100 @@ def run_once(cfg, post=None, dry_run=False, sleep=time.sleep):
     return {"read": len(rows), **totals}
 
 
+def default_config_path():
+    return os.path.join(os.path.expanduser("~"), ".reality-agent", "config.json")
+
+
+def _save_config(path, cfg):
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+    try:
+        os.chmod(tmp, 0o600)                                   # it holds the connection codes' tokens
+    except OSError:
+        pass
+    os.replace(tmp, path)
+
+
+def systems_main(argv):
+    """smePro / Imara / Pharmacy ERP on this computer (see systems.py).
+         add <code>            connect a system with the code the app shows (repeat for each system; any combination)
+         check                 what this computer can see, per system, without sending anything
+         run [--once]          keep every connected system in sync (this is what runs all day)
+         path <system> <file>  tell the agent where a system's database is (clear with '')
+       --config <file>        default: ~/.reality-agent/config.json"""
+    import argparse
+    import threading
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import systems as S
+    ap = argparse.ArgumentParser(prog="reality_agent.py", description=systems_main.__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("command", choices=["add", "check", "run", "path"])
+    ap.add_argument("args", nargs="*")
+    ap.add_argument("--config", default=default_config_path())
+    ap.add_argument("--once", action="store_true")
+    a = ap.parse_args(argv[1:])
+    try:
+        with open(a.config, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except OSError:
+        cfg = {}
+    except ValueError:
+        print(f"{a.config} is damaged; fix or delete it.", file=sys.stderr)
+        return 2
+    cfg.setdefault("state_file", os.path.join(os.path.dirname(os.path.abspath(a.config)), "state.db"))
+    profiles = S.load_profiles(os.path.join(os.path.dirname(os.path.abspath(a.config)), "profiles.d"))
+    if a.command == "add":
+        if len(a.args) != 1:
+            print("usage: reality_agent.py add <code from the app>", file=sys.stderr)
+            return 2
+        try:
+            cfg = S.add_system(cfg, a.args[0], profiles)
+        except ValueError as e:
+            print(e, file=sys.stderr)
+            return 2
+        _save_config(a.config, cfg)
+        print("Connected. What this computer sees:")
+    if a.command == "path":
+        if len(a.args) != 2 or not any(x["system"] == a.args[0] for x in cfg.get("systems", [])):
+            print("usage: reality_agent.py path <smepro|imara|pharmacy> <file or folder, or '' to find it automatically>", file=sys.stderr)
+            return 2
+        for x in cfg["systems"]:
+            if x["system"] == a.args[0]:
+                x.pop("path", None) if not a.args[1] else x.update(path=a.args[1])
+        _save_config(a.config, cfg)
+    if a.command in ("add", "check", "path"):
+        if not cfg.get("systems"):
+            print("No system is connected yet. In the app open Data, choose the system, and run: reality_agent.py add <code>")
+            return 1
+        report = S.check_report(cfg, profiles)
+        for r in report:
+            print(f"  {r['system']}: {S.STATE_WORDS.get(r['state'], r['state'])}" + (f" - {r['detail']}" if r["detail"] else ""))
+            if r["state"] != S.CONNECTED and r.get("searched"):
+                print("     looked in: " + "; ".join(r["searched"]))
+            if r.get("candidates") and len(r["candidates"]) > 1:
+                print("     several copies found, using the newest: " + "; ".join(r["candidates"]))
+        return 0 if all(r["state"] == S.CONNECTED for r in report) else 1
+    if not cfg.get("systems"):
+        print("No system is connected yet. Run: reality_agent.py add <code from the app>", file=sys.stderr)
+        return 2
+    stop = threading.Event()
+    log = lambda *m: print(datetime.now().isoformat(timespec="seconds"), *m, flush=True)
+    log("reality agent", S.AGENT_VERSION, "watching:", ", ".join(x["system"] for x in cfg["systems"]))
+    return S.run_loop(cfg, profiles, stop, log, once=a.once)
+
+
 def main(argv):
     if len(argv) < 2:
         print(__doc__)
+        print(systems_main.__doc__)
         return 2
+    if argv[1] in ("add", "check", "run", "path"):
+        return systems_main(argv)
     with open(argv[1], "r", encoding="utf-8") as f:
         cfg = json.load(f)
+    if "systems" in cfg and "source" not in cfg:
+        return systems_main([argv[0], "run", "--config", argv[1]] + (["--once"] if "--once" in argv else []))
     once, dry = "--once" in argv, "--dry-run" in argv
     interval = int(cfg.get("interval_seconds", 300))
     while True:

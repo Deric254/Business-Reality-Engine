@@ -1,6 +1,6 @@
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Header
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -15,8 +15,7 @@ class TenantOut(BaseModel):
     id: str
     name: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 @router.get("/", response_model=list[TenantOut])
@@ -40,8 +39,7 @@ class TenantSettings(BaseModel):
     language: str = "en"
     area: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TenantSettingsUpdate(BaseModel):

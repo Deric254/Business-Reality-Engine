@@ -23,6 +23,7 @@ from app.core.cache import cached
 from app.core.question_router import _money
 from app.core.tenant_time import local_midnight_utc, tenant_zone
 from app.models.core import BusinessEvent as E
+from app.core.clock import utcnow
 
 logger = logging.getLogger("business_reality_engine")
 
@@ -144,7 +145,7 @@ def _pct(cur: float, prev: float) -> Optional[float]:
 
 def run(db: Session, tenant_id: str, plan: QueryPlan, now: Optional[datetime] = None) -> dict:
     """Execute a validated plan. Returns {intent, answer, evidence}; every number comes from SQL over validated records."""
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     tz = tenant_zone(db, tenant_id)
     start, end, period_label = resolve_period(plan, now, tz)
     shown = f"{period_label} ({start.replace(tzinfo=timezone.utc).astimezone(tz):%d %b}" \
@@ -198,7 +199,7 @@ def run(db: Session, tenant_id: str, plan: QueryPlan, now: Optional[datetime] = 
 
 def run_last_days(db: Session, tenant_id: str, measure: str, group_by: str, days: int, now: Optional[datetime] = None) -> dict:
     """A fixed question over the last `days` days (today included), for rules that need no AI."""
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     today = now.replace(tzinfo=timezone.utc).astimezone(tenant_zone(db, tenant_id)).date()
     return run(db, tenant_id, QueryPlan(measure=measure, group_by=group_by, start=today - timedelta(days=days - 1), end=today), now)
 
@@ -271,7 +272,7 @@ def needs_plan(db: Session, tenant_id: str, question: str) -> bool:
 def answer_with_plan(db: Session, tenant_id: str, question: str, provider, now: Optional[datetime] = None) -> Optional[dict]:
     """Answer any question about sales, expenses and profit that fits a plan; None when it does not, so the caller
     can fall back to the fixed intents."""
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     tz = tenant_zone(db, tenant_id)
     branches, products = _distinct(db, tenant_id, E.location), _distinct(db, tenant_id, E.product_id)
     plan = _ask(question, provider, now, tz, branches, products)

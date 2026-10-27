@@ -24,12 +24,12 @@ Cost control (Section 54):
 import hashlib
 import json
 import logging
-from datetime import datetime
 from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.models.alerts import Alert, AlertSeverity
 from app.reasoning.llm_providers import get_provider
+from app.core.clock import utcnow
 
 logger = logging.getLogger("business_reality_engine")
 
@@ -118,7 +118,7 @@ def reason_about_alert(db: Session, alert: Alert, force: bool = False) -> dict:
     alert.ai_summary = narrative
     alert.ai_recommended_action = recommended_action
     alert.ai_evidence_hash = current_hash
-    alert.ai_generated_at = datetime.utcnow()
+    alert.ai_generated_at = utcnow()
     db.commit()
     db.refresh(alert)
 

@@ -5,7 +5,6 @@ Money shown here is only what has been recorded in the payments ledger. There is
 with no recorded payment shows as unpaid. (Collecting the $1 automatically needs a payment provider account; until
 one is connected, each payment is recorded here, and a provider's webhook can call the same function.)"""
 import secrets
-from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -20,6 +19,7 @@ from app.core.auth_users import decode_token, hash_password
 from app.core.db import get_db
 from app.models.core import BusinessEvent, Connector, Tenant, User
 from app.models.licence import Licence, LicencePayment
+from app.core.clock import utcnow
 
 router = APIRouter()               # /api/master
 public = APIRouter()               # /api/licences
@@ -56,7 +56,7 @@ def bootstrap(body: BootstrapIn, request: Request, db: Session = Depends(get_db)
     if not db.query(Licence.id).filter(Licence.tenant_id == user.tenant_id).first():
         lic = licensing.issue(db, 1, "Platform owner", 0, "USD", user.id)[0]
         row = db.get(Licence, lic["id"])
-        row.status, row.redeemed_at, row.tenant_id = "active", datetime.utcnow(), user.tenant_id
+        row.status, row.redeemed_at, row.tenant_id = "active", utcnow(), user.tenant_id
     db.commit()
     audit.record(db, "master.bootstrap", request=request, tenant_id=user.tenant_id, actor_type="admin", target=user.id)
     return {"master": True, "email": user.email}
@@ -75,7 +75,7 @@ def _money(cents) -> float:
 @router.get("/overview")
 def overview(db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
     master_user(authorization, db)
-    now = datetime.utcnow()
+    now = utcnow()
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     counts = dict(db.query(Licence.status, func.count(Licence.id)).filter(Licence.price_cents > 0).group_by(Licence.status).all())
     paying = db.query(Licence).filter(Licence.status == "active", Licence.price_cents > 0, Licence.paid_through > now).all()
@@ -98,7 +98,7 @@ def overview(db: Session = Depends(get_db), authorization: Optional[str] = Heade
 @router.get("/accounts")
 def accounts(db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
     master_user(authorization, db)
-    now = datetime.utcnow()
+    now = utcnow()
     paid = dict(db.query(LicencePayment.licence_id, func.sum(LicencePayment.amount_cents)).group_by(LicencePayment.licence_id).all())
     owners = {}
     for t, e in db.query(User.tenant_id, User.email).filter(User.role == "owner").order_by(User.created_at).all():
@@ -189,7 +189,7 @@ def _open_business(db: Session, lic: Licence, business_name: str, email: str, pa
     db.add(tenant); db.flush()
     user = User(tenant_id=tenant.id, email=email, password_hash=hash_password(password), role="owner")
     db.add(user)
-    lic.status, lic.redeemed_at, lic.tenant_id = "active", datetime.utcnow(), tenant.id
+    lic.status, lic.redeemed_at, lic.tenant_id = "active", utcnow(), tenant.id
     db.commit()
     db.refresh(user)
     return user

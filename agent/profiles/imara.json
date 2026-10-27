@@ -1,0 +1,25 @@
+{
+  "system": "imara",
+  "label": "Imara",
+  "profile_version": 1,
+  "doc": "Imara v2 (Electron + Node + SQLite). Database: <home>/.imara/imara.db. Money is cash basis, exactly as Imara's own Dashboard: sales are the payments received on invoices that are not cancelled; expenses are the payments made out.",
+  "discovery": {
+    "files": ["{home}/.imara/imara.db"]
+  },
+  "signature": ["piece_types", "invoice_payments", "payments", "schema_migrations"],
+  "version": {"sql": "SELECT MAX(id) FROM schema_migrations", "kind": "text", "tested_through": "018"},
+  "currency": {"sql": "SELECT value FROM config WHERE key = 'currency'", "default": "KES"},
+  "money": {"unit": "major", "places": 2},
+  "streams": [
+    {
+      "key": "receipts", "entity": "sale", "event_type": "sale.payment_received", "table": "invoice_payments", "time": "date",
+      "doc": "Each payment received on an invoice. Payments on a cancelled invoice drop out, as they do in Imara.",
+      "sql": "SELECT CAST(ip.id AS TEXT) AS id, ip.payment_date AS date, ip.created_at AS instant, ip.amount AS amount, NULLIF(TRIM(i.customer_name), '') AS customer, (SELECT CASE WHEN COUNT(DISTINCT TRIM(ii.description)) = 1 THEN MIN(TRIM(ii.description)) END FROM invoice_items ii WHERE ii.invoice_id = i.id) AS product, i.invoice_number AS m_invoice, ip.payment_method AS m_payment_method FROM invoice_payments ip JOIN invoices i ON i.id = ip.invoice_id WHERE i.status != 'cancelled' ORDER BY CAST(ip.id AS TEXT)"
+    },
+    {
+      "key": "payments", "entity": "expense", "event_type": "expense.paid", "table": "payments", "time": "date",
+      "doc": "Each payment made out: suppliers, wages, rent, sacks, transport, other.",
+      "sql": "SELECT CAST(p.id AS TEXT) AS id, p.payment_date AS date, p.created_at AS instant, p.amount AS amount, COALESCE(NULLIF(TRIM(s.name), ''), NULLIF(TRIM(p.payee_name), '')) AS supplier, p.category AS product, p.rent_month AS m_rent_month FROM payments p LEFT JOIN suppliers s ON s.id = p.payee_supplier_id ORDER BY CAST(p.id AS TEXT)"
+    }
+  ]
+}

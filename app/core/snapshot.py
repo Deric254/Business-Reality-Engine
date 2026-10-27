@@ -31,9 +31,10 @@ def apply(db: Session, connector: Connector, payloads: list[NormalizedEvent], *,
     for p in payloads:
         if p.entity_id:
             incoming.setdefault((p.entity, p.entity_id), source_fingerprint(p))
-    existing = {(entity, eid): (rid, h, status, errs) for rid, entity, eid, h, status, errs in
-                db.query(E.id, E.entity, E.entity_id, E.source_hash, E.validation_status, E.validation_errors)
-                .filter(E.connector_id == connector.id, E.entity_id.isnot(None))}
+    stored = db.query(E.id, E.entity, E.entity_id, E.source_hash, E.validation_status, E.validation_errors).filter(E.connector_id == connector.id, E.entity_id.isnot(None))
+    if not remove_missing:          # only some records were sent (a push): compare just those, not the whole source
+        stored = stored.filter(E.entity_id.in_([eid for _, eid in incoming]))
+    existing = {(entity, eid): (rid, h, status, errs) for rid, entity, eid, h, status, errs in stored}
     changed = [k for k, h in incoming.items() if k in existing and existing[k][1] not in (None, h)]
     unlabeled = [{"b_id": existing[k][0], "b_hash": h} for k, h in incoming.items() if k in existing and existing[k][1] is None]
     removed = [v[0] for k, v in existing.items() if k not in incoming] if remove_missing else []

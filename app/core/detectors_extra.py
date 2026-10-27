@@ -13,6 +13,7 @@ from app.core.detectors import _period_phrase, _r_squared, _upsert
 from app.core.forecasting import _least_squares, forecast_next_period
 from app.models.alerts import Alert, AlertSeverity
 from app.models.core import BusinessEvent
+from app.core.clock import utcnow
 
 MIN_PERIODS_WITH_DATA = 4
 
@@ -29,7 +30,7 @@ def detect_forecast_deviation(db: Session, tenant_id: str, entity: str, field: s
     """The last complete period vs what the trend of the periods BEFORE it predicted (Section 43)."""
     if field not in METRIC_FIELDS:
         raise ValueError(f"field must be one of {METRIC_FIELDS}")
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     vals = _period_values(db, tenant_id, entity, field, period_days, 7, now)
     history, actual = vals[:-1], vals[-1]
     if sum(1 for v in history if v > 0) < MIN_PERIODS_WITH_DATA:
@@ -133,7 +134,7 @@ def detect_profit_risk(db: Session, tenant_id: str, period_days: int = 7, horizo
                        now: Optional[datetime] = None) -> Optional[Alert]:
     """Risk projection: net (sales - expenses) per period; alert when the trend crosses zero within the
     horizon, or net is already negative. Clearly a projection, with its fit quality in the evidence."""
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     sales = _period_values(db, tenant_id, "sale", "amount", period_days, 6, now)
     exp = _period_values(db, tenant_id, "expense", "amount", period_days, 6, now)
     if sum(1 for v in sales if v > 0) < MIN_PERIODS_WITH_DATA or sum(1 for v in exp if v > 0) < MIN_PERIODS_WITH_DATA:
@@ -178,7 +179,7 @@ def detect_insufficient_data(db: Session, tenant_id: str, entity: str, field: st
                              baseline_periods: int, now: Optional[datetime] = None) -> Optional[Alert]:
     """Section 20 'unknown': a monitored metric we cannot judge yet says so instead of staying silent.
     Closes itself once enough history exists."""
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     key = f"unknown:{entity}:{field}:{period_days}d"
     need = max(MIN_PERIODS_WITH_DATA, baseline_periods + 1)
     have = sum(1 for v in _period_values(db, tenant_id, entity, field, period_days, need, now) if v > 0)

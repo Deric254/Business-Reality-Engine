@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session, aliased
 
 from app.core.cache import cached
 from app.models.core import BusinessEvent as E, Connector
+from app.core.clock import utcnow
 
 WINDOW = timedelta(minutes=15)           # how far apart two records of one sale may be (a payment follows the sale)
 MIN_MATCHES, MIN_SHARE = 5, 0.4          # enough pairs, and a big enough share of the smaller source, to suggest a merge
@@ -105,7 +106,7 @@ def _pair(db: Session, tenant_id: str, keep_id: str, other_id: str, entity: str,
 
 
 def _recent_start(now: Optional[datetime] = None) -> datetime:
-    return (now or datetime.utcnow()) - timedelta(days=RECENT_DAYS)
+    return (now or utcnow()) - timedelta(days=RECENT_DAYS)
 
 
 def _recent_records(db: Session, tenant_id: str, connector_id: str, entity: str, since: datetime) -> int:
@@ -136,7 +137,7 @@ def _suggestions(db: Session, tenant_id: str) -> list[dict]:
             if min(kn, on) < MIN_MATCHES:
                 continue
             trial = db.begin_nested()                              # try the pairing for real, then take it all back
-            matched = _pair(db, tenant_id, keep.id, other.id, entity, (since, datetime.utcnow()))
+            matched = _pair(db, tenant_id, keep.id, other.id, entity, (since, utcnow()))
             trial.rollback()
             if matched >= MIN_MATCHES and matched / min(kn, on) >= MIN_SHARE:
                 out.append({"entity": entity, "matched": matched, "share": round(matched / min(kn, on), 2), "window_days": RECENT_DAYS,

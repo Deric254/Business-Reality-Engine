@@ -1,4 +1,5 @@
 """A business's own clock: its day starts and ends at local midnight, not UTC midnight."""
+import logging
 from datetime import date, datetime, time, timezone
 from zoneinfo import ZoneInfo
 
@@ -6,12 +7,18 @@ from sqlalchemy.orm import Session
 
 from app.models.core import Tenant
 
+logger = logging.getLogger("business_reality_engine")
+_WARNED: set[str] = set()
+
 
 def tenant_zone(db: Session, tenant_id: str) -> ZoneInfo:
     t = db.get(Tenant, tenant_id)
     try:
         return ZoneInfo(t.timezone if t and t.timezone else "UTC")
     except Exception:
+        if tenant_id not in _WARNED:           # a wrong zone moves every day boundary, so say so, but once per business
+            _WARNED.add(tenant_id)
+            logger.warning("Business %s has an unknown time zone %r; using UTC. Every day boundary is wrong until it is fixed.", tenant_id, t.timezone if t else None)
         return ZoneInfo("UTC")
 
 

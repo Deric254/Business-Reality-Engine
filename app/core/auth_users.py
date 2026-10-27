@@ -11,11 +11,12 @@ SECURITY.md.
 """
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Optional
 import bcrypt
 import jwt
 from fastapi import HTTPException, Header
+from app.core.clock import utcnow
 
 ACCESS_TOKEN_MINUTES = 30
 REFRESH_TOKEN_DAYS = 7
@@ -50,7 +51,7 @@ def verify_password(password: str, password_hash: str) -> bool:
 def create_token(user_id: str, tenant_id: str, role: str, token_type: str, expires_delta: timedelta,
                  must_change: bool = False) -> str:
     from app.core.revocation import now_ms
-    now = datetime.utcnow()
+    now = utcnow()
     payload = {
         "sub": user_id, "tenant_id": tenant_id, "role": role, "type": token_type,
         "iat": now, "exp": now + expires_delta,

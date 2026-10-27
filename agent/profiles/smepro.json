@@ -1,0 +1,40 @@
+{
+  "system": "smepro",
+  "label": "smePro",
+  "profile_version": 1,
+  "doc": "smePro (Tauri + SQLCipher). Database: <Tauri app data dir>/com.smepro.app/erp.db, encrypted with the raw key in erp.db.key beside it. Verified against smePro schema version 43.",
+  "discovery": {
+    "files": ["{appdata}/com.smepro.app/erp.db"]
+  },
+  "signature": ["_schema_version", "businesses", "module_sales"],
+  "encryption": {"type": "sqlcipher", "key_file": "{db}.key"},
+  "version": {"sql": "SELECT MAX(version) FROM _schema_version", "kind": "int", "tested_through": 43},
+  "scope": {
+    "param": "business_id",
+    "sql": "SELECT id, name, currency FROM businesses ORDER BY created_at, id",
+    "currency_column": "currency"
+  },
+  "money": {"unit": "minor", "places": "currency"},
+  "streams": [
+    {
+      "key": "sales", "entity": "sale", "event_type": "sale.recorded", "table": "module_sales", "time": "date_or_instant",
+      "doc": "Each sales row, with revenue as smePro keeps it (already net of refunds, exactly what its own dashboard adds up).",
+      "sql": "SELECT CAST(id AS TEXT) AS id, sale_date AS date, created_at AS instant, revenue AS amount, quantity, NULLIF(TRIM(branch), '') AS location, COALESCE(NULLIF(TRIM(customer), ''), NULLIF(TRIM(customer_phone), '')) AS customer, NULLIF(TRIM(item_name), '') AS product, order_id AS m_order_id, payment_method AS m_payment_method, cost_at_sale AS mm_cost, discount_amount AS mm_discount FROM module_sales WHERE business_id = :business_id AND deleted_at IS NULL ORDER BY CAST(id AS TEXT)"
+    },
+    {
+      "key": "refunds", "entity": "refund", "event_type": "refund.recorded", "table": "module_refunds", "time": "instant", "optional": true,
+      "doc": "Refunds are reported on their own so refund spikes can be watched. They are not subtracted again from sales, which smePro has already reduced.",
+      "sql": "SELECT CAST(id AS TEXT) AS id, created_at AS instant, refund_amount AS amount, quantity_refunded AS quantity, NULLIF(TRIM(customer), '') AS customer, NULLIF(TRIM(item_name), '') AS product, reason AS m_reason, restocked AS m_restocked, sale_id AS m_sale_id FROM module_refunds WHERE business_id = :business_id AND deleted_at IS NULL ORDER BY CAST(id AS TEXT)"
+    },
+    {
+      "key": "purchasing", "entity": "expense", "event_type": "expense.purchase", "table": "module_purchasing", "time": "date", "optional": true,
+      "doc": "Stock received (quantity x unit cost), counted when received.",
+      "sql": "SELECT CAST(id AS TEXT) AS id, order_date AS date, created_at AS instant, quantity * unit_cost AS amount, quantity, NULLIF(TRIM(supplier), '') AS supplier, NULLIF(TRIM(item_name), '') AS product, po_number AS m_po_number FROM module_purchasing WHERE business_id = :business_id AND deleted_at IS NULL AND received = 1 ORDER BY CAST(id AS TEXT)"
+    },
+    {
+      "key": "bookkeeping", "entity": "expense", "event_type": "expense.recorded", "table": "module_accounting", "time": "date", "optional": true,
+      "doc": "Expenses typed into Bookkeeping by a person (rent, wages, transport...). Entries smePro posts by itself (purchases, refunds, debt settlements, repack rounding) are left out because they repeat records counted elsewhere.",
+      "sql": "SELECT CAST(id AS TEXT) AS id, transaction_date AS date, created_at AS instant, amount, NULLIF(TRIM(category), '') AS product, description AS m_description, payment_method AS m_payment_method FROM module_accounting WHERE business_id = :business_id AND deleted_at IS NULL AND LOWER(TRIM(entry_type)) = 'expense' AND NOT ((LOWER(TRIM(category)) = 'purchasing' AND description LIKE 'Purchase received — %') OR (LOWER(TRIM(category)) = 'refunds' AND description LIKE 'Refund — %') OR (LOWER(TRIM(category)) = 'debt & credit' AND (description LIKE 'Debt settled — %' OR description LIKE 'Credit settled — %')) OR (LOWER(TRIM(category)) = 'stock revaluation' AND description LIKE 'Repack rounding %')) ORDER BY CAST(id AS TEXT)"
+    }
+  ]
+}

@@ -1,10 +1,9 @@
 """Alert delivery channels (Section 49). Reads need a tenant token; changes need an OWNER token."""
 import secrets as _secrets
-from datetime import datetime
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.core import audit
@@ -17,6 +16,7 @@ from app.core.notifications import (
 from app.core.secrets import encrypt_secret
 from app.models.alerts import Alert, AlertSeverity
 from app.models.config import NotificationChannel, NotificationDelivery
+from app.core.clock import utcnow
 
 router = APIRouter()
 MAX_CHANNELS_PER_TENANT = 20
@@ -70,8 +70,7 @@ class ChannelOut(BaseModel):
     filter_entities: Optional[list[str]] = None
     signing_secret: Optional[str] = None   # returned ONCE, at creation of a webhook channel
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 def _normalize_target(channel_type: str, raw: str) -> tuple[str, Optional[str]]:
@@ -192,7 +191,7 @@ def test_channel(channel_id: str, tenant_id: str, db: Session = Depends(get_db),
         id="00000000-0000-0000-0000-000000000000", tenant_id=tenant_id, severity=AlertSeverity.informational,
         title="Test alert from Business Reality Engine",
         what_happened="This is a test message. If you can read it, alert delivery to this channel works.",
-        evidence={}, created_at=datetime.utcnow(),
+        evidence={}, created_at=utcnow(),
     )
     try:
         if ch.channel_type == "email":

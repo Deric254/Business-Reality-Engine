@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.core import audit
@@ -45,8 +45,7 @@ class MetricOut(BaseModel):
     absolute_threshold: Optional[Decimal] = None
     enabled: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 @router.get("/metrics", response_model=list[MetricOut])

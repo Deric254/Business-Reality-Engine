@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header, Request
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.core import audit, reconcile, snapshot, sources
@@ -10,7 +10,7 @@ from app.core.cache import invalidate_tenant
 from app.core.db import get_db
 from app.core.ingestion import NormalizedEvent
 from app.connectors.file_connector import (
-    ColumnMapping, read_upload, validate_upload, parse_file_to_dataframe, dataframe_to_normalized_events, add_row_ids, with_default_id,
+    ColumnMapping, left_out_note, read_upload, validate_upload, parse_file_to_dataframe, dataframe_to_normalized_events, add_row_ids, with_default_id,
     extra_sheet_events, other_sheet_names,
 )
 from app.connectors.inspect import describe, mapping_provider
@@ -25,7 +25,7 @@ from app.models.core import Connector
 
 router = APIRouter()
 
-CONNECTOR_TYPES = {"url", "api", "webhook", "database", "file", "sftp", "email", "local_agent", "shared_folder", "manual"}
+CONNECTOR_TYPES = {"url", "api", "webhook", "database", "file", "sftp", "email", "local_agent", "shared_folder", "manual", "system"}
 FREQUENCIES = {"realtime", "near_realtime", "periodic", "slow"}
 
 
@@ -59,6 +59,12 @@ def _validate_config(connector_type: str, config: dict, tenant_id: str):
         check_host_allowed(config.get("imap_host", ""))
     elif connector_type == "shared_folder":
         tenant_path(tenant_id, config.get("path", ""))
+    elif connector_type == "file" and config:           # an empty config is allowed: the mapping can be set before the first upload
+        try:
+            ColumnMapping(**config)
+        except ValidationError as e:
+            first = e.errors()[0]
+            raise HTTPException(400, f"The column mapping is not valid ({'.'.join(str(x) for x in first['loc']) or 'config'}: {first['msg']})")
 
 
 class ConnectorCreate(BaseModel):
@@ -86,8 +92,7 @@ class ConnectorOut(BaseModel):
     webhook_url: Optional[str] = None       # only populated once, at creation
     webhook_token: Optional[str] = None      # RAW token — shown exactly once, never again
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 def _get_owned_connector(db: Session, connector_id: str, tenant_id: str) -> Connector:
@@ -265,7 +270,7 @@ async def upload_file(
     done = snapshot.apply(db, connector, [NormalizedEvent(**e) for e in parsed.events + extra_events], remove_missing=replace, confirmed=True)
     skipped_all = parsed.skipped + extra_skipped
     return {**done, "rows_processed": len(done["results"]), "skipped": len(skipped_all), "skipped_examples": skipped_all[:3],
-            **({"other_sheets": sheet_notes} if sheet_notes else {})}
+            **left_out_note(parsed), **({"other_sheets": sheet_notes} if sheet_notes else {})}
 
 
 def _sync_endpoint(connector_id, tenant_id, db, authorization, expected_type, confirmed=False):

@@ -23,6 +23,7 @@ from app.core.alert_engine import kind_of
 from app.core.db import engine
 from app.models.alerts import Alert, AlertState
 from app.models.config import GroundTruthEvent
+from app.core.clock import utcnow
 
 MAX_STEPS = 200
 MAX_THRESHOLD_VARIANTS = 4
@@ -170,7 +171,7 @@ def _bucket(c: float) -> str:
 
 
 def live_accuracy(db: Session, tenant_id: str, days: int = 180, now: Optional[datetime] = None, tolerance_days: int = 3) -> dict:
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     since = now - timedelta(days=days)
     alerts = db.query(Alert).filter(Alert.tenant_id == tenant_id, Alert.created_at >= since).all()
     by_kind: dict[str, dict] = {}

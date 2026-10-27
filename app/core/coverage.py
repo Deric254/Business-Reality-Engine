@@ -16,6 +16,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.core import BusinessEvent, Connector, DataCoverage, DataCoverageStatus
+from app.core.clock import utcnow
 
 # How long a connector can go quiet before it's "stale" rather than "recent",
 # scaled to what it declared as its own expected frequency.
@@ -43,6 +44,12 @@ STATUS_TO_PCT = {
 
 
 def _status_for_connector(connector: Connector, last_data_at: Optional[datetime], now: datetime) -> DataCoverageStatus:
+    if connector.connector_type == "system":
+        # Current while its agent reports the link healthy: a quiet day in the shop is not a broken link.
+        from app.core.systems import ALIVE_SECONDS
+        last = connector.last_attempt_at
+        healthy = last and (now - last).total_seconds() <= ALIVE_SECONDS and connector.last_sync_status != "failed" and connector.last_sync_at is not None
+        return DataCoverageStatus.live if healthy else (DataCoverageStatus.not_connected if connector.last_sync_at is None else DataCoverageStatus.stale)
     if last_data_at is None:
         return DataCoverageStatus.not_connected
     if connector.sync_interval_minutes:
@@ -68,7 +75,7 @@ def compute_and_upsert_coverage(db: Session, tenant_id: str, now: Optional[datet
     upserts the result. Called on-demand via the API for now — Section 51
     (system self-monitoring) would run this on a schedule instead.
     """
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     connectors = db.query(Connector).filter(Connector.tenant_id == tenant_id, Connector.is_active == True).all()
 
     results = []
@@ -110,7 +117,7 @@ def coverage_pct_for_entity(db: Session, tenant_id: str, entity: str, now: Optio
     contributing connectors rather than the average or best, so an alert
     never overstates confidence when even one source is stale.
     """
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     # Get distinct connector IDs first — cannot .distinct() the full Connector
     # row because Connector.config is a JSON column and Postgres has no
     # equality operator for json, so DISTINCT on the whole row fails.

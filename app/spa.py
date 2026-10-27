@@ -12,6 +12,7 @@ logger = logging.getLogger("business_reality_engine")
 SPA_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; "
            "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 _RESERVED = ("api/", "docs", "redoc", "openapi.json", "healthz")
+_ALWAYS_REVALIDATE = ("sw.js", "manifest.webmanifest")
 
 
 def find_dist(configured: str) -> Path | None:
@@ -29,15 +30,17 @@ def mount_spa(app: FastAPI, configured_dist: str = "") -> bool:
         return False
     index = dist / "index.html"
 
-    @app.get("/{full_path:path}", include_in_schema=False)
+    @app.api_route("/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False)     # HEAD: uptime monitors and link checkers use it
     def spa(full_path: str, request: Request):
         if full_path.startswith(_RESERVED):
             return JSONResponse({"detail": "Not found"}, status_code=404)
         target = (dist / full_path).resolve()
         if full_path and target.is_file() and (target == dist or dist in target.parents):
-            resp: Response = FileResponse(target)
+            resp: Response = FileResponse(target, media_type="application/manifest+json" if full_path == "manifest.webmanifest" else None)
             if full_path.startswith("assets/"):
                 resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            elif full_path in _ALWAYS_REVALIDATE:        # a stale worker or manifest would keep an old release alive
+                resp.headers["Cache-Control"] = "no-cache"
             return resp
         if "." in full_path.rsplit("/", 1)[-1]:      # a missing asset must be a 404, not an HTML page
             return JSONResponse({"detail": "Not found"}, status_code=404)

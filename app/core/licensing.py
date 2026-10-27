@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core import cache
 from app.models.licence import Licence, LicencePayment
+from app.core.clock import utcnow
 
 ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"            # no 0/O/1/I/L: keys get read aloud and typed from messages
 STATUS_TTL_SECONDS = 20
@@ -71,7 +72,7 @@ def lock_unused(db: Session, key: str) -> Licence:
 def revoke(db: Session, lic: Licence, reason: Optional[str]) -> None:
     if lic.status == "revoked":
         return
-    lic.status, lic.revoked_at, lic.revoked_reason = "revoked", datetime.utcnow(), (reason or "").strip()[:300] or None
+    lic.status, lic.revoked_at, lic.revoked_reason = "revoked", utcnow(), (reason or "").strip()[:300] or None
     db.commit()
     if lic.tenant_id:
         cache.invalidate_prefix(f"licence:{lic.tenant_id}")
@@ -91,7 +92,7 @@ def reinstate(db: Session, lic: Licence) -> str:
 
 
 def record_payment(db: Session, lic: Licence, amount_cents: int, months: int, reference: Optional[str], method: str = "manual") -> LicencePayment:
-    now = datetime.utcnow()
+    now = utcnow()
     start = lic.paid_through if lic.paid_through and lic.paid_through > now else now          # paying early extends, never overlaps
     pay = LicencePayment(licence_id=lic.id, amount_cents=amount_cents, currency=lic.currency, paid_at=now,
                          period_start=start, period_end=start + relativedelta(months=months), reference=reference or None, method=method)
@@ -108,7 +109,7 @@ def access_state(status: str, price_cents: Optional[int], paid_through: Optional
     A free licence (price 0) is never overdue."""
     if status == "active" and (price_cents or 0) > 0:
         due = paid_through or redeemed_at
-        if due and (now or datetime.utcnow()) > due + timedelta(days=grace_days()):
+        if due and (now or utcnow()) > due + timedelta(days=grace_days()):
             return "overdue"
     return status
 

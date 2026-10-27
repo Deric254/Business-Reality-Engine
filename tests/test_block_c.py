@@ -199,8 +199,8 @@ def test_read_only_validator_rejects(q):
 def test_driver_catalog_is_honest():
     cat = {d["db_type"]: d for d in dbc.driver_catalog()}
     assert set(cat) == {"postgres", "sqlite", "mysql", "mssql", "oracle", "odbc"}
-    assert cat["postgres"]["verified"] and cat["sqlite"]["verified"] and cat["postgres"]["available"]
-    assert not any(cat[k]["verified"] for k in ("mysql", "mssql", "oracle", "odbc"))
+    assert cat["postgres"]["verified"] and cat["sqlite"]["verified"] and cat["mysql"]["verified"] and cat["postgres"]["available"]
+    assert not any(cat[k]["verified"] for k in ("mssql", "oracle", "odbc"))        # nothing is called verified until it has been tried live
 
 
 def test_url_building_keeps_special_characters_in_password():

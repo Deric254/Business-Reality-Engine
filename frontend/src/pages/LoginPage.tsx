@@ -35,13 +35,14 @@ function SignIn({ onFirstRun }: { onFirstRun?: () => void }) {
   const t = useT();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const slow = useSlow(busy);
 
   async function submit(e: FormEvent) {
     e.preventDefault(); setBusy(true); setError(null);
-    try { await login(email.trim(), password); navigate("/", { replace: true }); }
+    try { await login(email.trim(), password, remember); navigate("/", { replace: true }); }
     catch (err) {
       if (err instanceof ApiError && err.status === 429) setError("Too many attempts. Wait a minute and try again.");
       else if (err instanceof ApiError && err.status === 401) setError("Email or password is incorrect.");
@@ -53,6 +54,8 @@ function SignIn({ onFirstRun }: { onFirstRun?: () => void }) {
       <div><h1 className="display text-3xl">Sign in</h1><p className="text-ink-muted mt-1">Pick up where you left off.</p></div>
       <label className="block text-sm font-medium">{t("login.email")}<input type="email" required autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} className={`${inputCls} mt-1.5 !py-2.5 !text-base`} /></label>
       <label className="block text-sm font-medium">{t("login.password")}<input type="password" required autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className={`${inputCls} mt-1.5 !py-2.5 !text-base`} /></label>
+      <label className="flex items-start gap-2 text-sm text-ink-muted"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="mt-1" />
+        <span><span className="font-medium text-ink-text">{t("login.remember")}</span><span className="block text-xs text-ink-faint">{t("login.rememberHelp")}</span></span></label>
       {error && <p role="alert" className="text-sm text-critical">{error}</p>}
       {slow && <SlowHint />}
       <button type="submit" disabled={busy} className={`${primaryCls} w-full !py-2.5 !text-base`}>{busy ? "Signing in…" : t("login.submit")}</button>

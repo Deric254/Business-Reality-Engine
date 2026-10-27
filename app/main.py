@@ -11,7 +11,7 @@ from app.core.scheduler import start_scheduler, stop_scheduler
 from app.core.keepalive import start_keepalive, stop_keepalive
 from app.spa import mount_spa, SPA_CSP
 from app.core.rate_limit import RateLimitMiddleware
-from app.api import health, connectors, events, alerts, entities, detection, coverage, cases, questions, tenants, forecasting, simulation, webhooks, system, auth, notifications, monitoring, audit as audit_api, users, business, accuracy as accuracy_api, capture, ai as ai_api, master as master_api, live as live_api, goals as goals_api, demo as demo_api
+from app.api import health, connectors, events, alerts, entities, detection, coverage, cases, questions, tenants, forecasting, simulation, webhooks, agent as agent_api, system, auth, notifications, monitoring, audit as audit_api, users, business, accuracy as accuracy_api, capture, ai as ai_api, master as master_api, live as live_api, goals as goals_api, demo as demo_api
 
 # Without this, every logger.info() call in the app is silently dropped —
 # Python's root logger defaults to WARNING with no handler configured.
@@ -144,6 +144,8 @@ app.include_router(
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
 app.include_router(monitoring.router, prefix="/api/monitoring", tags=["monitoring"])
 app.include_router(webhooks.router, prefix="/api/webhooks", tags=["webhooks"])
+# The local agent authenticates with its connector's token (verified in the handler); people use their sign-in.
+app.include_router(agent_api.router, prefix="/api/agent", tags=["agent"])
 app.include_router(
     system.router, prefix="/api/system", tags=["system"],
     dependencies=[Depends(require_admin_key)],

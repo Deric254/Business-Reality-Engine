@@ -32,6 +32,7 @@ from app.core.detectors import _upsert
 from app.core.tenant_time import tenant_zone
 from app.models.alerts import Alert, AlertSeverity, AlertState
 from app.models.core import BusinessEvent as E
+from app.core.clock import utcnow
 
 logger = logging.getLogger("business_reality_engine")
 
@@ -87,7 +88,7 @@ def _payment_alert_covers(db: Session, tenant_id: str, category: str) -> bool:
 # ---------------- 1. a spending category far above its own usual ----------------
 
 def detect_category_spikes(db: Session, tenant_id: str, now: Optional[datetime] = None) -> list[Alert]:
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     cur_w, base_w = _windows(now)
     cur = _group(db, tenant_id, "expense", E.product_id, *cur_w)
     bases = [_group(db, tenant_id, "expense", E.product_id, *w) for w in base_w]
@@ -146,7 +147,7 @@ def detect_category_spikes(db: Session, tenant_id: str, now: Optional[datetime] 
 # ---------------- 2. a branch whose sales fall below its own usual ----------------
 
 def detect_branch_declines(db: Session, tenant_id: str, now: Optional[datetime] = None) -> list[Alert]:
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     cur_w, base_w = _windows(now)
     cur = _group(db, tenant_id, "sale", E.location, *cur_w)
     bases = [_group(db, tenant_id, "sale", E.location, *w) for w in base_w]
@@ -210,7 +211,7 @@ def _margin(sold: float, spent: float) -> Optional[float]:
 
 
 def detect_margin_compression(db: Session, tenant_id: str, now: Optional[datetime] = None) -> list[Alert]:
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     cur_w, base_w = _windows(now)
     sales_c, spend_c = (_group(db, tenant_id, e, E.location, *cur_w) for e in ("sale", "expense"))
     sales_b = [_group(db, tenant_id, "sale", E.location, *w) for w in base_w]
@@ -277,7 +278,7 @@ def detect_margin_compression(db: Session, tenant_id: str, now: Optional[datetim
 # ---------------- 4. one named customer carrying the business ----------------
 
 def detect_customer_concentration(db: Session, tenant_id: str, now: Optional[datetime] = None) -> Optional[Alert]:
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     start = now - timedelta(days=CONCENTRATION_DAYS)
     key = f"concentration:customer:{CONCENTRATION_DAYS}d"
     total = _sum_metric(db, tenant_id, "sale", "amount", start, now)
@@ -313,7 +314,7 @@ def detect_customer_concentration(db: Session, tenant_id: str, now: Optional[dat
 # ---------------- 5. one payment far outside what this business normally pays ----------------
 
 def detect_large_payments(db: Session, tenant_id: str, now: Optional[datetime] = None) -> list[Alert]:
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     w_start, h_start = now - timedelta(days=LARGE_DAYS), now - timedelta(days=LARGE_HISTORY_DAYS)
     hist = [float(a) for (a,) in db.query(E.amount).filter(
         E.tenant_id == tenant_id, E.entity == "expense", E.validation_status == "validated", E.amount.isnot(None), E.amount > 0,

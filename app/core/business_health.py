@@ -13,6 +13,7 @@ from app.core.detection import ACTIVE_STATES, _sum_metric
 from app.models.alerts import Alert, AlertSeverity
 from app.models.config import MonitoredMetric
 from app.models.core import BusinessEvent, Connector
+from app.core.clock import utcnow
 
 E = BusinessEvent
 
@@ -22,7 +23,7 @@ def _pct(n: float, d: float) -> Optional[float]:
 
 
 def quality_report(db: Session, tenant_id: str, days: int = 30, now: Optional[datetime] = None) -> dict:
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     from app.core import periods
     per = periods.resolve(db, tenant_id, days, now)
     flt = [E.tenant_id == tenant_id, E.timestamp >= per.start, E.timestamp < per.end]
@@ -65,7 +66,7 @@ def quality_report(db: Session, tenant_id: str, days: int = 30, now: Optional[da
 
 def discover(db: Session, tenant_id: str, now: Optional[datetime] = None) -> dict:
     """What the data contains, and which metrics are worth watching that are not watched yet."""
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     rows = db.query(E.entity, func.count(E.id), func.min(E.timestamp), func.max(E.timestamp),
                     func.count(E.amount), func.count(E.quantity), func.count(E.customer_id), func.count(E.product_id),
                     func.count(E.location)).filter(E.tenant_id == tenant_id, E.validation_status == "validated").group_by(E.entity).all()
@@ -93,7 +94,7 @@ def discover(db: Session, tenant_id: str, now: Optional[datetime] = None) -> dic
 
 
 def health_summary(db: Session, tenant_id: str, days: int = 30, now: Optional[datetime] = None) -> dict:
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     from app.core import periods
     per = periods.resolve(db, tenant_id, days, now)
     def tot(ent, s, e): return _sum_metric(db, tenant_id, ent, "amount", s, e)

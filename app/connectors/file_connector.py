@@ -16,7 +16,7 @@ from typing import NamedTuple, Optional
 
 import pandas as pd
 from fastapi import HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024   # 10MB — generous for a business's periodic export
 MAX_ROWS = 50_000                         # prevents a hostile/corrupt file from exhausting memory
@@ -45,7 +45,20 @@ class ColumnMapping(BaseModel):
     amount_out_col: Optional[str] = None
     price_col: Optional[str] = None      # unit price, used when there is no total: amount = quantity x price
     type_col: Optional[str] = None       # a column saying whether each row is a sale or an expense
+    # Money-out rows that are not costs of the business (transfers to the owner's own accounts, settlements, cash taken out)
+    # are left out when their details contain one of these words. Off unless the owner lists words; the count and total left
+    # out are always reported, so nothing disappears quietly.
+    details_col: Optional[str] = None
+    exclude_words: list[str] = Field(default_factory=list, max_length=20)
     default_currency: str = "KES"
+
+    @field_validator("exclude_words")
+    @classmethod
+    def _clean_words(cls, words: list[str]) -> list[str]:
+        cleaned = [w.strip().lower() for w in words if w and w.strip()]
+        if any(len(w) > 40 for w in cleaned):
+            raise ValueError("each word to leave out must be 40 characters or fewer")
+        return list(dict.fromkeys(cleaned))
 
 
 async def read_upload(file) -> bytes:
@@ -199,6 +212,16 @@ def _row_money(mapping: ColumnMapping, get, where: str) -> tuple[str, str, Optio
     return entity, event_type, amount, quantity
 
 
+def _is_left_out(details, words: list[str]) -> bool:
+    text = "" if details is None else str(details).lower()
+    return any(w in text for w in words)
+
+
+def left_out_note(parsed: "ParsedRows") -> dict:
+    """What an import or sync adds to its report when rows were left out on request (nothing when none were)."""
+    return {"left_out": parsed.left_out, "left_out_total": parsed.left_out_total} if parsed.left_out else {}
+
+
 def _identity(mapped, row) -> Optional[str]:
     """The record's id: the id column when the row has one, else the row's own content fingerprint, so a blank id
     never makes a record that is re-added on every sync."""
@@ -230,6 +253,8 @@ def _shared_id_suffixes(df: pd.DataFrame, mapping: ColumnMapping) -> dict[int, s
 class ParsedRows(NamedTuple):
     events: list[dict]
     skipped: list[str]      # why each unreadable row was left out, e.g. "Row 14: 'TOTAL' is not a date"
+    left_out: int = 0       # money-out rows the owner asked to leave out (not costs of the business), see ColumnMapping.exclude_words
+    left_out_total: float = 0.0
 
 
 _DAY_MONTH_YEAR = r"^\s*(\d{1,2})[/.\-](\d{1,2})[/.\-]\d{2,4}"
@@ -260,6 +285,7 @@ def dataframe_to_normalized_events(
     blank = df.drop(columns=[ROW_ID_COL], errors="ignore").apply(lambda col: col.isna() | col.astype(str).str.strip().eq("")).all(axis=1)
     shared = _shared_id_suffixes(df, mapping)
     events, skipped, nonblank = [], [], 0
+    left_out, left_out_total = 0, 0.0
     for idx, row in df.iterrows():
         if blank[idx]:
             continue
@@ -279,6 +305,10 @@ def dataframe_to_normalized_events(
             entity, event_type, amount, quantity = _row_money(mapping, _get, where)
         except HTTPException as e:
             skipped.append(e.detail)
+            continue
+        if entity == "expense" and mapping.exclude_words and _is_left_out(_get("details_col"), mapping.exclude_words):
+            left_out += 1
+            left_out_total += amount or 0.0
             continue
         entity_id = _identity(_get("entity_id_col"), row)
         if entity_id is not None and idx in shared:
@@ -301,7 +331,7 @@ def dataframe_to_normalized_events(
         })
     if skipped and len(skipped) * 2 > nonblank:
         raise HTTPException(400, f"Most rows could not be read, so the column mapping is probably wrong. First problem: {skipped[0]}")
-    return ParsedRows(events, skipped)
+    return ParsedRows(events, skipped, left_out, round(left_out_total, 2))
 
 
 # ---------------- workbooks with more than one sheet ----------------

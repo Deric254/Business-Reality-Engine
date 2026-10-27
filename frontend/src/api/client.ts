@@ -88,14 +88,14 @@ async function requestBlob(path: string, retried = false): Promise<Blob> {
   return res.blob();
 }
 
-export async function login(email: string, password: string): Promise<void> {
+export async function login(email: string, password: string, remember = false): Promise<void> {
   const res = await fetch(`${API_BASE}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
   if (!res.ok) throw await parseError(res);
-  setTokens((await res.json()) as TokenPair);
+  setTokens((await res.json()) as TokenPair, remember);
 }
 
 export async function changePassword(current: string, next: string): Promise<void> {
@@ -478,6 +478,7 @@ export interface RejectedRecord { when: string; amount: number | null; branch: s
 export interface ImportResult {
   rows_fetched?: number; rows_processed?: number; new_rows?: number; updated_rows?: number; removed_rows?: number; duplicates?: number; failed?: number;
   skipped?: number; skipped_examples?: string[]; rejected_total?: number; rejected_examples?: RejectedRecord[];
+  left_out?: number; left_out_total?: number;       // money-out rows left out because the owner asked (not costs of the business)
 }
 const rejectedLine = (e: RejectedRecord) => `${e.when}${e.amount != null ? `, ${e.amount.toLocaleString()}` : ""}${e.branch ? `, ${e.branch}` : ""}: ${e.reasons.join(", ")}`;
 /** What a sync or upload did, in plain words: what was added, edited, removed, and exactly which records were left out and why. */
@@ -486,8 +487,10 @@ export function importSummary(r: ImportResult, verb = "Checked"): string {
   const changes = [`${r.new_rows ?? 0} added`, r.updated_rows ? `${r.updated_rows} updated` : "", r.removed_rows ? `${r.removed_rows} removed` : ""].filter(Boolean).join(", ");
   const head = r.new_rows != null ? `${verb}${rows != null ? ` ${rows.toLocaleString()} rows` : ""}: ${changes}, ${(r.duplicates ?? 0).toLocaleString()} unchanged.` : `Done: ${rows ?? 0} rows.`;
   const rejected = r.rejected_total ? ` ${r.rejected_total} record${r.rejected_total === 1 ? "" : "s"} left out of your totals (${(r.rejected_examples ?? []).slice(0, 2).map(rejectedLine).join("; ")}${r.rejected_total > 2 ? "; …" : ""}). See them under the source.` : "";
-  return head + rejected + skippedNote(r);
+  return head + rejected + skippedNote(r) + leftOutNote(r);
 }
+export const leftOutNote = (r: ImportResult) =>
+  r.left_out ? ` ${r.left_out} money-out row${r.left_out === 1 ? "" : "s"} (${(r.left_out_total ?? 0).toLocaleString("en-US")} in all) left out of spending, as you asked.` : "";
 export const skippedNote = (r: ImportResult) =>
   r.skipped ? ` ${r.skipped} row${r.skipped === 1 ? "" : "s"} skipped (${(r.skipped_examples ?? []).join("; ")}${r.skipped > (r.skipped_examples?.length ?? 0) ? "; …" : ""}).` : "";
 
@@ -514,6 +517,25 @@ export const demoApi = {
   list: (t: string) => request<{ samples: SampleKind[]; loaded: boolean }>(`/api/demo/samples?tenant_id=${t}`),
   load: (t: string, kind: string) => request<{ kind: string; events: number; alerts: number }>("/api/demo/samples", { method: "POST", body: JSON.stringify({ tenant_id: t, kind }) }),
   remove: (t: string) => request<{ removed: boolean }>(`/api/demo/samples?tenant_id=${t}`, { method: "DELETE" }),
+};
+
+export type SystemLink = {
+  system: string; label: string; what: string; connected: boolean; connector_id?: string;
+  state?: string; headline?: string; detail?: string | null; notice?: string | null; is_active?: boolean; paused?: boolean; checking?: boolean;
+  last_seen_at?: string | null; last_synced_at?: string | null; in_sync?: boolean; records?: number;
+  status?: { path?: string; path_source?: string; searched?: string[]; candidates?: string[]; scopes?: { id: string; name: string }[]; scope_id?: string | null; scope_name?: string | null; schema_version?: string | null };
+  last_pass?: { rows?: Record<string, number>; seconds?: number };
+  verify?: { match?: boolean; differences?: unknown[] };
+};
+
+export const systemApi = {
+  list: (t: string) => request<SystemLink[]>(`/api/agent/?tenant_id=${t}`),
+  connect: (t: string, system: string) => request<{ connector_id: string; code: string }>("/api/agent/connect", { method: "POST", ...json({ tenant_id: t, system }) }),
+  check: (t: string, id: string) => request<SystemLink>(`/api/agent/${id}/check?tenant_id=${t}`, { method: "POST" }),
+  settings: (t: string, id: string, body: { path?: string; scope_id?: string; paused?: boolean }) => request<SystemLink>(`/api/agent/${id}/settings?tenant_id=${t}`, { method: "POST", ...json(body) }),
+  confirm: (t: string, id: string) => request<SystemLink>(`/api/agent/${id}/confirm?tenant_id=${t}`, { method: "POST" }),
+  resync: (t: string, id: string) => request<SystemLink>(`/api/agent/${id}/resync?tenant_id=${t}`, { method: "POST" }),
+  disconnect: (t: string, id: string) => request<{ removed_records: number }>(`/api/agent/${id}?tenant_id=${t}`, { method: "DELETE" }),
 };
 
 export const connectorApi = {

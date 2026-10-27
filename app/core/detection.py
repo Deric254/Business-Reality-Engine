@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from app.models.core import BusinessEvent, Tenant
 from app.models.alerts import Alert, AlertSeverity, AlertState
 from app.core.coverage import coverage_pct_for_entity
+from app.core.clock import utcnow
 
 
 METRIC_FIELDS = ("amount", "quantity")  # the only numeric event columns a metric may sum
@@ -410,7 +411,7 @@ def detect_historical_deviation(
     """
     if direction not in ("drop", "rise"):
         raise ValueError("direction must be 'drop' or 'rise'")
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     current_start = now - timedelta(days=period_days)
     current_value = _sum_metric(db, tenant_id, entity, field, current_start, now)
 
@@ -526,7 +527,7 @@ def detect_threshold_breach(
     now: Optional[datetime] = None,
 ) -> Optional[Alert]:
     """Fixed-line rule, e.g. 'cash below minimum threshold' (Section 19)."""
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     start = now - timedelta(days=period_days)
     value = _sum_metric(db, tenant_id, entity, field, start, now)
 

@@ -12,6 +12,7 @@ from app.core.db import get_db
 from app.core.locks import try_advisory_lock
 from app.core.model_versions import MANUAL_KINDS, current_version, record_change
 from app.models.config import BacktestRun, GroundTruthEvent, ModelChange
+from app.core.clock import utcnow
 
 router = APIRouter()
 
@@ -44,7 +45,7 @@ def declare_change(tenant_id: str, body: ChangeIn, db: Session = Depends(get_db)
     user = _owner(authorization, tenant_id)
     if body.kind not in MANUAL_KINDS:
         raise HTTPException(400, f"kind must be one of {sorted(MANUAL_KINDS)}")
-    if body.effective_at > datetime.utcnow().replace(microsecond=0) + timedelta(days=1):
+    if body.effective_at > utcnow().replace(microsecond=0) + timedelta(days=1):
         raise HTTPException(400, "effective_at cannot be in the future")
     row = record_change(db, tenant_id, body.kind, body.subject.strip(), body.effective_at, description=body.description,
                         rebaseline=body.rebaseline, source="manual")

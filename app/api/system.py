@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, Request
 from app.core import audit, recovery
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -32,8 +32,7 @@ class SchedulerRunOut(BaseModel):
     errors_count: Optional[str]
     status: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 @router.get("/scheduler-runs", response_model=list[SchedulerRunOut])

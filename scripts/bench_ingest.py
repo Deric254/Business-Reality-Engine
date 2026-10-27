@@ -8,6 +8,7 @@ from app.core.db import SessionLocal
 from app.models.core import Tenant, Connector
 from app.core import ingestion
 from app.core.ingestion import NormalizedEvent
+from app.core.clock import utcnow
 
 FIRST = ["John","Jane","Mary","Peter","Grace","James","Faith","David","Ann","Paul","Lucy","Brian","Mercy","Kevin","Joy","Samuel","Esther","Daniel","Ruth","Moses"]
 LAST = ["Mwangi","Otieno","Kamau","Wanjiru","Njoroge","Achieng","Kiprop","Mutua","Chebet","Omondi","Karanja","Wafula","Naliaka","Kariuki","Mbugua"]
@@ -15,7 +16,7 @@ LAST = ["Mwangi","Otieno","Kamau","Wanjiru","Njoroge","Achieng","Kiprop","Mutua"
 def make(n, customers, tenant, conn, tag):
     rnd = random.Random(7)
     names = [f"{rnd.choice(FIRST)} {rnd.choice(LAST)} {i}" for i in range(customers)]
-    base = dt.datetime.utcnow() - dt.timedelta(days=5)
+    base = utcnow() - dt.timedelta(days=5)
     return [NormalizedEvent(tenant_id=tenant, connector_id=conn, source="bench", entity="sale",
             entity_id=f"{tag}-{i}", event_type="sale", timestamp=base + dt.timedelta(seconds=i),
             amount=100 + (i % 50), customer_id=names[i % customers]) for i in range(n)]

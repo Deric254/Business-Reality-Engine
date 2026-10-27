@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.core.tenant_time import local_midnight_utc, tenant_zone
 from app.models.core import BusinessEvent
+from app.core.clock import utcnow
 
 ALL_TIME = 0
 MAX_DAYS = 3650
@@ -49,7 +50,7 @@ class Period:
 
 
 def local_today(db: Session, tenant_id: str, now: Optional[datetime] = None) -> date:
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     return now.replace(tzinfo=timezone.utc).astimezone(tenant_zone(db, tenant_id)).date()
 
 

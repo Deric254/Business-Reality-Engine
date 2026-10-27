@@ -1,11 +1,11 @@
 """Per-tenant configuration (Section 50) and alert delivery (Section 49)."""
-from datetime import datetime
 from sqlalchemy import (
     Column, String, DateTime, Date, Numeric, Integer, Boolean, ForeignKey, Index, Text, UniqueConstraint, JSON,
 )
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.models.core import Base, gen_uuid
+from app.core.clock import utcnow
 
 
 class MonitoredMetric(Base):
@@ -26,7 +26,7 @@ class MonitoredMetric(Base):
     # Optional fixed line on the period total (drop: alert when BELOW it; rise: when ABOVE it).
     absolute_threshold = Column(Numeric(18, 2), nullable=True)
     enabled = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "entity", "field", "period_days", name="uq_monitored_metric"),
@@ -48,7 +48,7 @@ class NotificationChannel(Base):
     secret_encrypted = Column(Text, nullable=True)
     min_severity = Column(String, nullable=False, default="high")
     enabled = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
     # Delivery preferences (all times are UTC "HH:MM"; a window may cross midnight).
     quiet_start = Column(String(5), nullable=True)
     quiet_end = Column(String(5), nullable=True)
@@ -74,10 +74,10 @@ class NotificationDelivery(Base):
     channel_id = Column(UUID(as_uuid=False), ForeignKey("notification_channels.id", ondelete="CASCADE"), nullable=False)
     status = Column(String, nullable=False, default="pending")    # pending | held (awaiting digest) | sent | dead
     attempts = Column(Integer, nullable=False, default=0)
-    next_attempt_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    next_attempt_at = Column(DateTime, nullable=False, default=utcnow)
     last_error = Column(Text, nullable=True)
     sent_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     __table_args__ = (
         UniqueConstraint("alert_id", "channel_id", "kind", name="uq_delivery_alert_channel_kind"),
@@ -96,7 +96,7 @@ class FxRate(Base):
     currency = Column(String(3), nullable=False)
     rate_to_base = Column(Numeric(18, 8), nullable=False)
     effective_date = Column(Date, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     __table_args__ = (UniqueConstraint("tenant_id", "currency", "effective_date", name="uq_fx_rate_day"),)
 
@@ -114,7 +114,7 @@ class ExternalContext(Base):
     ends_on = Column(Date, nullable=False)
     source = Column(String, nullable=False, default="manual")   # manual | calendar
     details = Column(JSON, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     __table_args__ = (
         Index("ix_external_context_range", "tenant_id", "starts_on", "ends_on"),
@@ -138,7 +138,7 @@ class ModelChange(Base):
     rebaseline = Column(Boolean, nullable=False, default=False, server_default="false")
     source = Column(String, nullable=False, default="auto")     # auto | manual
     details = Column(JSON, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "kind", "subject", name="uq_model_change_subject"),
@@ -157,7 +157,7 @@ class GroundTruthEvent(Base):
     metric = Column(String, nullable=True)         # optional entity (e.g. "sale") the event should show up in
     starts_on = Column(Date, nullable=False)
     ends_on = Column(Date, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     __table_args__ = (Index("ix_ground_truth_range", "tenant_id", "starts_on"),)
 
@@ -170,7 +170,7 @@ class BacktestRun(Base):
     tenant_id = Column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False)
     params = Column(JSON, nullable=False)
     result = Column(JSON, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     __table_args__ = (Index("ix_backtest_runs_tenant", "tenant_id", "created_at"),)
 
@@ -189,7 +189,7 @@ class AIProvider(Base):
     api_key = Column(Text, nullable=False)                        # Fernet-encrypted
     priority = Column(Integer, nullable=False, default=100)       # lower = tried first
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
 
 class Goal(Base):
@@ -204,8 +204,8 @@ class Goal(Base):
     metric = Column(String, nullable=False)                        # sales | spending | profit
     cadence = Column(String, nullable=False)                       # week | month | quarter | year
     target_amount = Column(Numeric(18, 2), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "name", name="uq_goal_name"),

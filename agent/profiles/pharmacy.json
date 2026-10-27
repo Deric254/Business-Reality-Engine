@@ -1,0 +1,30 @@
+{
+  "system": "pharmacy",
+  "label": "Pharmacy ERP",
+  "profile_version": 1,
+  "doc": "Pharmacy ERP (Electron + FastAPI + SQLite). Database: %LOCALAPPDATA%/PharmacyERP/pharmacy.db. Money is stored in whole cents; times are UTC. Sales are net of refunds, as the app's own reports; expenses are stock received.",
+  "discovery": {
+    "files": ["{localappdata}/PharmacyERP/pharmacy.db", "{home}/.pharmacy-erp/pharmacy.db"]
+  },
+  "signature": ["alembic_version", "sales", "sale_items", "medicine_batches"],
+  "version": {"sql": "SELECT version_num FROM alembic_version", "kind": "text", "tested_through": "0043"},
+  "currency": {"sql": "SELECT currency FROM business_config WHERE id = 1", "default": "KES"},
+  "money": {"unit": "minor", "places": 2},
+  "streams": [
+    {
+      "key": "sales", "entity": "sale", "event_type": "sale.recorded", "table": "sales", "time": "instant",
+      "doc": "One record per sale: the total charged minus anything refunded against it.",
+      "sql": "SELECT CAST(s.id AS TEXT) AS id, s.created_at AS instant, s.total_amount - COALESCE((SELECT SUM(r.total_amount) FROM refunds r WHERE r.sale_id = s.id), 0) AS amount, (SELECT SUM(si.quantity - si.qty_refunded) FROM sale_items si WHERE si.sale_id = s.id) AS quantity, COALESCE(NULLIF(TRIM(c.name), ''), NULLIF(TRIM(c.phone), '')) AS customer, (SELECT p.name FROM products p WHERE p.id = (SELECT CASE WHEN COUNT(DISTINCT si.product_id) = 1 THEN MIN(si.product_id) END FROM sale_items si WHERE si.sale_id = s.id)) AS product, s.discount_amount AS mm_discount FROM sales s LEFT JOIN customers c ON c.id = s.customer_id ORDER BY CAST(s.id AS TEXT)"
+    },
+    {
+      "key": "refunds", "entity": "refund", "event_type": "refund.recorded", "table": "refunds", "time": "instant", "optional": true,
+      "doc": "Refunds, on the day they were processed.",
+      "sql": "SELECT CAST(r.id AS TEXT) AS id, r.created_at AS instant, r.total_amount AS amount, (SELECT SUM(ri.quantity) FROM refund_items ri WHERE ri.refund_id = r.id) AS quantity, r.reason AS m_reason, r.sale_id AS m_sale_id FROM refunds r ORDER BY CAST(r.id AS TEXT)"
+    },
+    {
+      "key": "purchases", "entity": "expense", "event_type": "expense.purchase", "table": "purchase_orders", "time": "instant", "optional": true,
+      "doc": "Stock received from suppliers (quantity x actual unit cost). Purchases that were reversed are left out.",
+      "sql": "SELECT CAST(po.id AS TEXT) AS id, COALESCE(po.received_at, po.created_at) AS instant, (SELECT SUM(COALESCE(poi.quantity_received, poi.quantity_ordered) * COALESCE(poi.unit_cost_actual, poi.unit_cost_expected)) FROM purchase_order_items poi WHERE poi.purchase_order_id = po.id) AS amount, (SELECT SUM(COALESCE(poi.quantity_received, poi.quantity_ordered)) FROM purchase_order_items poi WHERE poi.purchase_order_id = po.id) AS quantity, NULLIF(TRIM(sup.name), '') AS supplier, (SELECT p.name FROM products p WHERE p.id = (SELECT CASE WHEN COUNT(DISTINCT poi.product_id) = 1 THEN MIN(poi.product_id) END FROM purchase_order_items poi WHERE poi.purchase_order_id = po.id)) AS product FROM purchase_orders po LEFT JOIN suppliers sup ON sup.id = po.supplier_id WHERE po.status = 'RECEIVED' AND EXISTS (SELECT 1 FROM purchase_order_items x WHERE x.purchase_order_id = po.id) ORDER BY CAST(po.id AS TEXT)"
+    }
+  ]
+}

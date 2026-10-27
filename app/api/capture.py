@@ -14,6 +14,7 @@ from app.core.auth_users import authorize_tenant
 from app.core.db import get_db
 from app.core.ingestion import NormalizedEvent, ingest_events_bulk
 from app.models.core import Connector
+from app.core.clock import utcnow
 
 router = APIRouter()
 MAX_ENTRIES = 100
@@ -54,7 +55,7 @@ def capture(payload: CaptureIn, request: Request, db: Session = Depends(get_db),
     conn = _connector(db, payload.tenant_id)
     if not conn.is_active:
         raise HTTPException(409, "Manual capture is switched off for this business")
-    now = datetime.utcnow()
+    now = utcnow()
     events = []
     for e in payload.entries:
         if e.entity not in ENTITIES:

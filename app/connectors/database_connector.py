@@ -43,7 +43,8 @@ DRIVERS: dict[str, DriverSpec] = {
     "postgres": DriverSpec(dialect="postgresql+psycopg2", module="psycopg2", default_port=5432, verified=True),
     "sqlite": DriverSpec(dialect="sqlite", module="sqlite3", default_port=None, verified=True,
                          notes="File must be inside your business folder on the server (CONNECTOR_FILE_ROOT/<tenant>/)."),
-    "mysql": DriverSpec(dialect="mysql+pymysql", module="pymysql", default_port=3306, verified=False),
+    "mysql": DriverSpec(dialect="mysql+pymysql", module="pymysql", default_port=3306, verified=True,
+                        notes="Tried against a live MariaDB 10.11 server (tests/test_mysql_live.py); CI runs the same tests against MySQL 8."),
     "mssql": DriverSpec(dialect="mssql+pyodbc", module="pyodbc", default_port=1433, verified=False,
                         notes="Needs the Microsoft ODBC driver on the server; set odbc_driver if not 'ODBC Driver 18 for SQL Server'. "
                               "SQL Server has no read-only session switch: also give the connection a read-only login."),

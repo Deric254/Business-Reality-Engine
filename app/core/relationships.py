@@ -13,6 +13,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.core import BusinessEvent, ResolvedEntity
+from app.core.clock import utcnow
 
 ROLE_COL = {
     "customer": BusinessEvent.resolved_customer_id, "product": BusinessEvent.resolved_product_id,
@@ -47,7 +48,7 @@ def relationships_for(db: Session, tenant_id: str, entity_id: str, days: int = 9
     ent = db.query(ResolvedEntity).filter(ResolvedEntity.id == entity_id, ResolvedEntity.tenant_id == tenant_id).first()
     if not ent or ent.entity_type not in ROLE_COL:
         return None
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     start = now - timedelta(days=days)
     own = ROLE_COL[ent.entity_type]
     value_entity = _value_entity(ent.entity_type)

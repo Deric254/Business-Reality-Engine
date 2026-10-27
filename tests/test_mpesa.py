@@ -139,3 +139,71 @@ def test_the_withdraw_spelling_some_statements_use_is_recognised():
                                  "A1,2026-10-01 10:00:00,x,COMPLETED,100.00,0.00,5\nA2,2026-10-02 10:00:00,y,COMPLETED,0.00,40.00,-35\n"))
     m = suggest_mapping(df)
     assert (m["amount_in_col"], m["amount_out_col"]) == ("Paid in", "Withdraw")
+
+
+# ---- leaving out money that is not a cost of the business -------------------------------------------------------------
+
+LEAVE_OUT_STATEMENT = (
+    "Receipt No.,Completion Time,Details,Transaction Status,Paid In,Withdrawn,Balance\n"
+    "R1,{d} 09:00:00,Customer Payment from MARY,Completed,\"3,000.00\",,3000.00\n"
+    "R2,{d} 10:00:00,Business Settlement to bank,Completed,,\"2,000.00\",1000.00\n"
+    "R3,{d} 11:00:00,Customer Transfer to - OWNER,Completed,,500.00,500.00\n"
+    "R4,{d} 12:00:00,Pay Bill to KPLC,Completed,,300.00,200.00\n"
+    "R5,{d} 13:00:00,Settlement reversal from bank,Completed,800.00,,1000.00\n")
+
+
+def _statement_connector(client, t, h, **extra):
+    r = mk(client, t, h, connector_type="file", config={**MAPPING, "details_col": "Details", **extra})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def _upload(client, t, h, cid, body):
+    return client.post(f"/api/connectors/{cid}/upload", data={"tenant_id": t}, files={"file": ("m.csv", body, "text/csv")}, headers=h)
+
+
+def _csv():
+    d = dt.datetime.utcnow() - dt.timedelta(days=2)
+    return LEAVE_OUT_STATEMENT.format(d=f"{d:%Y-%m-%d}").encode()
+
+
+def test_rows_the_owner_asks_to_leave_out_are_not_counted_and_are_reported(client):
+    t, h = make_owner(client, "leaveout1")
+    cid = _statement_connector(client, t, h, exclude_words=["Settlement", " transfer to ", ""])
+    r = _upload(client, t, h, cid, _csv())
+    assert r.status_code == 200, r.text
+    assert (r.json()["left_out"], r.json()["left_out_total"]) == (2, 2500.0)          # only the two money-OUT rows that match
+    assert r.json()["rows_processed"] == 3 and r.json()["skipped"] == 0
+    k = client.get(f"/api/questions/kpis?tenant_id={t}&period_days=30", headers=h).json()
+    assert k["expenses"]["current"] == pytest.approx(300.0)                              # only the KPLC bill is a cost
+    assert k["revenue"]["current"] == pytest.approx(3800.0)                              # money in is never left out, even if it says "settlement"
+
+
+def test_nothing_is_left_out_unless_the_owner_lists_words(client):
+    t, h = make_owner(client, "leaveout2")
+    cid = _statement_connector(client, t, h)
+    r = _upload(client, t, h, cid, _csv())
+    assert r.status_code == 200 and "left_out" not in r.json() and r.json()["rows_processed"] == 5
+    assert client.get(f"/api/questions/kpis?tenant_id={t}&period_days=30", headers=h).json()["expenses"]["current"] == pytest.approx(2800.0)
+
+
+def test_leaving_most_rows_out_is_not_mistaken_for_a_wrong_column_mapping(client):
+    t, h = make_owner(client, "leaveout3")
+    cid = _statement_connector(client, t, h, exclude_words=["settlement", "transfer", "pay bill"])
+    r = _upload(client, t, h, cid, _csv())
+    assert r.status_code == 200 and r.json()["left_out"] == 3 and r.json()["rows_processed"] == 2
+
+
+def test_leave_out_words_are_validated(client):
+    t, h = make_owner(client, "leaveout4")
+    assert mk(client, t, h, connector_type="file", config={**MAPPING, "details_col": "Details", "exclude_words": ["x" * 41]}).status_code == 400
+    assert mk(client, t, h, connector_type="file", config={**MAPPING, "details_col": "Details", "exclude_words": [f"w{i}" for i in range(21)]}).status_code == 400
+
+
+def test_a_statement_shaped_file_suggests_its_details_column():
+    import io
+    import pandas as pd
+    from app.connectors.inspect import suggest_mapping
+    df = pd.read_csv(io.StringIO(LEAVE_OUT_STATEMENT.format(d="2026-10-01")))
+    m = suggest_mapping(df)
+    assert m["details_col"] == "Details" and m.get("product_id_col") is None
