@@ -5,7 +5,7 @@ Local systems: the screens' side (connect, check now, set the location, confirm,
 import base64
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from app.core.clock import utcnow
 from typing import Optional
@@ -17,10 +17,8 @@ from sqlalchemy.orm import Session
 from app.connectors.webhook_connector import generate_webhook_token
 from app.core import audit, sources, systems
 from app.core.auth_users import authorize_tenant
-from app.core.cache import invalidate_tenant
 from app.core.db import get_db
 from app.core.rate_limit import check_webhook_rate_limit
-from app.models.agent import AgentStatus
 from app.models.core import Connector
 
 router = APIRouter()

@@ -791,7 +791,6 @@ class SystemRunner:
         try:
             result = self.run_pass(full)
             self.force_full = False
-            verify = result["sent"].get("verify") or {}
             action = result["sent"].get("action")
             detail = self._healthy_detail(result)
             self.status.update(state=CONNECTED, detail=detail)
