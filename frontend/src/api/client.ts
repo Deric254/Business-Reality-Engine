@@ -520,7 +520,7 @@ export const demoApi = {
 };
 
 export type SystemLink = {
-  system: string; label: string; what: string; connected: boolean; connector_id?: string;
+  system: string; label: string; what: string; connected: boolean; download_url?: string | null; connector_id?: string;
   state?: string; headline?: string; detail?: string | null; notice?: string | null; is_active?: boolean; paused?: boolean; checking?: boolean;
   last_seen_at?: string | null; last_synced_at?: string | null; in_sync?: boolean; records?: number;
   status?: { path?: string; path_source?: string; searched?: string[]; candidates?: string[]; scopes?: { id: string; name: string }[]; scope_id?: string | null; scope_name?: string | null; schema_version?: string | null };

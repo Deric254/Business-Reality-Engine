@@ -54,7 +54,7 @@ SCHEMA_CHANGED, NEEDS_CHOICE, NEEDS_CONFIRM, REFUSED = "schema_changed", "needs_
 
 STATE_WORDS = {CONNECTED: "connected", NOT_FOUND: "not found", NOT_THIS_SYSTEM: "wrong file", NEEDS_DRIVER: "needs the reader installed", NEEDS_KEY: "needs its key file",
                LOCKED: "busy, will retry", UNREADABLE: "cannot be read", SCHEMA_CHANGED: "the system changed", NEEDS_CHOICE: "choose a business",
-               NEEDS_CONFIRM: "waiting for confirmation", REFUSED: "connection not accepted"}
+               NEEDS_CONFIRM: "waiting for confirmation", REFUSED: "connection not accepted", "engine_unreachable": "cannot reach the app"}
 
 
 class SystemProblem(Exception):
@@ -832,6 +832,10 @@ class SystemRunner:
             self.refused_until = self.clock() + 60
         else:
             self.log(f"[{self.profile['label']}] engine not reachable or busy: {e}")
+            if e.status >= 500:
+                self.status.update(state="engine_unreachable", detail="Cannot reach the app. Check this computer's internet connection; it keeps trying by itself.")
+            else:
+                self.status.update(state=UNREADABLE, detail=f"The app did not accept the data ({e.detail or e.status}). The agent may need updating.")
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -907,38 +911,66 @@ def check_report(cfg: dict, profiles: dict, homes=None) -> list[dict]:
     return out
 
 
-def run_loop(cfg: dict, profiles: dict, stop: threading.Event, log=print, once: bool = False) -> int:
-    """One thread per system, so a long first copy of one never delays another's heartbeat."""
+def run_loop(cfg: dict, profiles: dict, stop: threading.Event, log=print, once: bool = False, reload=None, runners=None, config_check_seconds: float = 5.0) -> int:
+    """One thread per system, so a long first copy of one never delays another's heartbeat.
+    `reload()` returns the latest config (or None when unchanged): a system added or removed while the agent runs
+    starts or stops by itself, so connecting the second and third system needs no restart. `runners` lists the live
+    per-system runners for whoever wants to show their status."""
+    runners = runners if runners is not None else []
+    live: dict[str, tuple[threading.Thread, threading.Event, dict]] = {}
     state_path = cfg.get("state_file", "agent_state.db")
-    threads, runners = [], []
 
-    def work(entry):
+    def work(cur: dict, entry: dict, mine: threading.Event):
         profile = profiles[entry["system"]]
-        client = EngineClient(cfg["base_url"], entry["connector_id"], entry["token"], cfg.get("allow_insecure", False))
+        client = EngineClient(cur["base_url"], entry["connector_id"], entry["token"], cur.get("allow_insecure", False))
         state = StateDB(state_path)
-        runner = SystemRunner(cfg, entry, profile, state, client, log)
+        runner = SystemRunner(cur, entry, profile, state, client, log)
         runners.append(runner)
         try:
-            while not stop.is_set():
+            while not stop.is_set() and not mine.is_set():
                 runner.tick()
                 if once and runner.last_heartbeat:
                     break
-                stop.wait(float(cfg.get("poll_seconds", 20)) if not once else 1)
+                (mine.wait if not once else stop.wait)(float(cur.get("poll_seconds", 20)) if not once else 1)
         finally:
             state.close()
+            if runner in runners:
+                runners.remove(runner)
 
-    for entry in cfg.get("systems", []):
-        if entry["system"] not in profiles:
-            log(f"unknown system {entry['system']!r}; skipped")
-            continue
-        t = threading.Thread(target=work, args=(entry,), name=entry["system"], daemon=True)
-        t.start()
-        threads.append(t)
+    def sync_to(cur: dict):
+        wanted = {e["connector_id"]: e for e in cur.get("systems", []) if e["system"] in profiles}
+        for cid in [c for c, (_, _, e) in live.items() if c not in wanted or wanted[c] != e]:
+            live.pop(cid)[1].set()                                      # removed or changed (new code, new location): stop it, restart below
+        for cid, entry in wanted.items():
+            if cid not in live:
+                mine = threading.Event()
+                t = threading.Thread(target=work, args=(cur, entry, mine), name=entry["system"], daemon=True)
+                live[cid] = (t, mine, dict(entry))
+                t.start()
+        for e in cur.get("systems", []):
+            if e["system"] not in profiles:
+                log(f"unknown system {e['system']!r}; skipped")
+
+    sync_to(cfg)
+    last_check = time.monotonic()
     try:
-        while any(t.is_alive() for t in threads):
-            for t in threads:
-                t.join(0.5)
+        while not stop.is_set() and (reload is not None or any(t.is_alive() for t, _, _ in live.values())):
+            stop.wait(0.5)
+            if reload is not None and time.monotonic() - last_check >= config_check_seconds:
+                last_check = time.monotonic()
+                try:
+                    fresh = reload()
+                except Exception as e:                                  # a half-written config must not stop the agent
+                    log(f"config not reloaded: {type(e).__name__}")
+                    fresh = None
+                if fresh is not None:
+                    cfg = fresh
+                    sync_to(cfg)
+            if once and not any(t.is_alive() for t, _, _ in live.values()):
+                break
     except KeyboardInterrupt:
         stop.set()
+    for _, mine, _ in live.values():
+        mine.set()
     bad = [r for r in runners if r.status.get("state") != CONNECTED]
     return 1 if once and bad else 0

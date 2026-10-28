@@ -4,12 +4,13 @@ Runs on a computer inside the business, reads local data, pushes it **out** over
 
 ## Your systems: smePro, Imara, Pharmacy ERP (any combination)
 
-The agent knows where each system keeps its database, finds it by itself, reads it **read-only** (it never writes to it and never stops the system), and keeps the engine's copy exactly equal to it. In the app, **Data → Your systems** shows each one as *Connected and synced*, or says plainly why not (not found, wrong file, needs its key, system changed...).
+**For the owner (no Python, no commands):** in the app open **Data -> Your systems**, press **Connect** on the system, download the agent when asked (`RealityAgent.exe`), double-click it, paste the code on the page that opens, and press Connect. It finds the system's data by itself and the app then shows **Connected and synced**, or says plainly why not. It keeps working in the background and starts with the computer. Repeat for the other systems: paste each code into the same page, on whichever computer that system lives on; one agent serves all three.
 
-1. In the app press **Connect** on the system. A code is shown once.
-2. On the computer that has that system: `python reality_agent.py add <code>`. It prints what it can see. Repeat for each system, on whichever computer it lives on; several systems can share one agent.
-3. `python reality_agent.py run` keeps everything in sync all day (see "Start with the computer" below). `python reality_agent.py check` shows what this computer sees without sending anything.
-4. Database in an unusual place? Press **Set location** in the app, or `python reality_agent.py path imara "D:\\data\\imara.db"`.
+**For you (publishing it):** the Windows build runs in GitHub (Actions -> "Windows agent" -> Run workflow, or push a tag like `agent-v2.0.0` to publish it as a release). Put the download link in the server setting `AGENT_DOWNLOAD_URL` and the app shows it to owners. The build has not been run on a real Windows machine from here: after the first build, open it once on a PC and check that the page opens and a system connects.
+
+The agent reads each system's database **read-only** (it never writes to it and never stops the system) and keeps the engine's copy exactly equal to it.
+
+*Command-line version (for technicians):* `python reality_agent.py add <code>`, `check`, `run`, `path <system> <file>`.
 
 | System | Looked for in | Notes |
 |---|---|---|
@@ -23,8 +24,7 @@ Other Windows users on the same computer are searched too. If several copies exi
 
 **When a system changes.** Everything specific to a system lives in `profiles/<system>.json` (where its database is, how to recognise it, what each figure means). Every statement is test-compiled against the real database each pass: if the system renames something, the app says *the system has changed*, nothing is read as "empty", and what the engine already holds is left alone. A newer system version than the one verified gives a notice, not a stop. To adapt without touching code, put a corrected profile of the same name in `profiles.d/` next to `config.json`; it replaces the built-in one.
 
-**Start with the computer (Windows).** Not yet verified on a real Windows machine; check it once after setting up:
-`schtasks /Create /TN "Reality Agent" /SC ONLOGON /RL LIMITED /TR "pythonw \"C:\\path\\reality_agent.py\" run"` runs it when the user signs in. On Linux/macOS use a systemd user service or launchd entry running `python3 reality_agent.py run`.
+**Start with the computer.** `RealityAgent.exe` registers itself for the signed-in Windows user when a system is connected (no administrator rights). `RealityAgent.exe --remove-startup` removes it. Its log is `~/.reality-agent/agent.log`.
 
 Settings (optional, in `~/.reality-agent/config.json`): `poll_seconds` (20), `heartbeat_seconds` (30), `force_pass_seconds` (600, a full verified pass at least this often).
 

@@ -48,7 +48,7 @@ function Tile({ link, tenantId, isOwner, reload, onCode, setError, setNotice }: 
       {link.connected && st.scope_name && <div className="text-xs text-ink-muted">Business: {st.scope_name}</div>}
       {link.connected && !st.path && (st.searched?.length ?? 0) > 0 && <details className="text-xs text-ink-muted"><summary className="cursor-pointer">Where it looked</summary><ul className="mt-1 break-all">{st.searched!.map((p) => <li key={p}>{p}</li>)}</ul></details>}
       {link.connected && link.last_seen_at && <div className="text-xs text-ink-muted">Agent last reported {timeAgo(link.last_seen_at)}</div>}
-      {link.connected && link.state === "waiting" && <div className="text-sm text-ink-muted">Waiting for the agent. On the computer that has {link.label}, run the command from the connection code.</div>}
+      {link.connected && link.state === "waiting" && <div className="text-sm text-ink-muted">Waiting for the agent. On the computer that has {link.label}, open the agent and paste the code you were given.</div>}
       {choosing && isOwner && (
         <label className="text-sm flex items-center gap-2">Business to read
           <select className={inputCls + " max-w-xs"} defaultValue="" onChange={(e) => e.target.value && act(() => systemApi.settings(tenantId, id!, { scope_id: e.target.value }))}>
@@ -91,16 +91,26 @@ export function SystemLinks({ tenantId, isOwner, onChanged }: { tenantId: string
   useEffect(() => { const t = setInterval(load, hurry ? 3000 : 15000); return () => clearInterval(t); }, [load, hurry]);
   const reload = () => { load(); onChanged?.(); };
   const label = links.find((l) => l.system === code?.system)?.label ?? "";
+  const downloadUrl = links.find((l) => l.download_url)?.download_url ?? null;
   return (
     <>
       <Notice error={err} notice={notice} />
       {code && (
         <div className="bg-panel border border-field rounded-xl px-5 py-4 mb-3" style={{ borderColor: WARN }}>
-          <p className="font-semibold">Connect {label} to this computer. This code is shown only once.</p>
-          <p className="text-sm text-ink-muted mt-1">On the computer that has {label}, with the agent installed, run:</p>
-          <code className="block mt-2 text-xs break-all bg-panel border border-field rounded-sm p-2 select-all">python reality_agent.py add {code.code}</code>
-          <p className="text-sm text-ink-muted mt-2">It then finds {label}'s data by itself, and this page turns to "Connected and synced". Do the same for each system, on whichever computer it lives on.</p>
-          <button className={btnCls + " mt-3"} onClick={() => { setCode(null); load(); }}>I've run it</button>
+          <p className="font-semibold">Connect {label} in two steps</p>
+          <ol className="text-sm mt-2 list-decimal pl-5 space-y-2">
+            <li>
+              On the computer that has {label}, {downloadUrl
+                ? <>download and open the agent: <a className="underline font-medium" href={downloadUrl}>Download the agent for Windows</a>. It opens a page in your browser.</>
+                : "open the Business Reality Engine agent (ask your support person for it). It opens a page in your browser."}
+            </li>
+            <li>Paste this code into that page and press Connect. It is shown only once:
+              <code className="block mt-2 text-xs break-all bg-panel border border-field rounded-sm p-2 select-all">{code.code}</code>
+              <button className={btnCls + " mt-2"} onClick={() => navigator.clipboard?.writeText(code.code)}>Copy the code</button>
+            </li>
+          </ol>
+          <p className="text-sm text-ink-muted mt-2">The agent finds {label}'s data by itself, and this page then shows "Connected and synced". You only do this once per computer; the agent starts with the computer after that.</p>
+          <button className={btnCls + " mt-3"} onClick={() => { setCode(null); load(); }}>Done</button>
         </div>
       )}
       <ul className="grid gap-3 md:grid-cols-3">

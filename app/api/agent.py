@@ -108,7 +108,8 @@ def list_systems(tenant_id: str, db: Session = Depends(get_db), authorization: O
     authorize_tenant(authorization, tenant_id)
     have = {(c.config or {}).get("system"): c for c in db.query(Connector).filter(Connector.tenant_id == tenant_id, Connector.connector_type == "system")}
     now = utcnow()
-    return [{"system": key, "label": meta["label"], "what": meta["what"], "connected": key in have,
+    download = os.getenv("AGENT_DOWNLOAD_URL") or None       # where the one-file Windows agent can be downloaded (set once on the server)
+    return [{"system": key, "label": meta["label"], "what": meta["what"], "connected": key in have, "download_url": download,
              **(systems.summary(db, have[key], now) if key in have else {})} for key, meta in systems.SYSTEMS.items()]
 
 
