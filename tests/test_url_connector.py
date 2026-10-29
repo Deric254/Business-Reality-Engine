@@ -114,13 +114,15 @@ def test_ai_maps_headers_the_rules_cannot_read_and_hallucinations_are_dropped():
     import pandas as pd
     from app.connectors.inspect import describe
     df = pd.read_csv(io.StringIO(SWAHILI))
-    assert "amount_col" not in describe(df)["suggested_mapping"]                          # rules alone do not know "Mauzo"
+    rules = describe(df)
+    assert rules["guessed"] == ["timestamp_col", "amount_col"]                             # rules alone cannot read "Tarehe" or "Mauzo": they only guess them from the contents, and say so
     ai = _FakeAI('Here you go: {"mapping": {"timestamp_col": "Tarehe", "amount_col": "Mauzo", "location_col": "Duka", '
                  '"product_id_col": "Maelezo", "customer_id_col": "Client Name", "quantity_col": "Tarehe"}, '
                  '"entity": "sale", "default_currency": "KES", "reasons": {"amount_col": "Mauzo means sales", "location_col": "Duka means shop"}}')
     out = describe(df, ai)
     m = out["suggested_mapping"]
     assert out["source"] == "ai" and m["amount_col"] == "Mauzo" and m["location_col"] == "Duka" and m["timestamp_col"] == "Tarehe"
+    assert out["guessed"] == []                                                            # the AI read it by meaning, so it is no longer a guess
     assert "customer_id_col" not in m and "quantity_col" not in m                          # invented column / column already used
     assert m["default_currency"] == "KES" and m["event_type"] == "sale.created"
     assert out["reasons"] == {"amount_col": "Mauzo means sales", "location_col": "Duka means shop"}

@@ -478,7 +478,7 @@ export interface RejectedRecord { when: string; amount: number | null; branch: s
 export interface ImportResult {
   rows_fetched?: number; rows_processed?: number; new_rows?: number; updated_rows?: number; removed_rows?: number; duplicates?: number; failed?: number;
   skipped?: number; skipped_examples?: string[]; rejected_total?: number; rejected_examples?: RejectedRecord[];
-  left_out?: number; left_out_total?: number;       // money-out rows left out because the owner asked (not costs of the business)
+  left_out?: number; left_out_total?: number; blank_rows?: number;       // money-out rows left out because the owner asked (not costs of the business)
 }
 const rejectedLine = (e: RejectedRecord) => `${e.when}${e.amount != null ? `, ${e.amount.toLocaleString()}` : ""}${e.branch ? `, ${e.branch}` : ""}: ${e.reasons.join(", ")}`;
 /** What a sync or upload did, in plain words: what was added, edited, removed, and exactly which records were left out and why. */
@@ -487,8 +487,9 @@ export function importSummary(r: ImportResult, verb = "Checked"): string {
   const changes = [`${r.new_rows ?? 0} added`, r.updated_rows ? `${r.updated_rows} updated` : "", r.removed_rows ? `${r.removed_rows} removed` : ""].filter(Boolean).join(", ");
   const head = r.new_rows != null ? `${verb}${rows != null ? ` ${rows.toLocaleString()} rows` : ""}: ${changes}, ${(r.duplicates ?? 0).toLocaleString()} unchanged.` : `Done: ${rows ?? 0} rows.`;
   const rejected = r.rejected_total ? ` ${r.rejected_total} record${r.rejected_total === 1 ? "" : "s"} left out of your totals (${(r.rejected_examples ?? []).slice(0, 2).map(rejectedLine).join("; ")}${r.rejected_total > 2 ? "; …" : ""}). See them under the source.` : "";
-  return head + rejected + skippedNote(r) + leftOutNote(r);
+  return head + rejected + skippedNote(r) + leftOutNote(r) + blankNote(r);
 }
+export const blankNote = (r: ImportResult) => r.blank_rows ? ` ${r.blank_rows} empty row${r.blank_rows === 1 ? "" : "s"} ignored.` : "";
 export const leftOutNote = (r: ImportResult) =>
   r.left_out ? ` ${r.left_out} money-out row${r.left_out === 1 ? "" : "s"} (${(r.left_out_total ?? 0).toLocaleString("en-US")} in all) left out of spending, as you asked.` : "";
 export const skippedNote = (r: ImportResult) =>
@@ -507,9 +508,17 @@ export interface MergedPair {
 
 /** What one source adds to the shared dataset. */
 export interface Contribution { counted: number; matched: number; rejected: number }
+export interface TestEventResult { would_create: { entity: string; entity_id: string | null; amount: number | null; currency: string | null; customer_id: string | null; time: string } }
 export interface DbType { db_type: string; available: boolean; verified: boolean; default_port: number | null; notes: string }
 
-export interface Inspection { columns: string[]; row_count: number; sample: Record<string, unknown>[]; suggested_mapping: Record<string, string>; source: "ai" | "rules"; reasons: Record<string, string> }
+export interface FileQuality {
+  blank_rows: number; blank_columns: string[]; unnamed_columns: string[]; unreadable_dates: number; unreadable_amounts: number;
+  rows_without_amount: number; kind: "transactions" | "partial" | "list";
+}
+export interface Inspection {
+  columns: string[]; row_count: number; sample: Record<string, unknown>[]; suggested_mapping: Record<string, string>; source: "ai" | "rules";
+  reasons: Record<string, string>; guessed: string[]; quality: FileQuality;     // what was found, what was ignored, what we guessed
+}
 
 // ---- sample businesses ----
 export interface SampleKind { id: string; title: string; blurb: string }
@@ -556,6 +565,11 @@ export const connectorApi = {
   update: (t: string, id: string, patch: { is_active?: boolean; sync_interval_minutes?: number | null; clear_sync_interval?: boolean }) =>
     request<ConnectorRow>(`/api/connectors/${id}?tenant_id=${t}`, { method: "PATCH", ...json(patch) }),
   contributions: (t: string) => request<Record<string, Contribution>>(`/api/connectors/contributions?tenant_id=${t}`),
+  /** What a sample payment would become, using the source's own mapping. Stores nothing. */
+  testEvent: (t: string, id: string, payload?: Record<string, unknown>) =>
+    request<TestEventResult>(`/api/connectors/${id}/test-event?tenant_id=${t}`, { method: "POST", ...(payload ? json({ payload }) : {}) }),
+  /** A live feed's link is shown once; a lost one is replaced, and the old one stops working. */
+  newLink: (t: string, id: string) => request<{ webhook_url: string }>(`/api/connectors/${id}/new-link?tenant_id=${t}`, { method: "POST" }),
   overlaps: (t: string) => request<{ suggestions: OverlapSuggestion[]; merged: MergedPair[] }>(`/api/connectors/overlaps?tenant_id=${t}`),
   merge: (t: string, otherId: string, keepId: string) => request<{ counted_once: number }>(`/api/connectors/${otherId}/merge-into/${keepId}?tenant_id=${t}`, { method: "POST" }),
   unmerge: (t: string, otherId: string) => request<{ restored: number }>(`/api/connectors/${otherId}/merge?tenant_id=${t}`, { method: "DELETE" }),

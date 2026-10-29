@@ -32,7 +32,7 @@
 | Alerts too noisy or quiet | Accuracy page: log known incidents, run a backtest, adopt the suggested sensitivity; add promotions/holidays under Business |
 | Slow dashboard on a large tenant | KPIs are cached 30 s; measured reads stay sub-second to 500k events per tenant; beyond several million consider rollups/partitions |
 | A business is told its subscription is overdue | Licences page shows "Paused, not paid". Record a payment (access returns at once), or lengthen `LICENCE_GRACE_DAYS`. A revoked licence shows a Reinstate button |
-| M-Pesa payments do not arrive | The confirmation URL must be registered on Safaricom's Daraja portal exactly as shown once in the app (if lost, add a new M-Pesa source and register that). check when the source last received something on the Data page; a payment delivered twice is still counted once |
+| M-Pesa payments do not arrive | Open the M-Pesa source, Manage, and press **Get a new link** if the link was lost, then give Safaricom the new one (the old one stops at once). To prove the link itself works, the setup page's **Test my link** shows what a sample payment would become and stores nothing. A payment delivered twice is still counted once |
 | A prospect needs something to look at | Licences page, "Create demo businesses" (logins shown once); or a new business can load a sample from the Data page |
 | Locked-out sole owner, no email | Operator creates a new owner: `POST /api/auth/register` with `x-admin-key` |
 

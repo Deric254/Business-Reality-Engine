@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.connectors.database_connector import DatabaseColumnMapping, fetch_rows, rows_to_normalized_events
 from app.connectors.email_connector import list_new_emails
-from app.connectors.file_connector import (ColumnMapping, add_row_ids, dataframe_to_normalized_events, extra_sheet_events, left_out_note, parse_file_to_dataframe, validate_upload, with_default_id)
+from app.connectors.file_connector import (ColumnMapping, add_row_ids, dataframe_to_normalized_events, extra_sheet_events, import_notes, parse_file_to_dataframe, validate_upload, with_default_id)
 from app.connectors.url_connector import fetch_dataframe
 from app.connectors.folder_connector import MAX_TRACKED, list_new_files as list_folder_files, read_file
 from app.connectors.sftp_connector import fetch_file, list_new_files as list_sftp_files
@@ -55,7 +55,7 @@ def _ingest_frame(db, connector, mapping, content, filename):
     done = snapshot.apply(db, connector, [NormalizedEvent(**e) for e in parsed.events + extra_events], remove_missing=False)
     skipped_all = parsed.skipped + extra_skipped
     return {**{k: v for k, v in done.items() if k != "results"}, "rows_processed": len(done["results"]),
-            "skipped": len(skipped_all), "skipped_examples": skipped_all[:3], **left_out_note(parsed),
+            "skipped": len(skipped_all), "skipped_examples": skipped_all[:3], **import_notes(parsed),
             **({"other_sheets": sheet_notes} if sheet_notes else {})}
 
 
@@ -149,7 +149,7 @@ def sync_url(db: Session, connector: Connector, confirmed: bool = False) -> dict
     done = snapshot.apply(db, connector, [NormalizedEvent(**e) for e in parsed.events],
                           remove_missing=bool(df.attrs.get("whole_file")), confirmed=confirmed)
     return {**{k: v for k, v in done.items() if k != "results"}, "rows_fetched": len(df), "rows_processed": len(done["results"]),
-            "skipped": len(parsed.skipped), "skipped_examples": parsed.skipped[:3], **left_out_note(parsed)}
+            "skipped": len(parsed.skipped), "skipped_examples": parsed.skipped[:3], **import_notes(parsed)}
 
 
 SYNCERS: dict[str, Callable[..., dict]] = {

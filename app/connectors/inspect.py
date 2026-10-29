@@ -6,9 +6,11 @@ import json
 import re
 from typing import Any
 
+from fastapi import HTTPException
+
 import pandas as pd
 
-from app.connectors.file_connector import CURRENCY_MARK, NO_VALUE
+from app.connectors.file_connector import CURRENCY_MARK, NO_VALUE, blank_row_mask, to_number
 from app.reasoning.llm_providers import LLMProvider, get_provider
 
 _RULES: list[tuple[str, list[str]]] = [
@@ -59,6 +61,10 @@ def _norm(c: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", str(c).lower()).strip("_")
 
 
+# Columns that hold numbers which are not money: counts, stock levels, ages, phone numbers, identifiers.
+_NOT_MONEY = re.compile(r"qty|quantity|stock|count|units|number|no$|age|year|phone|mobile|tel|msisdn|zip|post|code|id$|ref|serial|barcode|sku", re.I)
+
+
 def _is_amount(df: pd.DataFrame, col: str) -> bool:
     """Mostly numbers among the cells that have something in them (a money-in column is empty on every money-out row)."""
     cells = df[col].dropna().astype(str).str.strip()
@@ -66,8 +72,24 @@ def _is_amount(df: pd.DataFrame, col: str) -> bool:
     return len(cells) > 0 and pd.to_numeric(cells, errors="coerce").notna().mean() > 0.6
 
 
+def _cells(df: pd.DataFrame, col: str) -> pd.Series:
+    """The cells of a column that have something in them. Empty rows and gaps say nothing about what a column is."""
+    s = df[col].dropna()
+    return s[s.astype(str).str.strip() != ""]
+
+
+_PLAIN_NUMBER = re.compile(r"-?[\d,]+(\.\d+)?")
+
+
 def _is_date(df: pd.DataFrame, col: str, share: float = 0.6) -> bool:
-    return pd.to_datetime(df[col], errors="coerce", format="mixed").notna().mean() >= share
+    cells = _cells(df, col)
+    if cells.empty:
+        return False
+    if not str(cells.dtype).startswith("datetime"):
+        cells = cells[~cells.astype(str).str.strip().str.fullmatch(_PLAIN_NUMBER)]        # a plain number is not a date, whatever 1970 says
+        if cells.empty:
+            return False
+    return pd.to_datetime(cells, errors="coerce", format="mixed").notna().mean() >= share * len(cells) / len(_cells(df, col))
 
 
 def _best_column(cols: list[str], norm: dict[str, str], used: set[str], words: list[str]) -> str | None:
@@ -83,7 +105,8 @@ def _best_column(cols: list[str], norm: dict[str, str], used: set[str], words: l
     return best
 
 
-def suggest_mapping(df: pd.DataFrame) -> dict[str, Any]:
+def _suggest(df: pd.DataFrame) -> tuple[dict[str, Any], list[str]]:
+    guessed: list[str] = []
     cols = [str(c) for c in df.columns if not str(c).startswith("__")]
     norm = {c: _norm(c) for c in cols}
     used: set[str] = set()
@@ -104,11 +127,15 @@ def suggest_mapping(df: pd.DataFrame) -> dict[str, Any]:
         if best is not None:
             out[field] = best
             used.add(best)
-    if "timestamp_col" not in out:               # fall back to any column that parses as dates
+    if "timestamp_col" not in out:               # no helpful name: any other column whose cells are dates (a header left blank, say)
         for c in cols:
-            if c not in used and df[c].dtype == object or str(df[c].dtype).startswith("datetime"):
-                if pd.to_datetime(df[c], errors="coerce", format="mixed").notna().mean() > 0.8:
-                    out["timestamp_col"] = c; used.add(c); break
+            if c not in used and _is_date(df, c, 0.8):
+                out["timestamp_col"] = c; used.add(c); guessed.append("timestamp_col"); break
+    if not any(k in out for k in ("amount_col", "amount_in_col", "amount_out_col", "price_col")):
+        # no helpful name either: if exactly one other column is made of money-looking numbers, offer it, marked as a guess
+        maybe = [c for c in cols if c not in used and not _NOT_MONEY.search(norm[c]) and _is_amount(df, c) and not _is_date(df, c)]
+        if len(maybe) == 1:
+            out["amount_col"] = maybe[0]; used.add(maybe[0]); guessed.append("amount_col")
     if "amount_col" in out and "quantity_col" in out and re.search(r"price|rate", norm[out["amount_col"]]):
         out["price_col"] = out.pop("amount_col")          # a unit price, not the row total: amount = quantity x price
     kind = _best_column(cols, norm, used, _TYPE_WORDS)
@@ -120,7 +147,11 @@ def suggest_mapping(df: pd.DataFrame) -> dict[str, Any]:
             out["details_col"] = details; used.add(details)
     joined = " ".join(norm.values())
     out["entity"] = "expense" if _EXPENSE_HINT.search(joined) and not re.search(r"sale|customer|revenue|order", joined) else "sale"
-    return out
+    return out, guessed
+
+
+def suggest_mapping(df: pd.DataFrame) -> dict[str, Any]:
+    return _suggest(df)[0]
 
 
 def mapping_provider(db, tenant_id: str) -> LLMProvider | None:
@@ -169,22 +200,61 @@ def ai_mapping(df: pd.DataFrame, provider: LLMProvider) -> tuple[dict[str, Any],
     return mapping, reasons
 
 
+def _unreadable(df: pd.DataFrame, col: str, kind: str) -> int:
+    """How many cells that have something in them cannot be read as a number or a date."""
+    cells = _cells(df, col)
+    if kind == "date":
+        day_first = pd.to_datetime(cells, errors="coerce", format="mixed", dayfirst=True).notna()
+        month_first = pd.to_datetime(cells, errors="coerce", format="mixed").notna()
+        return int((~(day_first | month_first)).sum())
+    bad = 0
+    for v in cells:
+        try:
+            to_number(v, "")
+        except HTTPException:
+            bad += 1
+    return bad
+
+
+def quality(full: pd.DataFrame, clean: pd.DataFrame, mapping: dict[str, Any]) -> dict[str, Any]:
+    """What the owner should know about the file before it is counted: what was ignored, what could not be read, what is missing.
+    Nothing here changes the data; it is the difference between 'it took my file' and 'it understood my file'."""
+    seen = full.attrs.get("quality", {})
+    money = [mapping[k] for k in ("amount_col", "amount_in_col", "amount_out_col", "price_col") if mapping.get(k)]
+    report: dict[str, Any] = {
+        "blank_rows": int(seen.get("blank_rows", 0)),
+        "blank_columns": list(seen.get("blank_columns", [])),
+        "unnamed_columns": [str(c) for c in clean.columns if str(c).startswith("Unnamed:")],
+        "unreadable_dates": _unreadable(clean, mapping["timestamp_col"], "date") if mapping.get("timestamp_col") else 0,
+        "unreadable_amounts": sum(_unreadable(clean, c, "number") for c in money),
+        "rows_without_amount": int((~clean[money].apply(lambda s: s.notna() & s.astype(str).str.strip().ne("")).any(axis=1)).sum()) if money else int(len(clean)),
+    }
+    dated, has_money = bool(mapping.get("timestamp_col")), bool(money)
+    report["kind"] = "transactions" if dated and has_money else "list" if not dated and not has_money else "partial"
+    return report
+
+
 def describe(df: pd.DataFrame, provider: LLMProvider | None = None, sample: int = 5) -> dict[str, Any]:
+    full = df
+    df = full[~blank_row_mask(full)]                       # empty rows tell neither us nor the AI anything
     shown = df[[c for c in df.columns if not str(c).startswith("__")]]
     preview = shown.head(sample).astype(object).where(shown.head(sample).notna(), None).to_dict(orient="records")
-    mapping, reasons, source = suggest_mapping(shown), {}, "rules"
+    (mapping, guessed), reasons, source = _suggest(shown), {}, "rules"
     ai = ai_mapping(shown, provider) if provider else None
     if ai:
         claimed = {v for k, v in ai[0].items() if k in _FIELD_HELP}
         mapping = {k: v for k, v in mapping.items() if k not in _FIELD_HELP or k in ai[0] or v not in claimed}
         mapping.update(ai[0])
         reasons, source = ai[1], "ai"
+        guessed = [g for g in guessed if mapping.get(g) and g not in ai[0]]     # what the AI proposed is its own reading, not our guess
     mapping["event_type"] = f"{mapping['entity']}.created"
     return {
         "columns": [str(c) for c in shown.columns],
         "row_count": int(len(df)),
         "sample": [{str(k): (v if isinstance(v, (int, float, str, bool)) or v is None else str(v)) for k, v in r.items()} for r in preview],
         "suggested_mapping": mapping,
+        "guessed": guessed,
+        "quality": quality(full, shown, mapping),
         "source": source,
         "reasons": reasons,
     }

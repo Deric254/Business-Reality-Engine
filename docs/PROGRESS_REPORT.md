@@ -85,11 +85,11 @@ What was found and changed, so nobody has to rediscover it:
 - **Uploads** are read with a hard cap (limit + 1 byte), so an oversized file is refused without being held in memory, whatever sits in front of the API.
 - **Housekeeping**: a daily job removes expired revoked-login records.
 - **Owners' screens**: period buttons (Last 7 days / 30 / 90 / 180), currency on amounts, quiet hours and digest hour shown in the business's own time (stored in UTC), plain names for alert types, a prompt when no one is set up to be notified.
-- Removed: two unused components, unused imports. (The sample-data module was left in the tree unused; it is now rebuilt and wired in, see Part 4.)
+- Removed: two unused components, unused imports. (The sample-data module was left in the tree unused; it is now rebuilt and wired in, see Part 7.)
 - Checked: every route that takes a business id refuses another business's login (68 routes probed); `pip-audit` and `npm audit` report no known vulnerabilities.
-- Still open: see the end of Part 4.
+- Still open: see the end of Part 7.
 
-## Part 4 — Audit follow-up: what changed and what is still open
+## Part 7 — Audit follow-up: what changed and what is still open
 
 Changed, each guarded by tests (`tests/test_hardening.py`, `tests/test_mpesa.py`, `tests/test_demo.py`):
 
@@ -125,3 +125,17 @@ Still open, with the reason each is not done:
 - **M-Pesa statements:** the leave-out words are the owner's choice. The authors do not claim to know every phrase Safaricom uses, so none are applied by default.
 - **Single-event ingestion** runs at about 40 to 100 events a second because each call does the full resolution work, all in code shared by every source. Batches are about 50 times faster and are what bulk senders should use. This is far above what one till produces, so it is a limit to know about, not a defect; speeding it up means changing ingestion for every source.
 - API events without a time zone are read as the business's local time (documented in the README).
+
+## Part 8 — The Data page and file intake (after a first look at the real screens)
+
+What an owner actually faced: twelve connector cards in four groups, a separate "Your systems" block with up to six buttons per tile, a second and different "agent" hidden under Advanced, and an M-Pesa card that ended with "have your system POST a JSON record" and a link shown only once. Changed:
+
+- **One hub, five plain choices** (`ConnectHub`): my business software, M-Pesa payments, a spreadsheet or file, my online shop, something else. Each opens its own short path; the technical connectors sit under "Something else", and the two kinds of helper app are told apart in words.
+- **Guided software path** (`SoftwareFlow`): pick the software, three steps, live status that follows the helper app, and a plain-language reason and next step for every state the server can report (`lib/systemHelp.ts`, tested to cover all of them).
+- **Guided M-Pesa path** (`MpesaFlow`): make the link, give it to Safaricom, test it. The test (`POST /api/connectors/{id}/test-event`) shows what a sample payment would become and stores nothing; the page then waits for the first real payment. A lost link is replaced (`POST /api/connectors/{id}/new-link`), audit-logged, owner-only.
+- **Data page:** one status line, one list of connections with "Manage" holding the rest, and the tools tucked under "More tools". Connected systems appear in the same list as other sources.
+- **File intake that does not take data blindly:** empty rows and columns ignored and counted; columns judged by non-empty cells (a real bug: a date column was missed whenever most rows were empty); readable names for unnamed columns; a "What we found" panel; guesses marked as guesses; a file with no date column can be dated as a whole; a list with no date and no money is not connected. Server side in `file_connector.py` and `inspect.py`, covered by `tests/test_file_intake.py` and the wizard's own tests.
+- **Frontend tests** grew to cover the hub, both guided paths, the panel, the no-date flow and the plain-language states.
+
+Still true after this: the screens were checked by tests and type-checks, not by eye in a real browser, because none was available while building. Look at them once on a phone and a laptop before showing a customer.
+

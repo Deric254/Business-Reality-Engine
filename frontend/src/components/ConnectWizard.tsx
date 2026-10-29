@@ -2,26 +2,27 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { Link } from "react-router-dom";
 import { ApiError, connectorApi, importSummary, tenantApi, type ConnectorRow, type DbType, type ImportResult, type Inspection } from "../api/client";
 import { API_BASE } from "../api/client";
+import { columnLabel, todayISO } from "../lib/columns";
+import { FoundPanel } from "./FoundPanel";
 import { Card, Notice, btnCls, inputCls, primaryCls } from "./ui";
 
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong. Try again.");
 
-type Kind = "mpesa" | "sheets" | "file" | "woo" | "shopify" | "link" | "webhook" | "database" | "agent" | "sftp" | "email" | "folder";
+export type Kind = "sheets" | "file" | "woo" | "shopify" | "link" | "webhook" | "database" | "agent" | "sftp" | "email" | "folder";
 interface Entry { id: Kind; title: string; blurb: string; type: string; group: string; note?: string }
 
 const CATALOG: Entry[] = [
-  { id: "mpesa", title: "M-Pesa Paybill or Till (live)", blurb: "Every customer payment arrives as a sale the moment it happens, sent by Safaricom's Daraja service.", type: "webhook", group: "Start here", note: "You register the link we give you on Safaricom's Daraja portal. Not yet tried against live Safaricom traffic, so make one small test payment first." },
   { id: "sheets", title: "Google Sheets", blurb: "Paste a share link. Updates are picked up on a schedule.", type: "url", group: "Start here" },
   { id: "file", title: "Excel or CSV file", blurb: "Upload an export from your till, accounting, an M-Pesa statement or any spreadsheet.", type: "file", group: "Start here" },
   { id: "woo", title: "WooCommerce", blurb: "Online shop orders, pulled automatically.", type: "url", group: "Your shop or system", note: "Ready-made setup; not yet tried against a live store, so use Test first." },
   { id: "shopify", title: "Shopify", blurb: "Orders from your Shopify store.", type: "url", group: "Your shop or system", note: "Ready-made setup; not yet tried against a live store, so use Test first." },
   { id: "link", title: "Web link or API", blurb: "Any web address that returns CSV, Excel or JSON, with an optional key or login.", type: "url", group: "Your shop or system" },
-  { id: "webhook", title: "Live feed (webhook)", blurb: "Your system sends each sale or expense to a private link the moment it happens.", type: "webhook", group: "Your shop or system" },
+  { id: "webhook", title: "Live feed from my own system", blurb: "For developers: your system sends each sale or expense to a private link the moment it happens.", type: "webhook", group: "Your shop or system" },
   { id: "database", title: "Database", blurb: "Read-only query against PostgreSQL, MySQL, SQL Server, Oracle or ODBC.", type: "database", group: "Your shop or system" },
   { id: "sftp", title: "SFTP folder", blurb: "Pick up exported files from an SFTP server.", type: "sftp", group: "Advanced" },
   { id: "email", title: "Email attachments", blurb: "Read reports your system emails to a mailbox.", type: "email", group: "Advanced" },
   { id: "folder", title: "Shared folder", blurb: "Files dropped into your business folder on the server.", type: "shared_folder", group: "Advanced" },
-  { id: "agent", title: "Local agent", blurb: "A small program on a computer in your shop that sends data out. Nothing to open on your firewall.", type: "local_agent", group: "Advanced" },
+  { id: "agent", title: "Custom helper app", blurb: "For technicians: a small program that reads local files or a database and sends them here. For smePro, Imara and Pharmacy ERP, use \"My business software\" instead.", type: "local_agent", group: "Advanced" },
 ];
 
 type F = Record<string, string>;
@@ -54,6 +55,8 @@ const MAP_FIELDS: { key: string; label: string; required?: boolean; help?: strin
 function Mapper({ f, set, info, webhook }: { f: F; set: (k: string, v: string) => void; info: Inspection | null; webhook: boolean }) {
   const suffix = webhook ? "_path" : "_col";
   const cols = info?.columns;
+  const dateMode = f.date_mode || (f.timestamp_col ? "column" : undefined);       // how this file gets its dates
+  const askDate = Boolean(cols) && !webhook;
   return (
     <fieldset className="space-y-3">
       <legend className="font-semibold">{cols ? "Check what each column means" : webhook ? "Where to find each value in what you send" : "What do your columns mean?"}</legend>
@@ -67,14 +70,29 @@ function Mapper({ f, set, info, webhook }: { f: F; set: (k: string, v: string) =
           </select>
           <span className="block text-xs text-ink-faint mt-1">Pick Expense if the rows are money you paid out.</span></label>
         <Field label="Currency, if the data has none" value={f.default_currency} onChange={(v) => set("default_currency", v.toUpperCase())} help="Three letters, such as KES. Used for rows without their own currency." />
-        {MAP_FIELDS.map((m) => {
+        {askDate && dateMode === undefined && (
+          <div className="sm:col-span-2 border border-border rounded-xl p-4 space-y-3" role="group" aria-label="When did these happen?">
+            <div><div className="font-semibold">When did these happen?</div><p className="text-sm text-ink-muted mt-1">We couldn't find a date in your file. Every sale or expense needs one, so we can show how your business changes over time.</p></div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className={primaryCls} onClick={() => { set("date_mode", "day"); if (!f.default_date) set("default_date", todayISO()); }}>It's all from one day</button>
+              <button type="button" className={btnCls} onClick={() => set("date_mode", "column")}>A column holds the date</button>
+            </div>
+          </div>
+        )}
+        {askDate && dateMode === "day" && (
+          <label className="block text-sm text-ink-muted sm:col-span-2">All of these happened on *
+            <input type="date" required className={`${inputCls} mt-1 max-w-[12rem]`} value={f.default_date ?? ""} max={todayISO()} onChange={(e) => set("default_date", e.target.value)} />
+            <span className="block text-xs text-ink-faint mt-1">Every row is dated this day. <button type="button" className="underline" onClick={() => { set("date_mode", "column"); set("default_date", ""); }}>Use a date column instead</button></span>
+          </label>
+        )}
+        {MAP_FIELDS.filter((m) => !(m.key === "timestamp" && askDate && (dateMode === undefined || dateMode === "day"))).map((m) => {
           const k = m.key === "timestamp" ? `timestamp${suffix}` : `${m.key}${suffix}`;
           return (
             <label key={k} className="block text-sm text-ink-muted">{m.key === "product_id" && f.entity === "expense" ? "Category" : m.label}{m.required && !webhook ? " *" : ""}
               {cols ? (
                 <select className={`${inputCls} mt-1`} value={f[k] ?? ""} onChange={(e) => set(k, e.target.value)} required={m.required}>
                   <option value="">{m.required ? "Choose a column" : "Not in my data"}</option>
-                  {cols.map((c) => <option key={c} value={c}>{c}</option>)}
+                  {cols.map((c) => <option key={c} value={c}>{columnLabel(c, info)}</option>)}
                 </select>
               ) : <input className={`${inputCls} mt-1`} value={f[k] ?? ""} onChange={(e) => set(k, e.target.value)} required={m.required && !webhook} placeholder={webhook ? "data.amount" : "Column name"} />}
               {info?.reasons[k] && <span className="block text-xs text-info mt-1">Why: {info.reasons[k]}</span>}
@@ -100,23 +118,9 @@ function Mapper({ f, set, info, webhook }: { f: F; set: (k: string, v: string) =
   );
 }
 
-function Preview({ info }: { info: Inspection }) {
-  return (
-    <div className="space-y-2">
-      <div className="text-sm text-ink-muted">Found <span className="font-semibold text-ink-text">{info.row_count.toLocaleString()} rows</span> and {info.columns.length} columns. First rows:</div>
-      <div className="overflow-x-auto border border-border rounded-sm">
-        <table className="text-xs w-full">
-          <thead className="bg-panel-raised"><tr>{info.columns.slice(0, 8).map((c) => <th key={c} className="text-left font-medium px-2.5 py-1.5 whitespace-nowrap">{c}</th>)}</tr></thead>
-          <tbody>{info.sample.slice(0, 3).map((r, i) => <tr key={i} className="border-t border-border">{info.columns.slice(0, 8).map((c) => <td key={c} className="px-2.5 py-1.5 whitespace-nowrap max-w-[14rem] truncate">{String(r[c] ?? "")}</td>)}</tr>)}</tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
 const INTERVALS = [{ v: "", l: "Only when I click Sync" }, { v: "15", l: "Every 15 minutes" }, { v: "60", l: "Every hour" }, { v: "360", l: "Every 6 hours" }, { v: "1440", l: "Once a day" }];
 
-export function ConnectWizard({ tenantId, onClose, onDone }: { tenantId: string; onClose: () => void; onDone: (created: ConnectorRow, summary: string | null) => void }) {
+export function ConnectWizard({ tenantId, onClose, onDone, kinds, heading }: { tenantId: string; onClose: () => void; onDone: (created: ConnectorRow, summary: string | null) => void; kinds?: Kind[]; heading?: string }) {
   const [kind, setKind] = useState<Kind | null>(null);
   const [f, setF] = useState<F>({ entity: "sale", event_type: "sale.created", default_currency: "KES", db_type: "postgres", mailbox: "INBOX", file_pattern: "*", use_ssl: "true", auth_type: "none" });
   const [name, setName] = useState("");
@@ -157,11 +161,18 @@ export function ConnectWizard({ tenantId, onClose, onDone }: { tenantId: string;
     for (const k of Object.keys(f)) if (/(_col|_path)$/.test(k) || k === "entity" || k === "event_type" || k === "default_currency") if (f[k]) out[k] = f[k];
     const words = (f.exclude_words ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     if (out.details_col && words.length) out.exclude_words = words;
+    if (!out.timestamp_col && f.date_mode === "day" && f.default_date) out.default_date = f.default_date;       // a file with no date column: one day for all of it
     return out;
   };
 
   const canInspect = kind === "sheets" || kind === "link" || kind === "woo" || kind === "shopify" || kind === "file";
   const mapped = !canInspect || info != null;
+  // Before a file or link is connected it must be dated, and a list with no money in it is not something to connect.
+  const hasMoney = ["amount_col", "amount_in_col", "amount_out_col", "price_col"].some((k) => f[k]);
+  const dated = Boolean(f.timestamp_col) || (f.date_mode === "day" && Boolean(f.default_date));
+  const holdUp = canInspect && info != null && kind !== "woo" && kind !== "shopify"
+    ? (!dated ? "Say when these happened, above, to continue." : !hasMoney && !f.timestamp_col ? "Pick the column that holds the money first, or connect something else." : null)
+    : null;
 
   async function inspect() {
     setBusy(true); setErr(null);
@@ -175,6 +186,10 @@ export function ConnectWizard({ tenantId, onClose, onDone }: { tenantId: string;
       setF((p) => {
         const next = { ...p };
         for (const [k, v] of Object.entries(sug)) if (kind !== "woo" && kind !== "shopify" || !p[k]) next[k] = v;
+        if (kind !== "woo" && kind !== "shopify") {            // a new file starts afresh: nothing left over from the last one decides how this one is dated
+          next.date_mode = "";
+          if (!sug.timestamp_col) { next.timestamp_col = ""; next.default_date = ""; }
+        }
         return next;
       });
     } catch (x) { setErr(errText(x)); setInfo(null); } finally { setBusy(false); }
@@ -184,7 +199,7 @@ export function ConnectWizard({ tenantId, onClose, onDone }: { tenantId: string;
     e.preventDefault(); setBusy(true); setErr(null);
     try {
       const pull = ["url", "database", "sftp", "email", "shared_folder"].includes(entry!.type);
-      const config = kind === "mpesa" ? { preset: "mpesa_c2b", default_currency: f.default_currency } : { ...sourceConfig(), ...mappingConfig() };
+      const config = { ...sourceConfig(), ...mappingConfig() };
       const created = await connectorApi.create({
         tenant_id: tenantId, name: name.trim() || entry!.title, connector_type: entry!.type, config,
         expected_frequency: entry!.type === "webhook" ? "realtime" : pull && interval ? "periodic" : null,
@@ -209,18 +224,19 @@ export function ConnectWizard({ tenantId, onClose, onDone }: { tenantId: string;
 
   // ---------- step 1: pick ----------
   if (!entry) {
-    const groups = [...new Set(CATALOG.map((c) => c.group))];
+    const shown = kinds ? CATALOG.filter((c) => kinds.includes(c.id)) : CATALOG;
+    const groups = kinds ? [""] : [...new Set(CATALOG.map((c) => c.group))];
     return (
       <Card className="!p-6 space-y-6">
         <div className="flex items-start justify-between gap-3">
-          <div><h2 className="display text-2xl">Where does your data live?</h2><p className="text-sm text-ink-muted mt-1">Pick the closest match. You can connect more than one.</p></div>
-          <button className={btnCls} onClick={onClose}>Cancel</button>
+          <div><h2 className="display text-2xl">{heading ?? "Where does your data live?"}</h2><p className="text-sm text-ink-muted mt-1">Pick the closest match. You can connect more than one.</p></div>
+          <button className={btnCls} onClick={onClose}>Back</button>
         </div>
         {groups.map((g) => (
           <div key={g} className="space-y-2">
-            <h3 className="font-semibold text-ink-muted text-sm">{g}</h3>
+            {g && <h3 className="font-semibold text-ink-muted text-sm">{g}</h3>}
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {CATALOG.filter((c) => c.group === g).map((c) => (
+              {shown.filter((c) => !g || c.group === g).map((c) => (
                 <button key={c.id} onClick={() => pick(c.id)} className="text-left border border-border rounded-xl p-4 bg-panel hover:border-info hover:bg-info-soft/40 transition-colors">
                   <div className="font-semibold">{c.title}</div>
                   <div className="text-sm text-ink-muted mt-1">{c.blurb}</div>
@@ -236,7 +252,7 @@ export function ConnectWizard({ tenantId, onClose, onDone }: { tenantId: string;
   // ---------- step 2+: details, map, finish ----------
   const urlish = entry.type === "url";
   const pull = ["url", "database", "sftp", "email", "shared_folder"].includes(entry.type);
-  const needsMapping = entry.type !== "manual" && kind !== "mpesa";
+  const needsMapping = entry.type !== "manual";
   const savedAfterInspect = !canInspect || info != null;
   const sheetsHelp = kind === "sheets" && <p className="text-sm text-ink-muted">In Google Sheets choose <strong>Share</strong>, set General access to <strong>Anyone with the link: Viewer</strong>, then copy the link. Only that sheet is read, never your other files.</p>;
 
@@ -319,7 +335,6 @@ export function ConnectWizard({ tenantId, onClose, onDone }: { tenantId: string;
           {kind === "folder" && (<div className="grid sm:grid-cols-2 gap-3">
             <Field label="Folder inside your business folder" value={f.path ?? ""} onChange={(v) => set("path", v)} required placeholder="exports" /><Field label="File name pattern" value={f.file_pattern ?? "*"} onChange={(v) => set("file_pattern", v)} />
           </div>)}
-          {kind === "mpesa" && <p className="text-sm text-ink-muted">After you connect you'll get a private link, shown once. On Safaricom's Daraja portal, register it as the <strong>confirmation URL</strong> for your Paybill or Till (C2B). From then on each customer payment appears here as a sale, with the payer's number in place of a customer name.</p>}
           {kind === "agent" && <p className="text-sm text-ink-muted">After you connect, you'll get a one-time token. Copy <code className="bg-ink px-1 rounded">agent/reality_agent.py</code> from the project to the shop computer and follow <code className="bg-ink px-1 rounded">agent/README.md</code>. Say below which field in each row holds the amount and the time.</p>}
 
           {canInspect && (
@@ -330,7 +345,7 @@ export function ConnectWizard({ tenantId, onClose, onDone }: { tenantId: string;
           )}
         </div>
 
-        {info && <Preview info={info} />}
+        {info && <FoundPanel info={info} mapping={f} />}
         {needsMapping && savedAfterInspect && <Mapper f={f} set={set} info={info} webhook={entry.type === "webhook" || entry.type === "local_agent"} />}
 
         {mapped && (
@@ -342,7 +357,8 @@ export function ConnectWizard({ tenantId, onClose, onDone }: { tenantId: string;
           </div>
         )}
         <Notice error={err} />
-        {mapped && <button className={primaryCls} disabled={busy}>{busy ? "Connecting…" : kind === "file" || urlish ? "Connect and import" : "Connect source"}</button>}
+        {holdUp && <p className="text-sm text-ink-muted" role="status">{holdUp}</p>}
+        {mapped && <button className={primaryCls} disabled={busy || holdUp != null}>{busy ? "Connecting…" : kind === "file" || urlish ? "Connect and import" : "Connect source"}</button>}
       </form>
     </Card>
   );
@@ -354,7 +370,7 @@ export function SecretOnce({ created, onClose }: { created: ConnectorRow; onClos
     <Card accent="#d4a017">
       <p className="font-semibold">{created.connector_type === "local_agent" ? "Copy this token now. It is shown only once." : "Copy this link now. It is shown only once."}</p>
       <code className="block mt-2 text-xs break-all bg-panel border border-field rounded-sm p-2 select-all">{created.connector_type === "local_agent" ? created.webhook_token : link}</code>
-      <p className="text-sm text-ink-muted mt-2">{created.connector_type === "local_agent" ? "Put it in the agent's config.json." : "Have your system POST a JSON record to it for every sale or expense."}</p>
+      <p className="text-sm text-ink-muted mt-2">{created.connector_type === "local_agent" ? "Put it in the helper app's config.json." : "Give it to the system that sends your data. It sends each sale or expense to this link. If you lose it, make a new one from Manage; the old one then stops working."}</p>
       <div className="mt-3 flex gap-2"><button className={btnCls} onClick={onClose}>I've saved it</button><Link to="/" className={btnCls}>Go to overview</Link></div>
     </Card>
   );

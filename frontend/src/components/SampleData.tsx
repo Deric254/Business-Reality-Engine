@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, demoApi, type SampleKind } from "../api/client";
+import { demoApi, type SampleKind } from "../api/client";
+import { errText } from "../lib/errors";
 import { Card, btnCls } from "./ui";
 
-const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong. Try again.");
 
 /** For a business with no data yet: try a sample business to see the app working. Once one is loaded, say so plainly and
  *  offer to remove it. Shown to owners only, and only while it is useful (no data yet, or the sample itself is there). */

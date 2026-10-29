@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header, Request
 from fastapi.concurrency import run_in_threadpool
@@ -9,14 +9,15 @@ from app.core import audit, reconcile, snapshot, sources
 from app.core.cache import invalidate_tenant
 from app.core.db import get_db
 from app.core.ingestion import NormalizedEvent
+from app.core.tenant_time import tenant_zone
 from app.connectors.file_connector import (
-    ColumnMapping, left_out_note, read_upload, validate_upload, parse_file_to_dataframe, dataframe_to_normalized_events, add_row_ids, with_default_id,
+    ColumnMapping, import_notes, read_upload, validate_upload, parse_file_to_dataframe, dataframe_to_normalized_events, add_row_ids, with_default_id,
     extra_sheet_events, other_sheet_names,
 )
 from app.connectors.inspect import describe, mapping_provider
 from app.connectors import url_connector
-from app.connectors.mpesa import expand_preset
-from app.connectors.webhook_connector import generate_webhook_token
+from app.connectors.mpesa import expand_preset, sample_c2b_payload
+from app.connectors.webhook_connector import WebhookMapping, generate_webhook_token, webhook_payload_to_event_dict
 from app.connectors.database_connector import DRIVERS, _validate_read_only_query, driver_catalog
 from app.core.netguard import check_host_allowed, tenant_path
 from app.core.sync import MAX_INTERVAL_MINUTES, MIN_INTERVAL_MINUTES, SYNCABLE, run_sync
@@ -270,7 +271,7 @@ async def upload_file(
     done = snapshot.apply(db, connector, [NormalizedEvent(**e) for e in parsed.events + extra_events], remove_missing=replace, confirmed=True)
     skipped_all = parsed.skipped + extra_skipped
     return {**done, "rows_processed": len(done["results"]), "skipped": len(skipped_all), "skipped_examples": skipped_all[:3],
-            **left_out_note(parsed), **({"other_sheets": sheet_notes} if sheet_notes else {})}
+            **import_notes(parsed), **({"other_sheets": sheet_notes} if sheet_notes else {})}
 
 
 def _sync_endpoint(connector_id, tenant_id, db, authorization, expected_type, confirmed=False):
@@ -345,6 +346,49 @@ def database_types(tenant_id: str, authorization: Optional[str] = Header(default
     """Which database engines this server can connect to, and which have actually been verified against a live server."""
     authorize_tenant(authorization, tenant_id)
     return driver_catalog()
+
+
+class TestEventIn(BaseModel):
+    payload: Optional[dict] = None         # an example the sender would post; an M-Pesa source has a built-in one
+
+
+@router.post("/{connector_id}/test-event")
+def test_event(connector_id: str, tenant_id: str, body: Optional[TestEventIn] = None, db: Session = Depends(get_db),
+               authorization: _Optional[str] = Header(default=None)):
+    """Shows what a sample payment WOULD become, using the source's own mapping, and stores nothing. It proves the mapping
+    and the time and amount handling before any real payment arrives."""
+    authorize_tenant(authorization, tenant_id, require_role="owner")
+    c = _get_owned_connector(db, connector_id, tenant_id)
+    if c.connector_type != "webhook":
+        raise HTTPException(400, "Only a live feed can be tested this way")
+    try:
+        mapping = WebhookMapping(**{k: v for k, v in (c.config or {}).items() if k != "webhook_token_hash"})
+    except Exception as e:
+        raise HTTPException(400, f"This live feed's mapping is not valid: {e}")
+    payload = body.payload if body and body.payload else (sample_c2b_payload() if mapping.ack == "daraja" else None)
+    if payload is None:
+        raise HTTPException(400, "Send an example of what your system posts (a JSON object) to test it")
+    event = NormalizedEvent(**webhook_payload_to_event_dict(payload, mapping, tenant_id=tenant_id, connector_id=c.id, source=c.name,
+                                                            received_at=datetime.now(timezone.utc)))
+    zone = tenant_zone(db, tenant_id)
+    when = event.timestamp.replace(tzinfo=zone) if event.timestamp.tzinfo is None else event.timestamp
+    return {"would_create": {"entity": event.entity, "entity_id": event.entity_id, "amount": event.amount, "currency": event.currency,
+                             "customer_id": event.customer_id, "time": when.astimezone(zone).isoformat(timespec="seconds")}}
+
+
+@router.post("/{connector_id}/new-link")
+def new_link(connector_id: str, tenant_id: str, request: Request, db: Session = Depends(get_db),
+             authorization: _Optional[str] = Header(default=None)):
+    """A live feed's link is shown once, so a lost one is replaced, not recovered: the old link stops working at once."""
+    me = authorize_tenant(authorization, tenant_id, require_role="owner")
+    c = _get_owned_connector(db, connector_id, tenant_id)
+    if c.connector_type != "webhook":
+        raise HTTPException(400, "Only a live feed has a link")
+    raw, token_hash = generate_webhook_token()
+    c.config = {**(c.config or {}), "webhook_token_hash": token_hash}
+    db.commit()
+    audit.record(db, "connector.new_link", request=request, tenant_id=tenant_id, actor_user_id=me.user_id, target=c.id)
+    return {"webhook_url": f"/api/webhooks/{c.id}/{raw}"}
 
 
 class ConnectorUpdate(BaseModel):

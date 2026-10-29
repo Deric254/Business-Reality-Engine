@@ -12,11 +12,12 @@ Security posture for anything accepting user-uploaded files:
 import csv
 import io
 import re
+from datetime import date, datetime, time
 from typing import NamedTuple, Optional
 
 import pandas as pd
 from fastapi import HTTPException
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024   # 10MB — generous for a business's periodic export
 MAX_ROWS = 50_000                         # prevents a hostile/corrupt file from exhausting memory
@@ -31,7 +32,10 @@ class ColumnMapping(BaseModel):
     """
     entity: str                      # constant, e.g. "sale"
     event_type: str                  # constant, e.g. "sale.created"
-    timestamp_col: str
+    timestamp_col: Optional[str] = None
+    # A file with no date column (a one-day export, a list): every row is dated this day, at midday on the business's own
+    # clock. Ignored when there is a date column; one of the two is always required.
+    default_date: Optional[str] = None
     amount_col: Optional[str] = None
     quantity_col: Optional[str] = None
     currency_col: Optional[str] = None
@@ -51,6 +55,22 @@ class ColumnMapping(BaseModel):
     details_col: Optional[str] = None
     exclude_words: list[str] = Field(default_factory=list, max_length=20)
     default_currency: str = "KES"
+
+    @field_validator("default_date")
+    @classmethod
+    def _real_date(cls, value: Optional[str]) -> Optional[str]:
+        if value:
+            try:
+                date.fromisoformat(value)
+            except ValueError:
+                raise ValueError("default_date must be a real date written YYYY-MM-DD")
+        return value or None
+
+    @model_validator(mode="after")
+    def _needs_a_date(self):
+        if not self.timestamp_col and not self.default_date:
+            raise ValueError("Say when these happened: pick the column that holds the date, or give one date for the whole file")
+        return self
 
     @field_validator("exclude_words")
     @classmethod
@@ -103,6 +123,16 @@ def _header_offset(rows: list[list]) -> int:
     return 0
 
 
+def _is_blank(col: pd.Series) -> pd.Series:
+    return col.isna() | col.astype(str).str.strip().eq("")
+
+
+def blank_row_mask(df: pd.DataFrame) -> pd.Series:
+    """True for rows with nothing in any cell (ignoring the internal row-id column)."""
+    cols = [c for c in df.columns if str(c) != ROW_ID_COL]
+    return df[cols].apply(_is_blank).all(axis=1) if cols else pd.Series(True, index=df.index)
+
+
 def parse_file_to_dataframe(content: bytes, ext: str, sheet=0) -> pd.DataFrame:
     """`sheet` only matters for .xlsx (a name or position); the default, the first sheet, is what every caller got before."""
     buf = io.BytesIO(content)
@@ -132,9 +162,15 @@ def parse_file_to_dataframe(content: bytes, ext: str, sheet=0) -> pd.DataFrame:
 
     if len(df) > MAX_ROWS:
         raise HTTPException(413, f"File has {len(df)} rows, exceeds cap of {MAX_ROWS}")
-    if len(df) == 0:
+    blank_rows = int(blank_row_mask(df).sum())
+    if len(df) - blank_rows == 0:
         raise HTTPException(400, "File has no data rows")
+    # A column with nothing in it (a spacer, a leftover) can never hold data, so it is dropped; what was dropped is
+    # remembered so the owner is told. Empty ROWS stay in place so row numbers still match the sheet; they are ignored.
+    empty = [c for c in df.columns if not str(c).startswith("__") and _is_blank(df[c]).all()]
+    df = df.drop(columns=empty)
     df.attrs["header_row"] = offset + 1        # where the header sits in the sheet, for row numbers
+    df.attrs["quality"] = {"blank_rows": blank_rows, "blank_columns": [str(c) for c in empty]}
     return df
 
 
@@ -217,9 +253,11 @@ def _is_left_out(details, words: list[str]) -> bool:
     return any(w in text for w in words)
 
 
-def left_out_note(parsed: "ParsedRows") -> dict:
-    """What an import or sync adds to its report when rows were left out on request (nothing when none were)."""
-    return {"left_out": parsed.left_out, "left_out_total": parsed.left_out_total} if parsed.left_out else {}
+def import_notes(parsed: "ParsedRows") -> dict:
+    """What an import or sync adds to its report about rows it did not count, each only when there were some: rows the owner
+    asked to leave out (with their total), and empty rows that were ignored."""
+    return {**({"left_out": parsed.left_out, "left_out_total": parsed.left_out_total} if parsed.left_out else {}),
+            **({"blank_rows": parsed.blank_rows} if parsed.blank_rows else {})}
 
 
 def _identity(mapped, row) -> Optional[str]:
@@ -255,6 +293,7 @@ class ParsedRows(NamedTuple):
     skipped: list[str]      # why each unreadable row was left out, e.g. "Row 14: 'TOTAL' is not a date"
     left_out: int = 0       # money-out rows the owner asked to leave out (not costs of the business), see ColumnMapping.exclude_words
     left_out_total: float = 0.0
+    blank_rows: int = 0     # empty rows that were ignored
 
 
 _DAY_MONTH_YEAR = r"^\s*(\d{1,2})[/.\-](\d{1,2})[/.\-]\d{2,4}"
@@ -275,14 +314,18 @@ def dataframe_to_normalized_events(
     note, a dash instead of a number) are skipped and reported, never allowed to throw away the whole sheet;
     blank rows are ignored.
     """
-    if mapping.timestamp_col not in df.columns:
+    if mapping.timestamp_col and mapping.timestamp_col not in df.columns:
         raise HTTPException(
             400, f"Configured column '{mapping.timestamp_col}' not found in file. File columns: {list(df.columns)}"
         )
     header_row = df.attrs.get("header_row", 1)
     df = df.reset_index(drop=True)               # row numbers below must be 0, 1, 2... whatever index the parser produced
-    stamps = pd.to_datetime(df[mapping.timestamp_col], errors="coerce", dayfirst=_day_first(df[mapping.timestamp_col]), format="mixed")
-    blank = df.drop(columns=[ROW_ID_COL], errors="ignore").apply(lambda col: col.isna() | col.astype(str).str.strip().eq("")).all(axis=1)
+    if mapping.timestamp_col:
+        stamps = pd.to_datetime(df[mapping.timestamp_col], errors="coerce", dayfirst=_day_first(df[mapping.timestamp_col]), format="mixed")
+        undated = None
+    else:                                        # no date column: the whole file happened on the day the owner gave
+        stamps, undated = None, datetime.combine(date.fromisoformat(mapping.default_date), time(12, 0))
+    blank = blank_row_mask(df)
     shared = _shared_id_suffixes(df, mapping)
     events, skipped, nonblank = [], [], 0
     left_out, left_out_total = 0, 0.0
@@ -300,7 +343,7 @@ def dataframe_to_normalized_events(
             return None if pd.isna(val) else val
 
         try:
-            if pd.isna(stamps[idx]):
+            if stamps is not None and pd.isna(stamps[idx]):
                 raise HTTPException(400, f"{where}: '{row[mapping.timestamp_col]}' is not a date")
             entity, event_type, amount, quantity = _row_money(mapping, _get, where)
         except HTTPException as e:
@@ -320,7 +363,7 @@ def dataframe_to_normalized_events(
             "entity": entity,
             "entity_id": entity_id,
             "event_type": event_type,
-            "timestamp": stamps[idx].to_pydatetime() if isinstance(stamps[idx], pd.Timestamp) else stamps[idx],   # a column mixing zones holds plain datetimes
+            "timestamp": undated or (stamps[idx].to_pydatetime() if isinstance(stamps[idx], pd.Timestamp) else stamps[idx]),   # a column mixing zones holds plain datetimes
             "amount": amount,
             "quantity": quantity,
             "currency": str(_get("currency_col")) if _get("currency_col") is not None else mapping.default_currency,
@@ -331,7 +374,7 @@ def dataframe_to_normalized_events(
         })
     if skipped and len(skipped) * 2 > nonblank:
         raise HTTPException(400, f"Most rows could not be read, so the column mapping is probably wrong. First problem: {skipped[0]}")
-    return ParsedRows(events, skipped, left_out, round(left_out_total, 2))
+    return ParsedRows(events, skipped, left_out, round(left_out_total, 2), int(blank.sum()))
 
 
 # ---------------- workbooks with more than one sheet ----------------

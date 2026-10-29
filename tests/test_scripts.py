@@ -26,7 +26,8 @@ def test_the_payment_simulator_builds_what_the_mpesa_source_accepts_and_counts_a
     with engine.begin() as c:
         c.execute(text("update tenants set timezone = 'Africa/Nairobi' where id = :t"), {"t": t})
     c = mk(client, t, h, connector_type="webhook", name="Paybill", config={"preset": "mpesa_c2b"}).json()
-    payload = sim.build_payload(150, "SIMTEST01")
+    from app.connectors.mpesa import sample_c2b_payload
+    payload = sample_c2b_payload(150, "SIMTEST01")
     for _ in range(2):
         r = client.post(c["webhook_url"], json=payload)
         assert r.status_code == 200 and r.json()["ResultCode"] == 0

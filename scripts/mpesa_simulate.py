@@ -2,29 +2,18 @@
 
     python scripts/mpesa_simulate.py --url https://your-server/api/webhooks/<connector>/<token> [--amount 150] [--count 3]
 
-Use it right after you add the "M-Pesa Paybill or Till (live)" source: it proves the link, the reply and the sale that
+Run it from the project folder (it uses the same sample payment as the app's own Test button). Use it right after you add the "M-Pesa Paybill or Till (live)" source: it proves the link, the reply and the sale that
 appears in the app, before Safaricom is involved. (Safaricom's own sandbox can then be pointed at the same link.) Each
 call uses a fresh transaction id, so each is a new sale. Pass --repeat to send the identical payment twice and see that
 it is counted once. The shape is Daraja's documented C2B confirmation; real traffic has not been checked by the authors."""
 import argparse
-import random
-import string
+import os
 import sys
-from datetime import datetime, timedelta, timezone
 
 import httpx
 
-EAT = timezone(timedelta(hours=3))        # Daraja writes TransTime in East Africa Time
-
-
-def build_payload(amount: float, trans_id: str | None = None, now: datetime | None = None) -> dict:
-    now = (now or datetime.now(EAT)).astimezone(EAT)
-    trans_id = trans_id or "SIM" + "".join(random.choices(string.ascii_uppercase + string.digits, k=7))
-    return {"TransactionType": "Pay Bill", "TransID": trans_id, "TransTime": now.strftime("%Y%m%d%H%M%S"),
-            "TransAmount": f"{amount:.2f}", "BusinessShortCode": "600638", "BillRefNumber": "TEST", "InvoiceNumber": "",
-            "OrgAccountBalance": "0.00", "ThirdPartyTransID": "", "MSISDN": "254700000000",
-            "FirstName": "Test", "MiddleName": "", "LastName": "Payer"}
-
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from app.connectors.mpesa import sample_c2b_payload  # noqa: E402
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -36,7 +25,7 @@ def main() -> int:
     bad = 0
     with httpx.Client(timeout=30) as c:
         for _ in range(a.count):
-            payload = build_payload(a.amount)
+            payload = sample_c2b_payload(a.amount)
             for attempt in range(2 if a.repeat else 1):
                 r = c.post(a.url, json=payload)
                 ok = r.status_code == 200 and r.json().get("ResultCode") == 0

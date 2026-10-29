@@ -5,15 +5,19 @@ import { RejectedList } from "../components/RejectedList";
 import { ApiError, captureApi, connectorApi, importSummary, type CaptureEntry, type ConnectorRow, type Contribution, type ImportResult } from "../api/client";
 import { getClaims } from "../api/session";
 import { Shell } from "../components/Shell";
-import { ConnectWizard, SecretOnce } from "../components/ConnectWizard";
+import { SecretOnce } from "../components/ConnectWizard";
 import { SampleData } from "../components/SampleData";
-import { SystemLinks } from "../components/SystemLinks";
+import { ConnectHub } from "../components/ConnectHub";
+import { SystemRows } from "../components/SystemLinks";
+import { errText } from "../lib/errors";
+import { useSystemLinks } from "../lib/useSystemLinks";
+import { Live } from "../components/Steps";
+import { overallHealth } from "../lib/systemHelp";
 import { Card, Empty, Notice, PageTitle, Section, btnCls, inputCls, primaryCls } from "../components/ui";
 import { timeAgo } from "../lib/severity";
 import { useT } from "../lib/i18n";
 import { useOnLiveChange } from "../lib/liveContext";
 
-const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong. Try again.");
 const PULL = ["database", "url", "sftp", "email", "shared_folder"];
 const TYPE_LABEL: Record<string, string> = { url: "Web link or API", file: "File upload", webhook: "Live feed", database: "Database", sftp: "SFTP", email: "Email", shared_folder: "Shared folder", local_agent: "Local agent", system: "Local system", manual: "Typed in by hand" };
 
@@ -41,8 +45,9 @@ function contributionText(c: Contribution) {
   return parts.join(", ");
 }
 
-function ConnectorList({ tenantId, rows, contributions, isOwner, reload, setNotice, setError }: {
+function ConnectorList({ tenantId, rows, contributions, isOwner, reload, setNotice, setError, onNewLink }: {
   tenantId: string; rows: ConnectorRow[]; contributions: Record<string, Contribution>; isOwner: boolean; reload: () => void; setNotice: (s: string | null) => void; setError: (s: string | null) => void;
+  onNewLink: (c: ConnectorRow) => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadFor, setUploadFor] = useState<{ id: string; replace: boolean } | null>(null);
@@ -52,6 +57,12 @@ function ConnectorList({ tenantId, rows, contributions, isOwner, reload, setNoti
     try { const r = await fn(); setNotice(done(r)); reload(); } catch (e) { setError(errText(e)); reload(); } finally { setBusy(null); }
   }
   const summarize = (r: unknown) => importSummary((r ?? {}) as ImportResult);
+  /** A live feed's link is shown once; a lost one is replaced, and the old one stops working. */
+  async function newLink(c: ConnectorRow) {
+    if (!window.confirm("Make a new link? The old one stops working at once, so paste the new one wherever the old one was used.")) return;
+    setBusy(c.id); setError(null);
+    try { onNewLink({ ...c, webhook_url: (await connectorApi.newLink(tenantId, c.id)).webhook_url }); } catch (e) { setError(errText(e)); } finally { setBusy(null); }
+  }
   /** Sync a source. If a mirrored link now looks completely different, ask the owner before applying it. */
   async function syncSource(c: ConnectorRow) {
     try {
@@ -85,16 +96,24 @@ function ConnectorList({ tenantId, rows, contributions, isOwner, reload, setNoti
                 {contributions[c.id]?.rejected > 0 && <RejectedList key={contributions[c.id].rejected} tenantId={tenantId} connectorId={c.id} count={contributions[c.id].rejected} />}
               </div>
               <span className="text-sm flex items-center gap-2"><span className="w-2 h-2 rounded-full" style={{ background: color }} aria-hidden />{label}</span>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {c.connector_type === "file" && <button className={btnCls} disabled={busy === c.id} onClick={() => { setUploadFor({ id: c.id, replace: false }); fileRef.current?.click(); }}>Add a file</button>}
-                {c.connector_type === "file" && isOwner && <button className={btnCls} disabled={busy === c.id} title="Makes the file the whole truth: records this source holds that are not in the file are removed" onClick={() => { setUploadFor({ id: c.id, replace: true }); fileRef.current?.click(); }}>Replace with a file</button>}
                 {PULL.includes(c.connector_type) && <button className={btnCls} disabled={busy === c.id} title="Re-reads the source. Rows added, edited or deleted there are added, updated or removed here." onClick={() => run(c.id, () => syncSource(c), summarize)}>{busy === c.id ? "Syncing…" : "Sync now"}</button>}
-                {isOwner && <button className={btnCls} onClick={() => run(c.id, () => connectorApi.update(tenantId, c.id, { is_active: !c.is_active }), () => (c.is_active ? "Paused." : "Resumed."))}>{c.is_active ? "Pause" : "Resume"}</button>}
-                {isOwner && <button className={btnCls} disabled={busy === c.id} onClick={() => {
-                  const n = contributions[c.id] ? contributions[c.id].counted + contributions[c.id].matched + contributions[c.id].rejected : 0;
-                  if (window.confirm(`Disconnect ${c.name} and delete the ${n} record${n === 1 ? "" : "s"} it brought in? This cannot be undone. To only stop it for now, use Pause.`))
-                    run(c.id, () => connectorApi.disconnect(tenantId, c.id), (r) => `Disconnected ${c.name}. ${(r as { removed_records: number }).removed_records} records removed.`);
-                }}>Disconnect</button>}
+                {isOwner && (
+                  <details className="text-sm">
+                    <summary className="cursor-pointer text-ink-muted">Manage</summary>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {c.connector_type === "file" && <button className={btnCls} disabled={busy === c.id} title="Makes the file the whole truth: records this source holds that are not in the file are removed" onClick={() => { setUploadFor({ id: c.id, replace: true }); fileRef.current?.click(); }}>Replace with a file</button>}
+                      {c.connector_type === "webhook" && <button className={btnCls} disabled={busy === c.id} title="The old link stops working at once" onClick={() => newLink(c)}>Get a new link</button>}
+                      <button className={btnCls} onClick={() => run(c.id, () => connectorApi.update(tenantId, c.id, { is_active: !c.is_active }), () => (c.is_active ? "Paused." : "Resumed."))}>{c.is_active ? "Pause" : "Resume"}</button>
+                      <button className={btnCls} disabled={busy === c.id} onClick={() => {
+                        const n = contributions[c.id] ? contributions[c.id].counted + contributions[c.id].matched + contributions[c.id].rejected : 0;
+                        if (window.confirm(`Disconnect ${c.name} and delete the ${n} record${n === 1 ? "" : "s"} it brought in? This cannot be undone. To only stop it for now, use Pause.`))
+                          run(c.id, () => connectorApi.disconnect(tenantId, c.id), (r) => `Disconnected ${c.name}. ${(r as { removed_records: number }).removed_records} records removed.`);
+                      }}>Disconnect</button>
+                    </div>
+                  </details>
+                )}
               </div>
             </li>
           );
@@ -143,42 +162,61 @@ export function CaptureForm({ tenantId, onSaved }: { tenantId: string; onSaved?:
 function DataBody({ tenantId, isOwner }: { tenantId: string; isOwner: boolean }) {
   const t = useT();
   const [rows, setRows] = useState<ConnectorRow[]>([]);
-  const [checking, setChecking] = useState(false);
+  const [rowsLoaded, setRowsLoaded] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [fixing, setFixing] = useState<string | null>(null);          // a system whose steps are being shown again
+  const [toolsOpen, setToolsOpen] = useState(() => window.location.hash === "#entry");
   const [created, setCreated] = useState<ConnectorRow | null>(null);
   const [contributions, setContributions] = useState<Record<string, Contribution>>({});
-  const load = useCallback(() => Promise.all([connectorApi.list(tenantId), connectorApi.contributions(tenantId)])
-    .then(([r, c]) => { setRows(r.filter((x) => x.connector_type !== "system")); setContributions(c); }).catch((e) => setErr(errText(e))), [tenantId]);
+  const { links, reload: reloadLinks, err: linkErr, loaded: linksLoaded } = useSystemLinks(tenantId);
+  const load = useCallback(() => Promise.all([connectorApi.list(tenantId), connectorApi.contributions(tenantId), reloadLinks()])
+    .then(([r, c]) => { setRows(r.filter((x) => x.connector_type !== "system")); setContributions(c); }).catch((e) => setErr(errText(e))).finally(() => setRowsLoaded(true)), [tenantId, reloadLinks]);
   useOnLiveChange(load);                     // a scheduled sync, an upload elsewhere: the list and its "last checked" follow
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { if (window.location.hash === "#entry") document.getElementById("entry")?.scrollIntoView(); }, [rows]);
+  useEffect(() => { if (toolsOpen && window.location.hash === "#entry") document.getElementById("entry")?.scrollIntoView(); }, [toolsOpen]);
+
+  const systems = links.filter((l) => l.connected);
+  const hasAny = rows.length > 0 || systems.length > 0;
+  const ready = rowsLoaded && linksLoaded;
+  const failing = rows.filter((c) => statusOf(c, contributions[c.id]?.counted)[1] === "#d92d20").length;
+  const health = overallHealth(systems, failing, rows.length);
+  const showHub = isOwner && ready && (adding || fixing != null || !hasAny);
+  const closeHub = () => { setAdding(false); setFixing(null); };
+  const typeByHand = () => { closeHub(); setToolsOpen(true); setTimeout(() => document.getElementById("entry")?.scrollIntoView({ behavior: "smooth" }), 50); };
   return (
     <>
-      <PageTitle title={t("data.title")} sub="Everything the engine watches comes from here. Connect where your numbers already live, or type them in."
-        action={isOwner && !adding ? <button className={primaryCls} onClick={() => { setAdding(true); setNotice(null); }}>{t("data.add")}</button> : undefined} />
-      <Notice error={err} notice={notice} />
+      <PageTitle title={t("data.title")} sub="Connect where your numbers already live, and the engine keeps watch. Everything here is read-only: nothing in your own systems is ever changed."
+        action={isOwner && ready && hasAny && !showHub ? <button className={primaryCls} onClick={() => { setAdding(true); setNotice(null); }}>{t("data.add")}</button> : undefined} />
+      <Notice error={err ?? linkErr} notice={notice} />
       {created && (created.webhook_url || created.webhook_token) && <SecretOnce created={created} onClose={() => setCreated(null)} />}
-      {adding && isOwner && <ConnectWizard tenantId={tenantId} onClose={() => setAdding(false)} onDone={(c, summary) => { setAdding(false); setCreated(c); setNotice(`Connected ${c.name}.${summary ? " " + summary : ""}`); load(); }} />}
-      {isOwner && <SampleData tenantId={tenantId} hasData={rows.length > 0} onChanged={load} setNotice={setNotice} setError={setErr} />}
-      <details className="bg-panel border border-border rounded-xl px-5 py-3" onToggle={(e) => setChecking(e.currentTarget.open)}>
-        <summary className="cursor-pointer text-sm font-medium">Is something missing? Check my data</summary>
-        {checking && <div className="mt-3"><DataCheck tenantId={tenantId} days={30} /></div>}
+      {isOwner && <SampleData tenantId={tenantId} hasData={hasAny} onChanged={load} setNotice={setNotice} setError={setErr} />}
+      {showHub && <ConnectHub tenantId={tenantId} firstTime={!hasAny} startSystem={fixing ?? undefined} onClose={closeHub} onChanged={load} onTypeByHand={typeByHand}
+        onConnected={(c, summary) => { closeHub(); setCreated(c); setNotice(`Connected ${c.name}.${summary ? " " + summary : ""}`); load(); }} />}
+      {ready && !hasAny && !isOwner && <Empty>Nothing is connected yet. Ask the owner of this business to connect its data.</Empty>}
+      {hasAny && health && <Live tone={health.tone} title={health.text} />}
+      {hasAny && (
+        <Section title="Your connections">
+          <div className="space-y-3">
+            {systems.length > 0 && <ul className="bg-panel border border-border rounded-xl divide-y divide-border overflow-hidden"><SystemRows links={links} tenantId={tenantId} isOwner={isOwner} reload={load} onOpen={setFixing} setError={setErr} setNotice={setNotice} /></ul>}
+            {rows.length > 0 && <ConnectorList tenantId={tenantId} rows={rows} contributions={contributions} isOwner={isOwner} reload={load} setNotice={setNotice} setError={setErr} onNewLink={setCreated} />}
+          </div>
+        </Section>
+      )}
+      <details className="bg-panel border border-border rounded-xl px-5 py-3" open={toolsOpen} onToggle={(e) => setToolsOpen(e.currentTarget.open)}>
+        <summary className="cursor-pointer text-sm font-medium">More tools: check my data, merge duplicates, type an entry by hand</summary>
+        {toolsOpen && (
+          <div className="mt-4 space-y-6">
+            <Section title="Is something missing?"><DataCheck tenantId={tenantId} days={30} /></Section>
+            <Reconcile tenantId={tenantId} isOwner={isOwner} rows={rows} onChanged={load} setNotice={setNotice} setError={setErr} />
+            <div id="entry" />
+            <Section title={t("data.capture")} hint="For a business with no system yet: one-off sales and expenses. Retrying a save never double-counts.">
+              <Card><CaptureForm tenantId={tenantId} /></Card>
+            </Section>
+          </div>
+        )}
       </details>
-      <Section title="Your systems" hint="smePro, Imara and Pharmacy ERP on your own computers, in any combination. The engine finds each one by itself and tells you plainly if it cannot.">
-        <SystemLinks tenantId={tenantId} isOwner={isOwner} onChanged={load} />
-      </Section>
-      <Section title="Connected sources">
-        {rows.length === 0 && !adding
-          ? <Empty action={isOwner ? <button className={primaryCls} onClick={() => setAdding(true)}>{t("data.add")}</button> : undefined}>No data source connected yet. Connect one, or add entries by hand below.</Empty>
-          : <ConnectorList tenantId={tenantId} rows={rows} contributions={contributions} isOwner={isOwner} reload={load} setNotice={setNotice} setError={setErr} />}
-      </Section>
-      <Reconcile tenantId={tenantId} isOwner={isOwner} rows={rows} onChanged={load} setNotice={setNotice} setError={setErr} />
-      <div id="entry" />
-      <Section title={t("data.capture")} hint="For a business with no system yet: one-off sales and expenses. Retrying a save never double-counts.">
-        <Card><CaptureForm tenantId={tenantId} /></Card>
-      </Section>
     </>
   );
 }

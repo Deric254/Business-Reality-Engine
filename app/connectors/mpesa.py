@@ -10,6 +10,11 @@ may send it masked or hashed, in which case that is what is stored). Only succes
 a reply with ResultCode 0, which the webhook endpoint returns for this mapping. Because a payment's `TransID` is its
 idempotency key, a payment delivered more than once is still counted once.
 """
+import random
+import string
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
 from fastapi import HTTPException
 
 DARAJA_ACK = {"ResultCode": 0, "ResultDesc": "Accepted"}
@@ -25,6 +30,19 @@ C2B_MAPPING = {
     "default_currency": "KES",
     "ack": "daraja",
 }
+
+EAT = timezone(timedelta(hours=3))       # Daraja writes TransTime in East Africa Time
+
+
+def sample_c2b_payload(amount: float = 150.0, trans_id: Optional[str] = None, now: Optional[datetime] = None) -> dict:
+    """A payment shaped like Daraja's C2B confirmation. Used to test a source without spending money: by the in-app
+    "Test" button (which stores nothing) and by scripts/mpesa_simulate.py (which sends it for real)."""
+    now = (now or datetime.now(EAT)).astimezone(EAT)
+    trans_id = trans_id or "SIM" + "".join(random.choices(string.ascii_uppercase + string.digits, k=7))
+    return {"TransactionType": "Pay Bill", "TransID": trans_id, "TransTime": now.strftime("%Y%m%d%H%M%S"), "TransAmount": f"{amount:.2f}",
+            "BusinessShortCode": "600638", "BillRefNumber": "TEST", "InvoiceNumber": "", "OrgAccountBalance": "0.00", "ThirdPartyTransID": "",
+            "MSISDN": "254700000000", "FirstName": "Test", "MiddleName": "", "LastName": "Payer"}
+
 
 PRESETS = {"mpesa_c2b": C2B_MAPPING}
 
