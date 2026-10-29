@@ -1,13 +1,19 @@
 name: Windows agent
 
 # Builds RealityAgent.exe: the one file an owner downloads and double-clicks (no Python, no commands).
-# Run it by hand (Actions -> Windows agent -> Run workflow): it is published at a permanent link,
-#   https://github.com/<owner>/<repo>/releases/download/agent-latest/RealityAgent.exe   (put that in AGENT_DOWNLOAD_URL on the server)
-# Push a tag like agent-v2.1.0 to also keep a numbered release.
+# Fully automatic: every push to main that touches agent/ rebuilds the exe, tests it and publishes it as the
+# "agent-latest" release. The server finds that file by itself (no setting to paste). Nothing to run by hand;
+# "Run workflow" is there only for a forced rebuild. Push a tag like agent-v2.1.0 to also keep a numbered release.
 on:
   workflow_dispatch:
   push:
+    branches: [main, master]
+    paths: ["agent/**", ".github/workflows/agent-windows.yml"]   # any change to the agent rebuilds and republishes it by itself
     tags: ["agent-v*"]
+
+concurrency:
+  group: windows-agent
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -46,7 +52,7 @@ jobs:
           name: RealityAgent
           path: dist/RealityAgent.exe
       - name: Publish rolling release (permanent download link)
-        if: github.event_name == 'workflow_dispatch'
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         shell: pwsh
         run: |
           gh release view agent-latest 2>$null

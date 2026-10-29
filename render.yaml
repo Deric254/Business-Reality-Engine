@@ -32,8 +32,10 @@ services:
         value: "1"
       - key: BLOCK_PRIVATE_CONNECTOR_HOSTS
         value: "true"
+      - key: AGENT_GITHUB_REPO
+        value: Deric254/Business-Reality-Engine   # owners' Download button finds RealityAgent.exe in this repo's "agent-latest" release by itself
       - key: AGENT_DOWNLOAD_URL
-        sync: false         # the RealityAgent.exe link from your GitHub release; owners see it as the Download button
+        sync: false         # optional override: only if the file is hosted somewhere other than that GitHub release
       - key: KEEPALIVE_MINUTES
         value: "10"
       - key: LLM_PROVIDER

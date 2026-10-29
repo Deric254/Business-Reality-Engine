@@ -5,6 +5,9 @@ Local systems: the screens' side (connect, check now, set the location, confirm,
 import base64
 import json
 import os
+import threading
+import time
+import urllib.request
 from datetime import timedelta
 
 from app.core.clock import utcnow
@@ -24,6 +27,44 @@ from app.models.core import Connector
 router = APIRouter()
 MAX_BODY_BYTES = 8 * 1024 * 1024
 CONFIRM_WINDOW = timedelta(minutes=15)
+
+
+# ---- where owners download the agent ------------------------------------------------------------------------------
+
+_DL_LOCK = threading.Lock()
+_DL_CACHE: dict = {"key": None, "url": None, "until": 0.0}
+RELEASE_TAG = "agent-latest"                  # the "Windows agent" GitHub workflow republishes RealityAgent.exe here on every change
+RELEASE_FILE = "RealityAgent.exe"
+
+
+def agent_download_url() -> Optional[str]:
+    """The link to RealityAgent.exe, with nothing to configure. An explicit AGENT_DOWNLOAD_URL always wins. Otherwise the
+    repository is taken from AGENT_GITHUB_REPO or, on Render, from the repository the service was deployed from, and the
+    link is offered only once the build has really published the file (checked at most every 10 minutes, a miss is
+    rechecked after 2). So the button never points at a missing file; before the first build the screen says so plainly."""
+    explicit = os.getenv("AGENT_DOWNLOAD_URL")
+    if explicit:
+        return explicit
+    repo = (os.getenv("AGENT_GITHUB_REPO") or os.getenv("RENDER_GIT_REPO_SLUG") or "").strip().strip("/")
+    if repo.count("/") != 1 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./" for c in repo):
+        return None
+    now = time.monotonic()
+    with _DL_LOCK:
+        if _DL_CACHE["key"] == repo and now < _DL_CACHE["until"]:
+            return _DL_CACHE["url"]
+    url = None
+    try:
+        req = urllib.request.Request(f"https://api.github.com/repos/{repo}/releases/tags/{RELEASE_TAG}",
+                                     headers={"Accept": "application/vnd.github+json", "User-Agent": "business-reality-engine"})
+        with urllib.request.urlopen(req, timeout=4) as r:                      # a fixed GitHub address: nothing a user typed
+            for a in json.loads(r.read().decode()).get("assets", []):
+                if a.get("name") == RELEASE_FILE and a.get("state", "uploaded") == "uploaded":
+                    url = a.get("browser_download_url")
+    except Exception:                                                          # no release yet, rate limit, offline: no link
+        url = None
+    with _DL_LOCK:
+        _DL_CACHE.update(key=repo, url=url, until=now + (600 if url else 120))
+    return url
 
 
 # ---- agent side ---------------------------------------------------------------------------------------------------
@@ -114,7 +155,7 @@ def list_systems(tenant_id: str, db: Session = Depends(get_db), authorization: O
     authorize_tenant(authorization, tenant_id)
     have = {(c.config or {}).get("system"): c for c in db.query(Connector).filter(Connector.tenant_id == tenant_id, Connector.connector_type == "system")}
     now = utcnow()
-    download = os.getenv("AGENT_DOWNLOAD_URL") or None       # where the one-file Windows agent can be downloaded (set once on the server)
+    download = agent_download_url()                           # where the one-file Windows agent can be downloaded (found by itself)
     return [{"system": key, "label": meta["label"], "what": meta["what"], "connected": key in have, "download_url": download,
              **(systems.summary(db, have[key], now) if key in have else {})} for key, meta in systems.SYSTEMS.items()]
 

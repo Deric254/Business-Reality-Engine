@@ -200,3 +200,40 @@ def test_a_removed_system_leaves_nothing_on_the_computer(client, tmp_path):
     assert state.con.execute("SELECT count(*) FROM items WHERE connector_id = ?", (rig.cid,)).fetchone()[0] == 0
     assert state.con.execute("SELECT count(*) FROM meta WHERE connector_id = ?", (rig.cid,)).fetchone()[0] == 0
     state.close()
+
+
+def test_download_link_is_found_by_itself_and_never_points_at_a_missing_file(monkeypatch):
+    import io
+    from app.api import agent as ag
+    monkeypatch.delenv("AGENT_DOWNLOAD_URL", raising=False)
+    monkeypatch.delenv("AGENT_GITHUB_REPO", raising=False)
+    monkeypatch.delenv("RENDER_GIT_REPO_SLUG", raising=False)
+    ag._DL_CACHE.update(key=None, url=None, until=0.0)
+    assert ag.agent_download_url() is None                                    # no repository known: no link
+    calls = []
+
+    class Resp(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def published(req, timeout=0):
+        calls.append(req.full_url)
+        return Resp(json.dumps({"assets": [{"name": "RealityAgent.exe", "state": "uploaded", "browser_download_url": "https://github.com/o/r/releases/download/agent-latest/RealityAgent.exe"}]}).encode())
+
+    monkeypatch.setenv("RENDER_GIT_REPO_SLUG", "o/r")
+    monkeypatch.setattr(ag.urllib.request, "urlopen", published)
+    assert ag.agent_download_url().endswith("/agent-latest/RealityAgent.exe")
+    assert ag.agent_download_url().endswith("/agent-latest/RealityAgent.exe") and len(calls) == 1      # cached
+
+    def missing(req, timeout=0):
+        raise OSError("404")
+
+    ag._DL_CACHE.update(key=None, url=None, until=0.0)
+    monkeypatch.setattr(ag.urllib.request, "urlopen", missing)
+    assert ag.agent_download_url() is None                                    # not built yet: honest, no dead link
+    monkeypatch.setenv("AGENT_DOWNLOAD_URL", "https://example.com/x.exe")
+    assert ag.agent_download_url() == "https://example.com/x.exe"             # an explicit setting always wins
+    monkeypatch.setenv("AGENT_DOWNLOAD_URL", "")
+    monkeypatch.setenv("RENDER_GIT_REPO_SLUG", "bad repo/../x")
+    ag._DL_CACHE.update(key=None, url=None, until=0.0)
+    assert ag.agent_download_url() is None                                    # a malformed repository is never fetched
