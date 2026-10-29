@@ -38,7 +38,7 @@ from datetime import date, datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 
-AGENT_VERSION = "2.0.0"
+AGENT_VERSION = "2.1.0"
 CHUNK = 500                       # events per request
 SWEEP_END = "\U0010ffff"          # sorts after every id: "up to the end of this stream"
 SQLITE_MAGIC = b"SQLite format 3\x00"
@@ -475,6 +475,12 @@ class StateDB:
         self.con.execute("DELETE FROM items WHERE connector_id = ?", (cid,))
         self.con.commit()
 
+    def purge(self, cid: str) -> None:
+        """Forgets a connection for good (it was removed), so nothing of it is left on the computer."""
+        self.con.execute("DELETE FROM items WHERE connector_id = ?", (cid,))
+        self.con.execute("DELETE FROM meta WHERE connector_id = ?", (cid,))
+        self.con.commit()
+
     def get(self, cid: str, key: str, default=None):
         r = self.con.execute("SELECT value FROM meta WHERE connector_id = ? AND key = ?", (cid, key)).fetchone()
         return json.loads(r[0]) if r and r[0] is not None else default
@@ -842,28 +848,44 @@ class SystemRunner:
 # Config, codes, and the loop that runs every system
 # ----------------------------------------------------------------------------------------------------------------------
 
-def decode_code(code: str) -> dict:
-    """A connection code from the app: 'bre1.' + base64url(JSON {u: engine address, c: connector id, t: token, s: system})."""
+def decode_codes(code: str) -> list[dict]:
+    """A connection code from the app. 'bre1.' + base64url(JSON {u: engine address, c: connector id, t: token, s: system}) for one
+    system, 'bre2.' + base64url(JSON {u, e: [{c, t, s}, ...]}) for several at once. Always returns one dict per system."""
     code = code.strip()
-    if not code.startswith("bre1."):
-        raise ValueError("That is not a connection code from the app (it should start with bre1.)")
+    if not code.startswith(("bre1.", "bre2.")):
+        raise ValueError("That is not a connection code from the app (it should start with bre1. or bre2.)")
     try:
-        raw = base64.urlsafe_b64decode(code[5:] + "=" * (-len(code[5:]) % 4))
-        d = json.loads(raw)
-        return {"base_url": d["u"], "connector_id": d["c"], "token": d["t"], "system": d["s"]}
+        d = json.loads(base64.urlsafe_b64decode(code[5:] + "=" * (-len(code[5:]) % 4)))
+        entries = d["e"] if code.startswith("bre2.") else [d]
+        out = [{"base_url": d["u"], "connector_id": e["c"], "token": e["t"], "system": e["s"]} for e in entries]
+        assert out and all(isinstance(v, str) and v for o in out for v in o.values())
+        return out
     except Exception:
         raise ValueError("The connection code is damaged. Copy it again from the app, all of it.")
 
 
+def decode_code(code: str) -> dict:
+    """The single system in a code (the command-line and tests ask for exactly one)."""
+    found = decode_codes(code)
+    if len(found) != 1:
+        raise ValueError("This code connects several systems; use decode_codes.")
+    return found[0]
+
+
 def add_system(cfg: dict, code: str, profiles: dict) -> dict:
-    d = decode_code(code)
-    if d["system"] not in profiles:
-        raise ValueError(f"This agent does not know the system '{d['system']}'. Update the agent.")
-    if cfg.get("base_url") and cfg["base_url"].rstrip("/") != d["base_url"].rstrip("/"):
-        raise ValueError(f"This code is for {d['base_url']}, but this agent already reports to {cfg['base_url']}.")
-    cfg["base_url"] = d["base_url"]
-    systems = [s for s in cfg.get("systems", []) if s["system"] != d["system"]]
-    systems.append({"system": d["system"], "connector_id": d["connector_id"], "token": d["token"]})
+    """Adds every system in the code, or none: a code with one problem changes nothing."""
+    found = decode_codes(code)
+    for d in found:
+        if d["system"] not in profiles:
+            raise ValueError(f"This agent does not know the system '{d['system']}'. Update the agent.")
+        if cfg.get("base_url") and cfg["base_url"].rstrip("/") != d["base_url"].rstrip("/"):
+            raise ValueError(f"This code is for {d['base_url']}, but this agent already reports to {cfg['base_url']}.")
+    if len({d["base_url"].rstrip("/") for d in found}) > 1:
+        raise ValueError("The connection code is damaged. Copy it again from the app, all of it.")
+    cfg["base_url"] = found[0]["base_url"]
+    added = {d["system"] for d in found}
+    systems = [s for s in cfg.get("systems", []) if s["system"] not in added]
+    systems += [{"system": d["system"], "connector_id": d["connector_id"], "token": d["token"]} for d in found]
     cfg["systems"] = systems
     return cfg
 
@@ -918,6 +940,7 @@ def run_loop(cfg: dict, profiles: dict, stop: threading.Event, log=print, once: 
     per-system runners for whoever wants to show their status."""
     runners = runners if runners is not None else []
     live: dict[str, tuple[threading.Thread, threading.Event, dict]] = {}
+    removed: set[str] = set()                                           # connections taken out of the config: their local memory is wiped when they stop
     state_path = cfg.get("state_file", "agent_state.db")
 
     def work(cur: dict, entry: dict, mine: threading.Event):
@@ -933,6 +956,9 @@ def run_loop(cfg: dict, profiles: dict, stop: threading.Event, log=print, once: 
                     break
                 (mine.wait if not once else stop.wait)(float(cur.get("poll_seconds", 20)) if not once else 1)
         finally:
+            if entry["connector_id"] in removed:
+                removed.discard(entry["connector_id"])
+                state.purge(entry["connector_id"])
             state.close()
             if runner in runners:
                 runners.remove(runner)
@@ -940,6 +966,8 @@ def run_loop(cfg: dict, profiles: dict, stop: threading.Event, log=print, once: 
     def sync_to(cur: dict):
         wanted = {e["connector_id"]: e for e in cur.get("systems", []) if e["system"] in profiles}
         for cid in [c for c, (_, _, e) in live.items() if c not in wanted or wanted[c] != e]:
+            if cid not in wanted:
+                removed.add(cid)
             live.pop(cid)[1].set()                                      # removed or changed (new code, new location): stop it, restart below
         for cid, entry in wanted.items():
             if cid not in live:

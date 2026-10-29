@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent"))
 import reality_agent_app as A  # noqa: E402
 import systems as S  # noqa: E402
 
+from tests.test_block_c import make_owner  # noqa: E402
 from tests.test_local_systems import Bridge, Rig, imara_db  # noqa: E402,F401
 
 
@@ -143,3 +144,59 @@ def test_list_offers_the_download_when_the_server_has_one(client, tmp_path, monk
     monkeypatch.setenv("AGENT_DOWNLOAD_URL", "https://example.com/RealityAgent.exe")
     rows = client.get(f"/api/agent/?tenant_id={rig.tenant}", headers=rig.h).json()
     assert all(r["download_url"] == "https://example.com/RealityAgent.exe" for r in rows)
+
+
+def test_one_code_connects_several_systems(client, tmp_path):
+    tenant, h = make_owner(client, "multi")
+    r = client.post("/api/agent/connect", json={"tenant_id": tenant, "systems": ["smepro", "imara", "imara", "pharmacy"]}, headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["code"].startswith("bre2.") and len(body["connector_ids"]) == 3        # repeated names count once
+    found = S.decode_codes(body["code"])
+    assert [d["system"] for d in found] == ["smepro", "imara", "pharmacy"]
+    for d in found:                                                                     # each part works on its own
+        hb = client.post(f"/api/agent/{d['connector_id']}/heartbeat", json={"status": {"state": "not_found"}}, headers={"Authorization": f"Bearer {d['token']}"})
+        assert hb.status_code == 200
+    assert client.post("/api/agent/connect", json={"tenant_id": tenant}, headers=h).status_code == 400
+    assert client.post("/api/agent/connect", json={"tenant_id": tenant, "systems": ["imara", "payroll"]}, headers=h).status_code == 400
+    one = client.post("/api/agent/connect", json={"tenant_id": tenant, "system": "imara"}, headers=h).json()
+    assert one["code"].startswith("bre1.") and one["connector_id"] == found[1]["connector_id"]   # a single system keeps the old form, same connector
+
+
+def test_pasting_one_code_for_several_systems(ui):
+    call, srv, home, port = ui
+    raw = {"u": "https://engine.example", "e": [{"c": "c1", "t": "t1", "s": "smepro"}, {"c": "c2", "t": "t2", "s": "imara"}]}
+    code = "bre2." + base64.urlsafe_b64encode(json.dumps(raw).encode()).decode().rstrip("=")
+    status, body, _ = call("POST", "/api/add", {"code": code})
+    assert status == 200 and body["message"].startswith("smePro and Imara connected")
+    assert [s["system"] for s in json.loads(A.config_path(home).read_text())["systems"]] == ["smepro", "imara"]
+    bad = {**raw, "e": raw["e"] + [{"c": "c3", "t": "t3", "s": "payroll"}]}
+    status, _, _ = call("POST", "/api/add", {"code": "bre2." + base64.urlsafe_b64encode(json.dumps(bad).encode()).decode().rstrip("=")})
+    assert status == 400 and len(json.loads(A.config_path(home).read_text())["systems"]) == 2      # one unknown system: nothing is added
+
+
+def test_a_removed_system_leaves_nothing_on_the_computer(client, tmp_path):
+    rig = Rig(client, tmp_path, "imara", imara_db)
+    cfg = {"base_url": "http://localhost", "systems": [rig.entry], "state_file": str(tmp_path / "gone.db"), "poll_seconds": 0.05, "heartbeat_seconds": 0, "force_pass_seconds": 0}
+    box, stop, runners = {}, threading.Event(), []
+    import unittest.mock as m
+    with m.patch.object(S, "EngineClient", lambda *a, **k: Bridge(client, rig.cid, rig.code["token"])):
+        t = threading.Thread(target=S.run_loop, args=(cfg, S.load_profiles(), stop, lambda *a: None),
+                             kwargs={"reload": lambda: box.pop("cfg", None), "runners": runners, "config_check_seconds": 0.1})
+        t.start()
+        for _ in range(100):
+            if len(rig.events("sale")) == 2:
+                break
+            time.sleep(0.2)
+        state = S.StateDB(cfg["state_file"])
+        assert state.con.execute("SELECT count(*) FROM items WHERE connector_id = ?", (rig.cid,)).fetchone()[0] > 0      # it remembered what it sent
+        box["cfg"] = {**cfg, "systems": []}                                  # the owner removed it from this computer
+        for _ in range(100):
+            if not runners and state.con.execute("SELECT count(*) FROM items WHERE connector_id = ?", (rig.cid,)).fetchone()[0] == 0:
+                break
+            time.sleep(0.2)
+        stop.set()
+        t.join(timeout=10)
+    assert state.con.execute("SELECT count(*) FROM items WHERE connector_id = ?", (rig.cid,)).fetchone()[0] == 0
+    assert state.con.execute("SELECT count(*) FROM meta WHERE connector_id = ?", (rig.cid,)).fetchone()[0] == 0
+    state.close()

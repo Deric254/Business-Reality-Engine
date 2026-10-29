@@ -32,6 +32,8 @@ services:
         value: "1"
       - key: BLOCK_PRIVATE_CONNECTOR_HOSTS
         value: "true"
+      - key: AGENT_DOWNLOAD_URL
+        sync: false         # the RealityAgent.exe link from your GitHub release; owners see it as the Download button
       - key: KEEPALIVE_MINUTES
         value: "10"
       - key: LLM_PROVIDER

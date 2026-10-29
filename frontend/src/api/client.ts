@@ -539,7 +539,7 @@ export type SystemLink = {
 
 export const systemApi = {
   list: (t: string) => request<SystemLink[]>(`/api/agent/?tenant_id=${t}`),
-  connect: (t: string, system: string) => request<{ connector_id: string; code: string }>("/api/agent/connect", { method: "POST", ...json({ tenant_id: t, system }) }),
+  connect: (t: string, systems: string[]) => request<{ connector_id: string; connector_ids: string[]; code: string }>("/api/agent/connect", { method: "POST", ...json({ tenant_id: t, systems }) }),
   check: (t: string, id: string) => request<SystemLink>(`/api/agent/${id}/check?tenant_id=${t}`, { method: "POST" }),
   settings: (t: string, id: string, body: { path?: string; scope_id?: string; paused?: boolean }) => request<SystemLink>(`/api/agent/${id}/settings?tenant_id=${t}`, { method: "POST", ...json(body) }),
   confirm: (t: string, id: string) => request<SystemLink>(`/api/agent/${id}/confirm?tenant_id=${t}`, { method: "POST" }),

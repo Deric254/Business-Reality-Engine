@@ -123,7 +123,7 @@ button.main{background:#1b5a54;color:#fff;border-color:#1b5a54}
 <p class="sub">This small program lets the app see your business systems on this computer. You can close this page: it keeps working in the background and starts with the computer.</p>
 <div id="systems"></div>
 <div class="card"><b>Connect a system</b>
-<p><small>In the app, open <b>Data &rarr; Your systems</b>, press <b>Connect</b> on smePro, Imara or Pharmacy ERP, copy the code, and paste it here.</small></p>
+<p><small>In the app, open <b>Data &rarr; Your systems</b>, tick the systems on this computer, copy the code, and paste it here. One code connects them all.</small></p>
 <form id="f"><input type="text" id="code" placeholder="Paste the code here" autocomplete="off" spellcheck="false">
 <p><button class="main" id="go">Connect</button></p></form><div id="msg" role="status"></div></div>
 <script>
@@ -227,9 +227,10 @@ def build_server(home: Path, runners: list, port: int = PORT, log=print, key: st
                         return self._json(400, {"error": str(e)})
                     R._save_config(str(config_path(home)), cfg)
                     set_startup(True)
-                    label = profiles[S.decode_code(str(body["code"]))["system"]]["label"]
+                    labels = [profiles[d["system"]]["label"] for d in S.decode_codes(str(body["code"]))]
+                    label = " and ".join([", ".join(labels[:-1]), labels[-1]] if len(labels) > 1 else labels)
                     log("connected", label)
-                    return self._json(200, {"message": f"{label} connected. Looking for its data…"})
+                    return self._json(200, {"message": f"{label} connected. Looking for {'their' if len(labels) > 1 else 'its'} data…"})
                 known = {x["system"] for x in cfg.get("systems", [])}
                 system = str(body.get("system", ""))
                 if system not in known:

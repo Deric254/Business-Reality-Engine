@@ -97,9 +97,15 @@ def _public_url(request: Request) -> str:
     return base
 
 
-def _code(base: str, connector_id: str, token: str, system: str) -> str:
-    raw = json.dumps({"u": base, "c": connector_id, "t": token, "s": system}, separators=(",", ":")).encode()
-    return "bre1." + base64.urlsafe_b64encode(raw).decode().rstrip("=")
+def _code(base: str, issued: list[tuple[str, str, str]]) -> str:
+    """One code for one or several systems. `issued` is (connector id, token, system) per system. A single system keeps the
+    original 'bre1' form (agents already out there read it); several share one 'bre2' code, so the owner pastes once."""
+    if len(issued) == 1:
+        cid, token, system = issued[0]
+        raw, prefix = {"u": base, "c": cid, "t": token, "s": system}, "bre1."
+    else:
+        raw, prefix = {"u": base, "e": [{"c": c, "t": t, "s": s} for c, t, s in issued]}, "bre2."
+    return prefix + base64.urlsafe_b64encode(json.dumps(raw, separators=(",", ":")).encode()).decode().rstrip("=")
 
 
 @router.get("/")
@@ -115,31 +121,41 @@ def list_systems(tenant_id: str, db: Session = Depends(get_db), authorization: O
 
 class ConnectIn(BaseModel):
     tenant_id: str
-    system: str
+    system: Optional[str] = None             # one system, or ...
+    systems: Optional[list[str]] = None      # ... several at once: one code connects them all
 
 
-@router.post("/connect")
-def connect(payload: ConnectIn, request: Request, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
-    """Adds the system, or issues a fresh code for one already added (the old code stops working at once). The code is
-    shown once; only its hash is stored."""
-    me = authorize_tenant(authorization, payload.tenant_id, require_role="owner")
-    if payload.system not in systems.SYSTEMS:
-        raise HTTPException(400, f"system must be one of {sorted(systems.SYSTEMS)}")
+def _issue(db: Session, tenant_id: str, system: str) -> tuple[Connector, str]:
+    """Adds the system, or replaces the code of one already added (the old code stops working at once)."""
     raw, token_hash = generate_webhook_token()
-    c = next((x for x in db.query(Connector).filter(Connector.tenant_id == payload.tenant_id, Connector.connector_type == "system")
-              if (x.config or {}).get("system") == payload.system), None)
+    c = next((x for x in db.query(Connector).filter(Connector.tenant_id == tenant_id, Connector.connector_type == "system")
+              if (x.config or {}).get("system") == system), None)
     if c is None:
-        c = Connector(tenant_id=payload.tenant_id, name=systems.SYSTEMS[payload.system]["label"], connector_type="system", expected_frequency="realtime",
-                      config={"system": payload.system, "webhook_token_hash": token_hash})
+        c = Connector(tenant_id=tenant_id, name=systems.SYSTEMS[system]["label"], connector_type="system", expected_frequency="realtime",
+                      config={"system": system, "webhook_token_hash": token_hash})
         db.add(c)
     else:
         c.config = {**(c.config or {}), "webhook_token_hash": token_hash}
         c.is_active = True
+    return c, raw
+
+
+@router.post("/connect")
+def connect(payload: ConnectIn, request: Request, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+    """Adds the system(s), or issues a fresh code for ones already added. The code is shown once; only its hash is stored."""
+    me = authorize_tenant(authorization, payload.tenant_id, require_role="owner")
+    wanted = list(dict.fromkeys(payload.systems or ([payload.system] if payload.system else [])))
+    if not wanted:
+        raise HTTPException(400, "Say which system to connect")
+    if any(w not in systems.SYSTEMS for w in wanted):
+        raise HTTPException(400, f"system must be one of {sorted(systems.SYSTEMS)}")
+    issued = [(*_issue(db, payload.tenant_id, w), w) for w in wanted]
     db.commit()
-    db.refresh(c)
-    audit.record(db, "connector.create", request=request, tenant_id=payload.tenant_id, actor_user_id=me.user_id, target=c.id,
-                 detail={"type": "system", "system": payload.system})
-    return {"connector_id": c.id, "code": _code(_public_url(request), c.id, raw, payload.system)}
+    for c, _, w in issued:
+        db.refresh(c)
+        audit.record(db, "connector.create", request=request, tenant_id=payload.tenant_id, actor_user_id=me.user_id, target=c.id, detail={"type": "system", "system": w})
+    return {"connector_id": issued[0][0].id, "connector_ids": [c.id for c, _, _ in issued],
+            "code": _code(_public_url(request), [(c.id, raw, w) for c, raw, w in issued])}
 
 
 @router.post("/{connector_id}/check")

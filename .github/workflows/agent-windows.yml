@@ -1,7 +1,7 @@
 name: Windows agent
 
 # Builds RealityAgent.exe: the one file an owner downloads and double-clicks (no Python, no commands).
-# Run it by hand (Actions -> Windows agent -> Run workflow) or push a tag like agent-v2.0.0 to also publish it as a release.
+# Run it by hand (Actions -> Windows agent -> Run workflow) or push a tag like agent-v2.1.0 to also publish it as a release.
 on:
   workflow_dispatch:
   push:
