@@ -87,16 +87,17 @@ export function Sidebar({ tenants, activeTenant, onTenantChange }: { tenants: Te
   return (
     <>
       {/* Desktop rail */}
-      <aside className="hidden lg:flex print:!hidden fixed inset-y-0 left-0 w-64 flex-col gap-6 border-r border-border bg-ink px-4 py-6">
-        <Link to="/" aria-label="DericBI home" className="px-1 pt-1"><Logo size={60} /></Link>
-        <div className="rounded-lg border border-border bg-panel px-3 py-2.5">
+      <aside className="hidden lg:flex print:!hidden fixed inset-y-0 left-0 w-64 flex-col gap-4 border-r border-border bg-ink px-4 py-5 overflow-hidden">
+        <Link to="/" aria-label="DericBI home" className="px-1 pt-1 shrink-0"><Logo size={60} /></Link>
+        <div className="rounded-lg border border-border bg-panel px-3 py-2.5 shrink-0">
           <div className="text-xs text-ink-faint mb-0.5">Business</div>
           {business}
         </div>
-        <nav aria-label="Main" className="flex flex-col gap-1">
+        {/* The menu scrolls on short screens; the footer (language, Sign out) is always pinned and visible. */}
+        <nav aria-label="Main" className="flex flex-col gap-1 flex-1 min-h-0 overflow-y-auto">
           {nav.map((n) => <NavLink key={n.to} to={n.to} end={n.end} className={link}>{ICONS[n.icon]}{t(n.key)}</NavLink>)}
         </nav>
-        <div className="mt-auto space-y-3 px-2">
+        <div className="shrink-0 space-y-3 px-2 pt-3 border-t border-border">
           {coverage.length > 0 && (
             <div className="flex items-center gap-2 text-xs text-ink-muted">
               <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: COVERAGE_COLOR[worst] }} aria-hidden />{COVERAGE_TEXT[worst]}

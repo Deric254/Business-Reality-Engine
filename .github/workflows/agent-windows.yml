@@ -1,7 +1,9 @@
 name: Windows agent
 
 # Builds RealityAgent.exe: the one file an owner downloads and double-clicks (no Python, no commands).
-# Run it by hand (Actions -> Windows agent -> Run workflow) or push a tag like agent-v2.1.0 to also publish it as a release.
+# Run it by hand (Actions -> Windows agent -> Run workflow): it is published at a permanent link,
+#   https://github.com/<owner>/<repo>/releases/download/agent-latest/RealityAgent.exe   (put that in AGENT_DOWNLOAD_URL on the server)
+# Push a tag like agent-v2.1.0 to also keep a numbered release.
 on:
   workflow_dispatch:
   push:
@@ -38,10 +40,24 @@ jobs:
           if ($r.StatusCode -ne 200) { throw "status failed" }
           Stop-Process -Id $p.Id -Force
           reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v RealityAgent /f
+          $global:LASTEXITCODE = 0
       - uses: actions/upload-artifact@v4
         with:
           name: RealityAgent
           path: dist/RealityAgent.exe
+      - name: Publish rolling release (permanent download link)
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          gh release view agent-latest 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create agent-latest dist/RealityAgent.exe --title "Reality agent (latest)" --notes "Download RealityAgent.exe and double-click it."
+          } else {
+            gh release upload agent-latest dist/RealityAgent.exe --clobber
+          }
+          if ($LASTEXITCODE -ne 0) { throw "publishing the release failed" }
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/agent-v')
         run: gh release create "${{ github.ref_name }}" dist/RealityAgent.exe --title "Reality agent ${{ github.ref_name }}" --notes "Download RealityAgent.exe and double-click it."

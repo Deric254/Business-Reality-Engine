@@ -25,11 +25,14 @@ async function parseError(res: Response): Promise<ApiError> {
 // One in-flight refresh shared by concurrent 401s, so a burst of requests
 // with an expired access token triggers a single refresh, not many.
 let refreshing: Promise<boolean> | null = null;
+// Bumped on every sign-out. A refresh that was already on its way when the person signed out must not sign them back in.
+let sessionEpoch = 0;
 
 async function refreshTokens(): Promise<boolean> {
   const tokens = getTokens();
   if (!tokens) return false;
   if (!refreshing) {
+    const epoch = sessionEpoch;
     refreshing = fetch(`${API_BASE}/api/auth/refresh`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -37,7 +40,9 @@ async function refreshTokens(): Promise<boolean> {
     })
       .then(async (res) => {
         if (!res.ok) return false;
-        setTokens((await res.json()) as TokenPair);
+        const pair = (await res.json()) as TokenPair;
+        if (epoch !== sessionEpoch) return false;   // signed out while this was in flight: drop it
+        setTokens(pair);
         return true;
       })
       .catch(() => false)
@@ -108,6 +113,7 @@ export async function changePassword(current: string, next: string): Promise<voi
 
 export function logout() {
   const tokens = getTokens();
+  sessionEpoch += 1;
   setTokens(null); // the UI signs out at once; revoking on the server is best-effort and never blocks it
   if (tokens) {
     fetch(`${API_BASE}/api/auth/logout`, {
