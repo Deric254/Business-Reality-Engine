@@ -45,7 +45,7 @@ function Row({ link, tenantId, isOwner, reload, onOpen, setError, setNotice }: {
       {needsHelp && isOwner && link.state === "waiting" && <button className={btnCls} onClick={() => onOpen(link.system)}>Show me the steps</button>}
       {isOwner && (
         <details className="text-sm">
-          <summary className="cursor-pointer text-ink-muted">Manage</summary>
+          <summary className="cursor-pointer text-ink-muted py-2 lg:py-0">Manage</summary>
           <div className="mt-2 space-y-2">
             {link.notice && <div className="text-ink-muted">{link.notice}</div>}
             {st.path && <div className="text-xs text-ink-muted break-all">Reading from {st.path} ({st.path_source}){st.scope_name ? `, business: ${st.scope_name}` : ""}</div>}

@@ -325,7 +325,7 @@ export function ChartCard({ title, sub, children, table, className = "" }: { tit
         </div>
         {table && (
           <div role="group" aria-label={`${title}: view`} className="inline-flex border border-field rounded-sm overflow-hidden shrink-0 text-xs print:hidden">
-            {(["chart", "table"] as const).map((v) => <button key={v} aria-pressed={view === v} onClick={() => setView(v)} className={`px-2.5 py-1 font-medium ${view === v ? "bg-info text-white" : "bg-panel text-ink-text hover:bg-panel-raised"}`}>{v === "chart" ? "Chart" : "Table"}</button>)}
+            {(["chart", "table"] as const).map((v) => <button key={v} aria-pressed={view === v} onClick={() => setView(v)} className={`px-3 py-2 lg:px-2.5 lg:py-1 font-medium ${view === v ? "bg-info text-white" : "bg-panel text-ink-text hover:bg-panel-raised"}`}>{v === "chart" ? "Chart" : "Table"}</button>)}
           </div>
         )}
       </div>

@@ -38,7 +38,7 @@ function HealthSection({ tenantId, cur, days, setDays }: { tenantId: string; cur
   return (
     <Section title={t("biz.health")} hint={h?.score_basis}
       action={
-        <div role="group" aria-label="Period" className="flex gap-1">
+        <div role="group" aria-label="Period" className="flex flex-wrap gap-1">
           {[...PERIODS, 0].map((p) => (
             <button key={p} onClick={() => setDays(p)} aria-pressed={days === p}
               className={`${btnCls} ${days === p ? "!text-ink-text !border-info" : ""}`}>{p === 0 ? "All" : `${p}d`}</button>

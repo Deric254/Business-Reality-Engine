@@ -184,7 +184,7 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
                 </button>
               ))}
             </div>
-            {!nothingInView && <button className="text-info hover:underline" onClick={() => setShowCheck((v) => !v)}>{showCheck ? "Hide the data check" : "Is something missing? Check my data"}</button>}
+            {!nothingInView && <button className="text-info hover:underline py-2 lg:py-0" onClick={() => setShowCheck((v) => !v)}>{showCheck ? "Hide the data check" : "Is something missing? Check my data"}</button>}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
             <Kpi busy={busy} days={days} cur={cur} label={`Sales, ${periodName(days)}`} value={kpis.revenue.current} delta={change(kpis.revenue.current, kpis.revenue.previous)} goodWhen="up" />
@@ -213,7 +213,7 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
         <section className="space-y-3" aria-label="Needs attention">
           <div className="flex items-end justify-between gap-3">
             <h2 className="text-xl font-semibold tracking-tight">Needs your attention</h2>
-            <Link to="/alerts" className="text-sm font-medium text-info hover:underline">All alerts ({open.length} open)</Link>
+            <Link to="/alerts" className="text-sm font-medium text-info hover:underline py-2 lg:py-0">All alerts ({open.length} open)</Link>
           </div>
           {loading && !alerts.length && <Skeleton className="h-24 w-full" />}
           {!loading && open.length === 0 && <Empty>No open alerts.</Empty>}

@@ -121,7 +121,7 @@ export function Sidebar({ tenants, activeTenant, onTenantChange }: { tenants: Te
             <select aria-label={t("lang.label")} value={getLang()} onChange={(e) => setLang(e.target.value as Lang)} className="text-sm bg-panel border border-field rounded-sm px-2 py-1">
               <option value="en">EN</option><option value="sw">SW</option>
             </select>
-            <button onClick={logout} className="text-sm font-medium text-ink-muted">{t("nav.signout")}</button>
+            <button onClick={logout} className="text-sm font-medium text-ink-muted px-1 py-2">{t("nav.signout")}</button>
           </div>
         </div>
         <nav aria-label="Main" className="flex gap-2 overflow-x-auto px-4 pb-3">

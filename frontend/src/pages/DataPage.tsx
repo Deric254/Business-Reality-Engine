@@ -101,7 +101,7 @@ function ConnectorList({ tenantId, rows, contributions, isOwner, reload, setNoti
                 {PULL.includes(c.connector_type) && <button className={btnCls} disabled={busy === c.id} title="Re-reads the source. Rows added, edited or deleted there are added, updated or removed here." onClick={() => run(c.id, () => syncSource(c), summarize)}>{busy === c.id ? "Syncing…" : "Sync now"}</button>}
                 {isOwner && (
                   <details className="text-sm">
-                    <summary className="cursor-pointer text-ink-muted">Manage</summary>
+                    <summary className="cursor-pointer text-ink-muted py-2 lg:py-0">Manage</summary>
                     <div className="mt-2 flex flex-wrap gap-2">
                       {c.connector_type === "file" && <button className={btnCls} disabled={busy === c.id} title="Makes the file the whole truth: records this source holds that are not in the file are removed" onClick={() => { setUploadFor({ id: c.id, replace: true }); fileRef.current?.click(); }}>Replace with a file</button>}
                       {c.connector_type === "webhook" && <button className={btnCls} disabled={busy === c.id} title="The old link stops working at once" onClick={() => newLink(c)}>Get a new link</button>}
@@ -209,7 +209,7 @@ function DataBody({ tenantId, isOwner }: { tenantId: string; isOwner: boolean })
         </Section>
       )}
       <details className="bg-panel border border-border rounded-xl px-5 py-3" open={toolsOpen} onToggle={(e) => setToolsOpen(e.currentTarget.open)}>
-        <summary className="cursor-pointer text-sm font-medium">More tools: check my data, merge duplicates, type an entry by hand</summary>
+        <summary className="cursor-pointer text-sm font-medium py-2 lg:py-0">More tools: check my data, merge duplicates, type an entry by hand</summary>
         {toolsOpen && (
           <div className="mt-4 space-y-6">
             <Section title="Is something missing?"><DataCheck tenantId={tenantId} days={30} /></Section>

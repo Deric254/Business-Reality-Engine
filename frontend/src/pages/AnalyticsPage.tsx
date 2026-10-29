@@ -133,9 +133,9 @@ function Body({ tenant }: { tenant: Tenant }) {
           </p>
           <p className="hidden print:block text-sm mt-1">{tenant.name}. Prepared {new Date().toLocaleDateString("en-KE", { day: "numeric", month: "long", year: "numeric" })}.</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2 print:hidden">
-          <div role="group" aria-label="Period shown" className="inline-flex border border-field rounded-sm overflow-hidden">
-            {PERIODS.map((d) => <button key={d} aria-pressed={d === days} onClick={() => setDays(d)} className={`px-3 py-1.5 text-sm font-medium ${d === days ? "bg-info text-white" : "bg-panel text-ink-text hover:bg-panel-raised"}`}>{periodLabel(d)}</button>)}
+        <div className="flex flex-wrap items-center gap-2 min-w-0 max-w-full print:hidden">
+          <div role="group" aria-label="Period shown" className="inline-flex max-w-full min-w-0 border border-field rounded-sm overflow-x-auto">
+            {PERIODS.map((d) => <button key={d} aria-pressed={d === days} onClick={() => setDays(d)} className={`shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-medium ${d === days ? "bg-info text-white" : "bg-panel text-ink-text hover:bg-panel-raised"}`}>{periodLabel(d)}</button>)}
           </div>
           <button className={btnCls} disabled={!a} onClick={() => a && download(`analytics-${a.period.first_day}-to-${a.period.last_day}.csv`, csvOf(a, cur))}>Download figures</button>
           <button className={btnCls} disabled={!a || pdf === "busy"} onClick={downloadPdf}>{pdf === "busy" ? "Preparing PDF…" : "Download PDF"}</button>
@@ -182,7 +182,7 @@ function Body({ tenant }: { tenant: Tenant }) {
           <section className="space-y-3" aria-label="Needs attention">
             <div className="flex items-end justify-between gap-3">
               <h2 className="text-xl font-semibold tracking-tight">Needs your attention</h2>
-              <Link to="/alerts" className="text-sm font-medium text-info hover:underline print:hidden">All alerts ({alerts.length} open)</Link>
+              <Link to="/alerts" className="text-sm font-medium text-info hover:underline print:hidden py-2 lg:py-0">All alerts ({alerts.length} open)</Link>
             </div>
             {top.length === 0
               ? <Empty>No open alerts. Nothing in your records is outside its usual range.</Empty>
