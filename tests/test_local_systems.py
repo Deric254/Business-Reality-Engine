@@ -42,7 +42,7 @@ class Rig:
         self.db_path = make_db(tmp_path)
         r = client.post("/api/agent/connect", json={"tenant_id": self.tenant, "system": system}, headers=self.h)
         assert r.status_code == 200, r.text
-        self.code = S.decode_code(r.json()["code"])
+        self.code = S.decode_codes(r.json()["code"])[0]
         self.cid = self.code["connector_id"]
         self.entry = {"system": system, "connector_id": self.cid, "token": self.code["token"], "path": str(self.db_path)}
         self.cfg = {"poll_seconds": 0, "heartbeat_seconds": 0, "force_pass_seconds": 0}
@@ -293,7 +293,7 @@ def test_reconnect_makes_the_old_code_useless(client, imara):
     assert r.json()["connector_id"] == imara.cid
     old = client.post(f"/api/agent/{imara.cid}/heartbeat", json={}, headers={"Authorization": f"Bearer {imara.code['token']}"})
     assert old.status_code == 404
-    new = S.decode_code(r.json()["code"])
+    new = S.decode_codes(r.json()["code"])[0]
     assert client.post(f"/api/agent/{imara.cid}/heartbeat", json={}, headers={"Authorization": f"Bearer {new['token']}"}).status_code == 200
 
 
@@ -364,11 +364,13 @@ def test_the_whole_loop_runs_threaded(client, imara):
 
 
 def test_code_roundtrip_and_rejection():
-    code = S.decode_code("bre1." + __import__("base64").urlsafe_b64encode(b'{"u":"https://x","c":"1","t":"t","s":"imara"}').decode().rstrip("="))
+    code = S.decode_codes("bre1." + __import__("base64").urlsafe_b64encode(b'{"u":"https://x","c":"1","t":"t","s":"imara"}').decode().rstrip("="))[0]
     assert code["system"] == "imara"
+    several = "bre2." + __import__("base64").urlsafe_b64encode(b'{"u":"https://x","e":[{"c":"1","t":"t","s":"imara"},{"c":"2","t":"u","s":"smepro"}]}').decode().rstrip("=")
+    assert [d["system"] for d in S.decode_codes(several)] == ["imara", "smepro"]
     for bad in ("hello", "bre1.@@@", "bre1." + "e30"):
         with pytest.raises(ValueError):
-            S.decode_code(bad)
+            S.decode_codes(bad)
 
 
 # ---- smePro: encrypted, several businesses, minor units by currency ---------------------------------------------------

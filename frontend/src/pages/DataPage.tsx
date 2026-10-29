@@ -184,6 +184,7 @@ function DataBody({ tenantId, isOwner }: { tenantId: string; isOwner: boolean })
   const health = overallHealth(systems, failing, rows.length);
   const showHub = isOwner && ready && (adding || fixing != null || !hasAny);
   const closeHub = () => { setAdding(false); setFixing(null); };
+  const hubChanged = () => { setAdding(true); void load(); };          // a system was created from the hub: keep its steps and code on screen even though data now exists
   const typeByHand = () => { closeHub(); setToolsOpen(true); setTimeout(() => document.getElementById("entry")?.scrollIntoView({ behavior: "smooth" }), 50); };
   return (
     <>
@@ -191,9 +192,12 @@ function DataBody({ tenantId, isOwner }: { tenantId: string; isOwner: boolean })
         action={isOwner && ready && hasAny && !showHub ? <button className={primaryCls} onClick={() => { setAdding(true); setNotice(null); }}>{t("data.add")}</button> : undefined} />
       <Notice error={err ?? linkErr} notice={notice} />
       {created && (created.webhook_url || created.webhook_token) && <SecretOnce created={created} onClose={() => setCreated(null)} />}
-      {isOwner && <SampleData tenantId={tenantId} hasData={hasAny} onChanged={load} setNotice={setNotice} setError={setErr} />}
-      {showHub && <ConnectHub tenantId={tenantId} firstTime={!hasAny} startSystem={fixing ?? undefined} onClose={closeHub} onChanged={load} onTypeByHand={typeByHand}
-        onConnected={(c, summary) => { closeHub(); setCreated(c); setNotice(`Connected ${c.name}.${summary ? " " + summary : ""}`); load(); }} />}
+      {isOwner && (
+        <SampleData tenantId={tenantId} hasData={hasAny} onChanged={load} setNotice={setNotice} setError={setErr}>
+          {showHub && <ConnectHub tenantId={tenantId} firstTime={!hasAny} startSystem={fixing ?? undefined} onClose={closeHub} onChanged={hubChanged} onTypeByHand={typeByHand}
+            onConnected={(c, summary) => { closeHub(); setCreated(c); setNotice(`Connected ${c.name}.${summary ? " " + summary : ""}`); load(); }} />}
+        </SampleData>
+      )}
       {ready && !hasAny && !isOwner && <Empty>Nothing is connected yet. Ask the owner of this business to connect its data.</Empty>}
       {hasAny && health && <Live tone={health.tone} title={health.text} />}
       {hasAny && (

@@ -864,14 +864,6 @@ def decode_codes(code: str) -> list[dict]:
         raise ValueError("The connection code is damaged. Copy it again from the app, all of it.")
 
 
-def decode_code(code: str) -> dict:
-    """The single system in a code (the command-line and tests ask for exactly one)."""
-    found = decode_codes(code)
-    if len(found) != 1:
-        raise ValueError("This code connects several systems; use decode_codes.")
-    return found[0]
-
-
 def add_system(cfg: dict, code: str, profiles: dict) -> dict:
     """Adds every system in the code, or none: a code with one problem changes nothing."""
     found = decode_codes(code)

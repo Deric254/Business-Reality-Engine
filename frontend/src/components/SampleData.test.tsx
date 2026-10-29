@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -21,6 +22,19 @@ function show(hasData: boolean) {
 beforeEach(() => { vi.resetAllMocks(); });
 
 describe("SampleData", () => {
+  it("shows the real way to connect first, keeps it mounted when the invitation arrives, and puts the invitation under it", async () => {
+    let arrive: (v: unknown) => void = () => undefined;
+    demoApi.list.mockReturnValue(new Promise((r) => { arrive = r; }));
+    const props = { tenantId: "t1", hasData: false, onChanged: vi.fn(), setNotice: vi.fn(), setError: vi.fn() };
+    const Main = () => { const [n, setN] = useState(0); return <button onClick={() => setN(n + 1)}>main {n}</button>; };
+    render(<SampleData {...props}><Main /></SampleData>);
+    await userEvent.click(screen.getByRole("button", { name: "main 0" }));            // the person is already using it
+    arrive({ samples: SAMPLES, loaded: false });
+    const offer = await screen.findByText("Want to see it working first?");
+    const main = screen.getByRole("button", { name: "main 1" });                         // not remounted: its state survived
+    expect(main.compareDocumentPosition(offer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();   // the offer comes after it
+  });
+
   it("offers the samples to a business with no data and loads the one chosen", async () => {
     demoApi.list.mockResolvedValue({ samples: SAMPLES, loaded: false });
     demoApi.load.mockResolvedValue({ kind: "pharmacy", events: 4200, alerts: 3 });

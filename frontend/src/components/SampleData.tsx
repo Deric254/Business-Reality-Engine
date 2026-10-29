@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState, type ReactNode } from "react";
 import { demoApi, type SampleKind } from "../api/client";
 import { errText } from "../lib/errors";
 import { Card, btnCls } from "./ui";
 
 
 /** For a business with no data yet: try a sample business to see the app working. Once one is loaded, say so plainly and
- *  offer to remove it. Shown to owners only, and only while it is useful (no data yet, or the sample itself is there). */
-export function SampleData({ tenantId, hasData, onChanged, setNotice, setError }: {
-  tenantId: string; hasData: boolean; onChanged: () => void; setNotice: (s: string | null) => void; setError: (s: string | null) => void;
+ *  offer to remove it. Shown to owners only, and only while it is useful (no data yet, or the sample itself is there).
+ *  `children` is the main action of the page (connecting real data): it goes under the "sample is loaded" warning but ABOVE
+ *  the invitation to try a sample, so the real thing comes first and the late-arriving invitation never pushes it down. */
+export function SampleData({ tenantId, hasData, onChanged, setNotice, setError, children }: {
+  tenantId: string; hasData: boolean; onChanged: () => void; setNotice: (s: string | null) => void; setError: (s: string | null) => void; children?: ReactNode;
 }) {
   const [samples, setSamples] = useState<SampleKind[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -22,16 +24,21 @@ export function SampleData({ tenantId, hasData, onChanged, setNotice, setError }
 
   if (loaded) {
     return (
-      <Card className="!p-5 space-y-3">
+      <>
+      <Card key="sample" className="!p-5 space-y-3">
         <p className="font-semibold">You are looking at sample data.</p>
         <p className="text-sm text-ink-muted">It is made up, so nothing here describes your business. Remove it before connecting your own data; it can only be removed while it is the only data here.</p>
         <button className={btnCls} disabled={busy} onClick={() => { if (window.confirm("Remove the sample data?")) void act(async () => { await demoApi.remove(tenantId); return "Sample data removed."; }); }}>Remove sample data</button>
       </Card>
+      <Fragment key="main">{children}</Fragment>
+      </>
     );
   }
-  if (hasData || samples.length === 0) return null;
+  if (hasData || samples.length === 0) return <><Fragment key="main">{children}</Fragment></>;
   return (
-    <Card className="!p-5 space-y-3">
+    <>
+    <Fragment key="main">{children}</Fragment>
+    <Card key="sample" className="!p-5 space-y-3">
       <div><p className="font-semibold">Want to see it working first?</p><p className="text-sm text-ink-muted mt-1">Load a made-up business with four months of activity and a problem hiding in it. You can remove it later.</p></div>
       <div className="grid sm:grid-cols-3 gap-3">
         {samples.map((s) => (
@@ -42,5 +49,6 @@ export function SampleData({ tenantId, hasData, onChanged, setNotice, setError }
         ))}
       </div>
     </Card>
+    </>
   );
 }
