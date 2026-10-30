@@ -21,4 +21,6 @@ def card():
         "offers": ["alerts", "business.health", "forecast"],
         "accepts": ["events.webhook", "events.batch", "files.upload"],
         "health": "/api/health/",
+        # Ready-made links other systems may offer their owner: the page to open, with {name} replaced. Relative to this system's address.
+        "handoffs": {"licence.issue": "/master?issue_to={name}"},
     }

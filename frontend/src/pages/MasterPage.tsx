@@ -18,7 +18,8 @@ function Body() {
   const [error, setError] = useState<string | null>(null);
   const [keys, setKeys] = useState<{ id: string; key: string }[] | null>(null);
   const [demos, setDemos] = useState<DemoBusiness[] | null>(null);
-  const [issue, setIssue] = useState({ count: "1", label: "", price: "1" });
+  // A link from another system (the CRM's "won" button) can pre-fill who the key is for. It only fills the box; the owner still presses Issue.
+  const [issue, setIssue] = useState(() => ({ count: "1", label: (new URLSearchParams(window.location.search).get("issue_to") ?? "").slice(0, 120), price: "1" }));
   const [busy, setBusy] = useState(false);
   const load = useCallback(() => { Promise.all([masterApi.overview(), masterApi.accounts()]).then(([o, a]) => { setOv(o); setRows(a); }).catch((e) => setError(e.message)); }, []);
   useEffect(() => { load(); }, [load]);
