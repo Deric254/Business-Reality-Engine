@@ -43,12 +43,27 @@ describe("Software flow", () => {
     expect(screen.getByText(/open the helper app and paste your code/)).toBeInTheDocument();
   });
 
-  it("says who to ask when there is no download link", async () => {
+  it("says plainly that there is nothing to download yet, instead of sending people away", async () => {
     api.list.mockResolvedValueOnce(NONE).mockResolvedValue([sys("smepro", "smePro", { connected: true, connector_id: "c1", state: "waiting" }), ...NONE.slice(1)]);
     renderFlow();
     await pick("smePro");
-    expect(await screen.findByText(/RealityAgent\.exe/)).toBeInTheDocument();
+    expect(await screen.findByText(/isn't ready to download yet/)).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Download/ })).toBeNull();
+    expect(screen.queryByText(/double-clicking/)).toBeNull();
+  });
+
+  it("on a phone, says the helper app belongs on the Windows computer and offers the link to send, not a download", async () => {
+    const ua = vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/126 Mobile Safari/537.36");
+    try {
+      api.list.mockResolvedValueOnce(NONE).mockResolvedValue(WAITING);
+      renderFlow();
+      await pick("smePro");
+      expect(await screen.findByText(/runs on the Windows computer that has your software, not on a phone/)).toBeInTheDocument();
+      expect(screen.getByLabelText("download link")).toHaveTextContent("https://example.com/RealityAgent.exe");
+      expect(screen.queryByRole("link", { name: /Download/ })).toBeNull();
+      expect(screen.queryByText(/double-clicking/)).toBeNull();
+      expect(screen.getByLabelText("code")).toHaveTextContent("ABCD-EFGH-1234");          // the code is still there to copy
+    } finally { ua.mockRestore(); }
   });
 
   it("celebrates when the helper app connects, and says what it found", async () => {

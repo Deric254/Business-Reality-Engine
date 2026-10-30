@@ -9,6 +9,7 @@
   --color-panel-raised: #f6f7f4;
   --color-border: #dfe3dc;
   --color-field: #a9b2a8;          /* input outlines (3:1 on white) */
+  --color-scrim: rgb(22 33 30 / 0.35);   /* dims the page behind a phone menu */
 
   /* Brand: spruce. Buttons, links, focus. White text on it passes AAA. */
   --color-info: #1b5a54;
@@ -45,6 +46,17 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/* On phones the sticky top bar and the tab bar cover the screen's edges: anything the page scrolls to by itself (a link to a
+   section, "type an entry by hand") must stop short of them instead of landing underneath. */
+@media (width < 64rem) {
+  html { scroll-padding-top: 5rem; scroll-padding-bottom: 6rem; }
+}
+
+/* The phone's tab bar steps aside while a text field has focus, so the on-screen keyboard never leaves it covering what is being typed. */
+@media (pointer: coarse) {
+  body:has(textarea:focus, select:focus, input:is([type=text], [type=email], [type=password], [type=number], [type=search], [type=tel], [type=url], [type=date], [type=month], [type=time], :not([type])):focus) .tabbar { display: none; }
 }
 
 /* Headlines and the big figures carry the personality: a soft, ink-trap serif */

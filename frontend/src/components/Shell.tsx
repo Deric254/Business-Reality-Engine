@@ -2,7 +2,6 @@ import { useEffect, useState, type ReactNode } from "react";
 import { api, ApiError, type Tenant } from "../api/client";
 import { cache } from "../api/cache";
 import { Sidebar } from "./Sidebar";
-import { RecoveryNudge } from "./RecoveryNudge";
 import { Skeleton, SlowHint, useSlow } from "./ui";
 import { LiveProvider } from "../lib/live";
 import { useLive } from "../lib/liveContext";
@@ -30,11 +29,10 @@ export function Shell({ children, wide = false }: { children: (tenant: Tenant) =
     <LiveProvider key={active?.id ?? "none"} tenantId={active?.id ?? null}>
     <div className="min-h-screen">
       <Sidebar tenants={tenants} activeTenant={active} onTenantChange={setActive} />
-      <main className="lg:pl-64 print:!pl-0">
+      <main className="lg:pl-64 print:!pl-0 max-lg:pb-24 print:!pb-0">
         <div className={`${wide ? "max-w-6xl" : "max-w-4xl"} mx-auto px-4 sm:px-8 py-8 lg:py-10 space-y-9`}>
           <OfflineNotice />
           {error && <p role="alert" className="text-sm text-critical">{error}</p>}
-          <RecoveryNudge />
           {loading && !error && (
             <div className="space-y-4" aria-busy="true">
               <Skeleton className="h-10 w-2/3" />

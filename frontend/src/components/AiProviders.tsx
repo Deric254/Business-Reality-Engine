@@ -95,7 +95,7 @@ export function AiProviders({ tenantId, isOwner }: { tenantId: string; isOwner: 
           <div className="block text-sm">
             <div className="flex items-center justify-between gap-2">
               <label htmlFor="ai-model">Model {preset.kind === "anthropic" && <span className="text-ink-faint">(optional)</span>}</label>
-              <button type="button" className="text-xs underline text-ink-muted disabled:opacity-50" disabled={loadingModels || key.length < 8} onClick={loadModels}>
+              <button type="button" className="text-xs underline text-ink-muted disabled:opacity-50 py-2 lg:py-0" disabled={loadingModels || key.length < 8} onClick={loadModels}>
                 {loadingModels ? "Loading…" : "Load the models my key can use"}
               </button>
             </div>

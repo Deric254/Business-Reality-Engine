@@ -199,8 +199,8 @@ function DataBody({ tenantId, isOwner }: { tenantId: string; isOwner: boolean })
         </SampleData>
       )}
       {ready && !hasAny && !isOwner && <Empty>Nothing is connected yet. Ask the owner of this business to connect its data.</Empty>}
-      {hasAny && health && <Live tone={health.tone} title={health.text} />}
-      {hasAny && (
+      {hasAny && !showHub && health && <Live tone={health.tone} title={health.text} />}
+      {hasAny && !showHub && (
         <Section title="Your connections">
           <div className="space-y-3">
             {systems.length > 0 && <ul className="bg-panel border border-border rounded-xl divide-y divide-border overflow-hidden"><SystemRows links={links} tenantId={tenantId} isOwner={isOwner} reload={load} onOpen={setFixing} setError={setErr} setNotice={setNotice} /></ul>}

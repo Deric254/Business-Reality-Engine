@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { systemApi, type SystemLink } from "../api/client";
+import { isPhoneOrTablet } from "../lib/device";
 import { errText } from "../lib/errors";
 import { TONE_COLOR, describeSystem } from "../lib/systemHelp";
 import { useSystemLinks } from "../lib/useSystemLinks";
@@ -58,6 +59,7 @@ export function SoftwareFlow({ tenantId, start, onClose, onChanged }: { tenantId
   }
 
   const downloadUrl = links.find((l) => l.download_url)?.download_url ?? null;
+  const phone = isPhoneOrTablet();                    // a phone cannot run the helper app: say where it goes instead of offering a download it cannot use
   const names = mine.map((l) => l.label).join(" and ");
 
   // ---------- 3. it worked (not while a new code is being issued for a system that was already connected) ----------
@@ -82,10 +84,15 @@ export function SoftwareFlow({ tenantId, start, onClose, onChanged }: { tenantId
       {problem && <p role="alert" className="text-sm text-critical">{problem}</p>}
       <ol className="space-y-5">
         <Step n={1} title={`On the computer that has ${mine.length === 1 ? names : "your software"}, get the helper app`} done={started}>
-          {downloadUrl
-            ? <a className={primaryCls + " inline-block"} href={downloadUrl}>Download the helper app for Windows</a>
-            : <p className="text-sm text-ink-muted">Ask the person who set up your system for the helper app (a file called <strong>RealityAgent.exe</strong>).</p>}
-          <p className="text-sm text-ink-muted">Open it by double-clicking. A page opens in your browser.</p>
+          {!downloadUrl
+            ? <p className="text-sm text-ink-muted">The helper app isn't ready to download yet. This page checks by itself, and the download button appears here as soon as it is. If it doesn't, ask the person who looks after this system.</p>
+            : phone
+              ? <>
+                  <p className="text-sm text-ink-muted">The helper app runs on the Windows computer that has your software, not on a phone. Open this page on that computer, or send it this link:</p>
+                  <CopyBox value={downloadUrl} label="download link" />
+                </>
+              : <a className={primaryCls + " inline-block"} href={downloadUrl}>Download the helper app for Windows</a>}
+          {downloadUrl && !phone && <p className="text-sm text-ink-muted">Open it by double-clicking. A page opens in your browser.</p>}
         </Step>
         <Step n={2} title="Paste this code on that page, then press Connect" done={started}>
           {code

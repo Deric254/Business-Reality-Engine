@@ -3,6 +3,7 @@ import { Shell } from "../components/Shell";
 import { PageTitle } from "../components/ui";
 import { api, settingsApi, tenantApi, usersApi, ApiError, type Channel, type Metric, type Tenant, type UserRow } from "../api/client";
 import { PasswordForm } from "../components/PasswordForm";
+import { RecoveryNudge } from "../components/RecoveryNudge";
 import { SecurityQuestionsForm } from "../components/SecurityQuestionsForm";
 import { getClaims } from "../api/session";
 import { AiProviders } from "../components/AiProviders";
@@ -177,11 +178,12 @@ function SettingsBody() {
   }
 
   const field = "bg-panel border border-field rounded-sm px-2 py-1.5 text-sm text-ink-text";
-  const btn = "text-xs border border-border rounded-sm px-2 py-1 text-ink-muted hover:text-ink-text";
+  const btn = "text-xs border border-border rounded-sm px-2 py-1 max-lg:py-2 text-ink-muted hover:text-ink-text";
 
   return (
     <div className="space-y-10 max-w-3xl">
       <PageTitle title="Settings" sub="Where alerts go, who can sign in, and what is watched." />
+      <RecoveryNudge />
       <div className="space-y-10">
         {error && <p role="alert" className="text-sm text-critical">{error}</p>}
         {notice && <p role="status" className="text-sm text-opportunity">{notice}</p>}

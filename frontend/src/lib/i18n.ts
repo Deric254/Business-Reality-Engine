@@ -8,6 +8,7 @@ const KEY = "bre.lang";
 const en = {
   "nav.overview": "Overview", "nav.analytics": "Analytics", "nav.alerts": "Alerts", "nav.goals": "Targets", "nav.business": "Business", "nav.data": "Data sources", "nav.accuracy": "Accuracy",
   "nav.settings": "Settings", "nav.licences": "Licences", "nav.signout": "Sign out", "lang.label": "Language",
+  "nav.more": "More", "nav.moreClose": "Close menu", "nav.needsAction": "action needed",
   "login.title": "Sign in to DericBI", "login.email": "Email", "login.password": "Password",
   "login.submit": "Sign in", "login.forgot": "Forgot your password?",
   "login.remember": "Keep me signed in on this device", "login.rememberHelp": "Only on your own phone or computer. Signing out always ends it.",
@@ -36,6 +37,7 @@ const en = {
 const sw: Partial<Record<keyof typeof en, string>> = {
   "nav.overview": "Muhtasari", "nav.analytics": "Uchambuzi", "nav.alerts": "Tahadhari", "nav.goals": "Malengo", "nav.business": "Biashara", "nav.data": "Vyanzo vya data", "nav.accuracy": "Usahihi",
   "nav.settings": "Mipangilio", "nav.licences": "Leseni", "nav.signout": "Toka", "lang.label": "Lugha",
+  "nav.more": "Zaidi", "nav.moreClose": "Funga menyu", "nav.needsAction": "hatua inahitajika",
   "login.title": "Ingia kwenye DericBI", "login.email": "Barua pepe", "login.password": "Nenosiri",
   "login.submit": "Ingia", "login.forgot": "Umesahau nenosiri?",
   "login.remember": "Nibaki nimeingia kwenye kifaa hiki", "login.rememberHelp": "Kwenye simu au kompyuta yako mwenyewe tu. Kutoka kunamaliza hili kila wakati.",

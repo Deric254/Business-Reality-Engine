@@ -1,8 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 export const inputCls = "bg-panel border border-field rounded-sm px-3 py-2 text-sm text-ink-text w-full placeholder:text-ink-faint";
-export const btnCls = "text-sm font-medium border border-field rounded-sm px-3.5 py-1.5 text-ink-text bg-panel hover:bg-panel-raised disabled:opacity-50 transition-colors";
-export const primaryCls = "bg-info text-white font-semibold rounded-sm px-4 py-2 text-sm hover:brightness-110 disabled:opacity-60 transition";
+export const btnCls = "text-sm font-medium border border-field rounded-sm px-3.5 py-1.5 max-lg:py-2.5 text-ink-text bg-panel hover:bg-panel-raised disabled:opacity-50 transition-colors";
+export const primaryCls = "bg-info text-white font-semibold rounded-sm px-4 py-2 max-lg:py-2.5 text-sm hover:brightness-110 disabled:opacity-60 transition";
 
 export function Section({ title, hint, children, action }: { title: string; hint?: string; children: ReactNode; action?: ReactNode }) {
   return (

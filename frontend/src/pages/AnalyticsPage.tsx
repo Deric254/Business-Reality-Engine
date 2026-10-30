@@ -104,6 +104,13 @@ function Body({ tenant }: { tenant: Tenant }) {
   }, [tenant.id, days]);
   useOnLiveChange(() => load(true));
   useEffect(() => { load(); }, [load]);
+  const periodBar = useRef<HTMLDivElement>(null);
+  useEffect(() => {                                           // where the period row scrolls (phones), keep the chosen period in view
+    const bar = periodBar.current, on = bar?.querySelector<HTMLElement>('[aria-pressed="true"]');
+    if (!bar || !on) return;
+    const barBox = bar.getBoundingClientRect(), onBox = on.getBoundingClientRect();
+    bar.scrollLeft += onBox.left - barBox.left - (barBox.width - onBox.width) / 2;
+  }, [days]);
 
   const stale = loading && a != null;                         // keep the last picture on screen, dimmed, while a new period loads
   const top = useMemo(() => [...alerts].sort((x, y) => (y.priority_rank ?? 0) - (x.priority_rank ?? 0)), [alerts]);
@@ -134,7 +141,7 @@ function Body({ tenant }: { tenant: Tenant }) {
           <p className="hidden print:block text-sm mt-1">{tenant.name}. Prepared {new Date().toLocaleDateString("en-KE", { day: "numeric", month: "long", year: "numeric" })}.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2 min-w-0 max-w-full print:hidden">
-          <div role="group" aria-label="Period shown" className="inline-flex max-w-full min-w-0 border border-field rounded-sm overflow-x-auto">
+          <div ref={periodBar} role="group" aria-label="Period shown" className="inline-flex max-w-full min-w-0 border border-field rounded-sm overflow-x-auto">
             {PERIODS.map((d) => <button key={d} aria-pressed={d === days} onClick={() => setDays(d)} className={`shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-medium ${d === days ? "bg-info text-white" : "bg-panel text-ink-text hover:bg-panel-raised"}`}>{periodLabel(d)}</button>)}
           </div>
           <button className={btnCls} disabled={!a} onClick={() => a && download(`analytics-${a.period.first_day}-to-${a.period.last_day}.csv`, csvOf(a, cur))}>Download figures</button>

@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ApiError, securityQuestionsApi } from "../api/client";
-import { cache } from "../api/cache";
+import { markRecoverySet } from "../lib/useRecoveryMissing";
 
 const input = "mt-1 w-full bg-panel border border-field rounded-sm px-3 py-2 text-sm text-ink-text";
 
@@ -28,7 +28,7 @@ export function SecurityQuestionsForm() {
     setError(null); setBusy(true);
     try {
       const r = await securityQuestionsApi.save(current, picked.map((question, i) => ({ question, answer: answers[i] })));
-      setSaved(r.questions); cache.recoverySet = true;
+      setSaved(r.questions); markRecoverySet();
       setEditing(false); setCurrent(""); setAnswers(Array(count).fill(""));
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) setError("The current password is incorrect.");
