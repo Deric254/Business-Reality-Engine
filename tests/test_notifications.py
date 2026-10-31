@@ -163,7 +163,7 @@ def test_ssrf_guard(client, tenant_a, monkeypatch):
 # ---------- delivery ----------
 def test_email_delivery_end_to_end_and_idempotent(client, tenant_a, smtp):
     _, _, owner = register(client, tenant_a, "owner")
-    cid = add_channel(client, owner, tenant_a, min_severity="high").json()["id"]
+    add_channel(client, owner, tenant_a, min_severity="high")
     before = len(smtp.messages)
     aid = make_alert(tenant_a)
     s = dispatch()
@@ -178,7 +178,7 @@ def test_email_delivery_end_to_end_and_idempotent(client, tenant_a, smtp):
 
 def test_severity_floor_and_no_backfill_before_channel_existed(client, tenant_a, smtp):
     _, _, owner = register(client, tenant_a, "owner")
-    old = make_alert(tenant_a, title="Older than the channel")
+    make_alert(tenant_a, title="Older than the channel")
     time.sleep(0.05)
     add_channel(client, owner, tenant_a, min_severity="high")
     before = len(smtp.messages)

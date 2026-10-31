@@ -3,7 +3,8 @@ Targets: is the business meeting what its owner set out to do, and if not, why.
 
 A goal is a figure for the CURRENT calendar week, month, quarter or year on the business's own clock. Progress is
 always computed on demand from validated records, so it follows every sync at once and can never disagree with the
-Overview or Analytics. It uses COMPLETE days only (today is unfinished; see app/core/periods.py), exactly like alerts.
+Overview or Analytics. Progress counts every record up to now, today's included. The pace and the projection use complete days only (today is unfinished and would
+bend them; see app/core/periods.py), exactly like alerts.
 
   reach  (sales, profit)   met when the total so far is at or above the target.
   within (spending)        off track the moment the total passes the target.
@@ -89,10 +90,15 @@ def progress(db: Session, goal: Goal, now: Optional[datetime] = None) -> dict:
     total_days = (last - first).days + 1
     elapsed = (today - first).days                                   # complete days so far
     target = float(goal.target_amount)
-    start, end = periods.local_midnight_utc(first, tz), periods.local_midnight_utc(today, tz)
-    actual = _total(db, tid, goal.metric, start, end)
+    start, done_end = periods.local_midnight_utc(first, tz), periods.local_midnight_utc(today, tz)
+    actual = _total(db, tid, goal.metric, start, periods.local_midnight_utc(today + timedelta(days=1), tz))     # today's records count
+    done = _total(db, tid, goal.metric, start, done_end)                                                     # complete days only, for the pace
     has_data = periods.first_record_day(db, tid, tz) is not None
-    status, projected = judge(goal.metric, actual, target, elapsed, total_days, has_data)
+    status, projected = judge(goal.metric, done, target, elapsed, total_days, has_data)       # a part-day would bend the pace, so it is not in it
+    if has_data and direction(goal.metric) == "reach" and actual >= target:                   # but a target already reached today is reached
+        status, projected = "met", actual
+    elif has_data and direction(goal.metric) == "within" and actual > target:
+        status, projected = "off_track", projected if projected is not None else actual
     remaining = total_days - elapsed                                 # days still to come, today included
     fmt = money_formatter(db, tid)
 
@@ -106,14 +112,14 @@ def progress(db: Session, goal: Goal, now: Optional[datetime] = None) -> dict:
         history.append({"first_day": f.isoformat(), "last_day": l.isoformat(), "actual": round(got, 2), "met": _met(goal.metric, got, target)})
         cursor = f - timedelta(days=1)
 
-    gap = None if not has_data else round(actual - target * elapsed / total_days, 2)       # against an even pace
+    gap = None if not has_data else round(done - target * elapsed / total_days, 2)         # complete days against an even pace
     return {
         "id": goal.id, "name": goal.name, "metric": goal.metric, "metric_label": METRICS[goal.metric], "cadence": goal.cadence,
         "direction": direction(goal.metric), "target": round(target, 2), "actual": round(actual, 2),
         "pct_of_target": round(actual / target * 100, 1) if target else None,
         "status": status, "projected": None if projected is None else round(projected, 2),
         "first_day": first.isoformat(), "last_day": last.isoformat(), "days_total": total_days, "days_elapsed": elapsed,
-        "days_remaining": remaining, "data_through": (today - timedelta(days=1)).isoformat() if elapsed > 0 else None,
+        "days_remaining": remaining, "data_through": today.isoformat(), "includes_today": True,
         "pace_gap": gap,                                             # positive = ahead of an even pace (for 'within': above it, which is worse)
         "per_day_needed": round(max(0.0, target - actual) / remaining, 2) if remaining and has_data else None,
         "summary": _sentence(goal, status, actual, target, projected, remaining, fmt),
@@ -126,7 +132,7 @@ def _sentence(goal: Goal, status: str, actual: float, target: float, projected: 
     if status == "no_data":
         return "No records yet, so there is nothing to measure against this target."
     if status == "not_started":
-        return f"A new {goal.cadence} has just begun. Progress shows once a full day is recorded."
+        return f"A new {goal.cadence} has just begun: {fmt(actual)} so far, today included. The pace is judged once a full day is recorded."
     if status == "met":
         return f"Target reached: {fmt(actual)} of {fmt(target)}. Everything from here is above it."
     if direction(goal.metric) == "within":

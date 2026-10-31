@@ -199,7 +199,7 @@ def _digest_channel(client, tok, tenant, **kw):
 def test_digest_groups_low_urgency_and_sends_urgent_immediately(client, tenant_a, smtp):
     tok = owner(client, tenant_a); smtp.messages.clear()
     _digest_channel(client, tok, tenant_a, target="digest@example.com")
-    urgent = make_alert(tenant_a, AlertSeverity.critical, "Urgent thing")
+    make_alert(tenant_a, AlertSeverity.critical, "Urgent thing")
     m1 = make_alert(tenant_a, AlertSeverity.medium, "Medium A"); m2 = make_alert(tenant_a, AlertSeverity.opportunity, "Opp B")
     st = dispatch()
     assert st["sent"] == 1 and st["held"] == 2 and st["digests"] == 1
@@ -214,16 +214,16 @@ def test_digest_groups_low_urgency_and_sends_urgent_immediately(client, tenant_a
 
 def test_digest_waits_for_its_hour_and_does_not_resend(client, tenant_a, http):
     tok = owner(client, tenant_a)
-    cid = add_channel(client, tok, tenant_a, channel_type="slack", target=http + "/s", min_severity="informational",
-                      digest_mode="daily", digest_hour=9).json()["id"]
-    a = make_alert(tenant_a, AlertSeverity.medium, "Later"); 
+    add_channel(client, tok, tenant_a, channel_type="slack", target=http + "/s", min_severity="informational",
+                digest_mode="daily", digest_hour=9)
+    make_alert(tenant_a, AlertSeverity.medium, "Later")
     db = SessionLocal(); N.enqueue_deliveries(db); N.process_deliveries(db)
     day = datetime(2030, 1, 1)
     assert N.send_due_digests(db, day.replace(hour=8)) == 0 and not _Recv.got
     assert N.send_due_digests(db, day.replace(hour=9, minute=5)) == 1
     assert "Daily digest: 1 update" in json.loads(_Recv.got[-1]["body"])["text"]
     assert N.send_due_digests(db, day.replace(hour=10)) == 0 and len(_Recv.got) == 1
-    b = make_alert(tenant_a, AlertSeverity.medium, "Next day"); N.enqueue_deliveries(db); N.process_deliveries(db)
+    make_alert(tenant_a, AlertSeverity.medium, "Next day"); N.enqueue_deliveries(db); N.process_deliveries(db)
     assert N.send_due_digests(db, day.replace(day=2, hour=9)) == 1 and len(_Recv.got) == 2
     db.close()
 

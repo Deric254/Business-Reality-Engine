@@ -1,0 +1,8 @@
+# Lint rules. CI runs `ruff check app agent scripts tests` (see .github/workflows/ci.yml).
+[lint]
+select = ["F"]
+
+[lint.per-file-ignores]
+# pytest fixtures are shared by importing them from another test module and then naming them as test arguments;
+# ruff reads that as a redefinition (F811) although it is how pytest finds the fixture.
+"tests/*" = ["F811"]

@@ -407,6 +407,7 @@ export interface Analytics {
   forecast: { weeks: AWeek[]; projection: AProjection[]; method: string; r_squared: number | null; reliable: boolean; note?: string;
               slope_per_week?: number; average_week?: number; weekly_noise_pct?: number | null };
   insights: AInsight[];
+  notes?: string[];
 }
 export interface SetupStatus { has_business: boolean; setup_key_configured: boolean }
 

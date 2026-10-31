@@ -10,7 +10,6 @@ import pandas as pd
 import pytest
 
 from app.api.business import build_trend
-from app.core import periods
 from app.core.business_health import health_summary
 from app.core.business_questions import compute_profit_breakdown
 from app.core.db import SessionLocal
@@ -51,7 +50,7 @@ def test_every_period_matches_the_sheet_and_the_previous_period_too(business, sh
     db = SessionLocal()
     try:
         k = compute_profit_breakdown(db, business, days, now=NOW)
-        first, last = pd.Timestamp("2026-10-22") - pd.Timedelta(days=days - 1), pd.Timestamp("2026-10-22")      # complete days: today (23 Oct) is not over
+        first, last = pd.Timestamp("2026-10-23") - pd.Timedelta(days=days - 1), pd.Timestamp("2026-10-23")      # ends today: 23 Oct has records, and they count
         sales, spend = truth(sheet, first, last)
         psales, pspend = truth(sheet, first - pd.Timedelta(days=days), first - pd.Timedelta(days=1))
         assert (k["revenue"]["current"], k["expenses"]["current"]) == (sales, spend)
@@ -67,9 +66,9 @@ def test_the_figures_in_the_screenshots(business):
     db = SessionLocal()
     try:
         got = {d: compute_profit_breakdown(db, business, d, now=NOW) for d in (7, 30, 90, 180)}
-        assert [got[d]["revenue"]["current"] for d in got] == [429450, 1983150, 5749380, 11447700]
-        assert [got[d]["expenses"]["current"] for d in got] == [228582, 1001944, 3517854, 6631803]
-        assert [got[d]["profit"]["current"] for d in got] == [200868, 981206, 2231526, 4815897]
+        assert [got[d]["revenue"]["current"] for d in got] == [520950, 2014050, 5828130, 11557380]
+        assert [got[d]["expenses"]["current"] for d in got] == [186588, 1002830, 3481006, 6608757]
+        assert [got[d]["profit"]["current"] for d in got] == [334362, 1011220, 2347124, 4948623]
     finally:
         db.close()
 
@@ -94,13 +93,13 @@ def test_the_chart_is_on_the_businesss_days_and_adds_up_to_the_totals(business, 
     try:
         t = build_trend(db, business, days, NOW)
         k = compute_profit_breakdown(db, business, days, now=NOW)
-        assert t["current"][-1]["date"] == "2026-10-22" and len(t["current"]) == len(t["previous"]) == days
+        assert t["current"][-1]["date"] == "2026-10-23" and len(t["current"]) == len(t["previous"]) == days
         assert sum(d["sales"] for d in t["current"]) == k["revenue"]["current"]
         assert sum(d["expenses"] for d in t["current"]) == k["expenses"]["current"]
         assert sum(d["sales"] for d in t["previous"]) == k["revenue"]["previous"]
         by_day = {d["date"]: d for d in t["current"]}
         s = sheet[0]
-        assert "2026-10-23" not in by_day                   # today is not over, so it is not in a "last N days" chart
+        assert by_day["2026-10-23"]["sales"] == float(s[s.Date == "2026-10-23"].Amount.sum()) == 138300      # today is in the chart: its records are real
         assert by_day["2026-10-22"]["sales"] == float(s[s.Date == "2026-10-22"].Amount.sum()) == 96600 and by_day["2026-10-22"]["expenses"] == 75123
     finally:
         db.close()

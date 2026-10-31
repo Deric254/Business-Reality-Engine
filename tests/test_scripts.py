@@ -4,7 +4,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-import pytest
 from sqlalchemy import text
 
 from app.core.db import engine
@@ -21,7 +20,7 @@ def load(name):
 
 
 def test_the_payment_simulator_builds_what_the_mpesa_source_accepts_and_counts_a_repeat_once(client):
-    sim = load("mpesa_simulate")
+    load("mpesa_simulate")
     t, h = make_owner(client, "sim")
     with engine.begin() as c:
         c.execute(text("update tenants set timezone = 'Africa/Nairobi' where id = :t"), {"t": t})

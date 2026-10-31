@@ -7,7 +7,6 @@ import pytest
 
 from app.core import detection_kick, goals as G
 from app.core.db import SessionLocal
-from app.models.config import Goal
 from app.models.core import Tenant
 from tests.test_block_c import make_owner, mk
 from tests.test_loss_alerts import COSTS, SALES
@@ -229,3 +228,19 @@ def test_after_new_data_the_screen_signal_moves_twice_first_for_the_data_then_fo
     assert alerts, "alerts were not raised on their own after the data arrived"
     time.sleep(0.5)
     assert token() != t1                                                  # 2) alerts changed: screens reload alerts too
+
+
+def test_todays_records_count_toward_a_target_but_the_pace_uses_whole_days(client):
+    """Progress counts everything recorded, today included; the pace is judged on complete days so a part-day cannot bend it."""
+    t, h = make_owner(client, "goaltoday")
+    today = dt.datetime.utcnow().date()
+    first = today.replace(day=1)
+    if today == first:
+        pytest.skip("on the 1st there is no complete day yet this month")
+    cid = mk(client, t, h, name="POS", connector_type="file", config=SALES).json()["id"]
+    rows = f"{NOW:%Y-%m-%d} 00:01,4000\n" + "".join(f"{NOW - dt.timedelta(days=d):%Y-%m-%d} 12:00,1000\n" for d in range(1, 3) if first <= today - dt.timedelta(days=d))
+    assert client.post(f"/api/connectors/{cid}/upload", data={"tenant_id": t}, files={"file": ("s.csv", ("Date,Amount\n" + rows).encode(), "text/csv")}, headers=h).status_code == 200
+    g = _goal(client, t, h, target_amount=4000).json()
+    done = sum(1000 for d in range(1, 3) if first <= today - dt.timedelta(days=d))
+    assert g["actual"] == done + 4000 and g["includes_today"] is True and g["data_through"] == today.isoformat()
+    assert g["status"] == "met"                                                                 # a target reached today is reached

@@ -113,9 +113,17 @@ def test_unknown_and_inactive_connector(env):
     assert e.value.status_code == 409
 
 
-def test_validation_flags_but_still_stores(env):
+def test_a_negative_amount_is_kept_and_counted(env):
+    """A refund or credit is real data: it is stored as validated, not left out of the totals."""
     db, t, c = env
     r = ingest_normalized_event(db, ev(t, c, "neg", amount=-5))
+    assert r["validation_status"] == "validated" and not r["errors"]
+
+
+def test_validation_flags_but_still_stores(env):
+    db, t, c = env
+    fut = ev(t, c, "fut"); fut.timestamp = dt.datetime.utcnow() + dt.timedelta(days=3)
+    r = ingest_normalized_event(db, fut)
     assert r["validation_status"] == "failed" and r["errors"]
     assert db.get(Connector, c).last_sync_status == "partial"
 

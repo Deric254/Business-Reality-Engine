@@ -71,7 +71,7 @@ Nothing is taken blindly. Before anything is counted the wizard shows **What we 
 - **From the command line:** `python scripts/seed_demo.py --api http://localhost:8000 --admin-key $ADMIN_API_KEY --kind duka` (or `pharmacy`, `workshop`).
 
 ## Periods: one definition of "last N days"
-`app/core/periods.py` is the only place a period is defined: N **complete** days on the business's own calendar, ending **yesterday**, compared with the N days before them. Today is left out because it is not over, so a steady business never looks like it is falling in the morning. "Today" on its own is the day so far and is never presented as a verdict. **All time** runs from the first sale or expense to the end of today with nothing to compare. The Overview, the chart, the health strip, Ask, Check my data and the alerts all take their boundaries from it (the alerts use the same window, so an alert's "7 days" and the Overview's agree), and the chart groups by the business's day, never the UTC day.
+`app/core/periods.py` is the only place a period is defined: N days on the business's own calendar, ending **today**, compared with the N complete days before them. Today's records are real data and are counted; the screens note that today is still in progress, because a change read early in the day can look lower than it will end up. "Today" on its own is the day so far and is never presented as a verdict. **All time** runs from the first sale or expense to the end of today with nothing to compare. The Overview, the chart, the health strip, Ask, Check my data and goals' progress all take their boundaries from it. Alerts, the weekly forecast, the daily forecast and goals' pace compare or extrapolate, so they use complete days only and say so (an alert shows the days it covers), and the chart groups by the business's day, never the UTC day.
 
 ## Ask anything, with numbers you can trust
 - **Common questions need no AI** (profit, sales, expenses, top customers, branches, best weekday, forecast, what needs attention).
@@ -88,13 +88,14 @@ A Google Sheet or file link is re-read on every sync and the stored records are 
 - a row you add appears; a figure you edit is **replaced** (it is never counted twice); a row you delete is **removed**. Each record carries a fingerprint of what the source gave, so an edit is recognised even when the receipt number stays the same.
 - Only a source that returns its whole content (a sheet or file link) removes records. A JSON API, a database query, and files arriving by SFTP, email or folder add and update but never remove, because they may show only the latest records.
 - **Safeguard:** if a sync would change more than half of a sizeable source (the link now points at another tab, someone emptied the sheet) nothing is touched; the owner is asked to confirm. Uploads add to what is there; "Replace with a file" (owner) makes the file the whole truth.
-- A record left out of the totals (a date in the future, a negative amount) is listed under its source with the reason. Fix it in the source and sync: the corrected record replaces it.
+- A record left out of the totals (a date in the future, an amount that cannot be converted) is listed under its source with the reason. Fix it in the source and sync: the corrected record replaces it.
 - A time with no timezone (a sheet, a typed entry) is read on the **business's own clock**, so a sale from this afternoon is never "in the future" and days start at local midnight.
 - A source that was checked and had nothing new is still marked as checked; a sync lock left over by a pooled database connection cannot block a source for more than 10 minutes.
 
 ## Alerts follow the data
 - Detection runs a few minutes after new records arrive (not only on a timer), at most once per business per two minutes. Set `DETECT_AFTER_INGEST=false` to turn this off.
-- Live detection compares **whole days**: the day in progress is incomplete and would make every week look like a drop.
+- Live detection compares **whole days**: the day in progress is incomplete and would make every week look like a drop. Today's records are still counted everywhere else.
+- A negative sale or expense (a refund, a credit, a correction) is **counted** like any other record. Check my data points it out as a hint; nothing is left out for being negative.
 - **Spending exceeds sales** is raised from the first days of data, from plain arithmetic on the last 30 days (high when spending is at least 1.25 times sales). It stays quiet if no sales are recorded at all, which usually means the sales source is not connected.
 
 ## Reads data as the business keeps it

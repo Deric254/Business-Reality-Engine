@@ -55,12 +55,13 @@ def run(db: Session, tenant_id: str, period_days: int = 30, now: Optional[dateti
         func.count().filter(E.validation_status.in_(("duplicate", "matched"))),
         func.min(E.timestamp).filter(counted), func.max(E.timestamp).filter(counted),
         func.count().filter(counted, E.timestamp >= since, E.timestamp < now), func.count().filter(counted, E.amount.is_(None)),
+        func.count().filter(counted, E.amount < 0, E.entity.in_(("sale", "expense"))),
     ).filter(E.tenant_id == tenant_id).group_by(E.connector_id)}
 
     findings, out = [], []
     connectors = db.query(Connector).filter(Connector.tenant_id == tenant_id).order_by(Connector.created_at).all()
     for c in connectors:
-        n, failed, matched, first, last, in_view, no_amount = rows.get(c.id, (0, 0, 0, None, None, 0, 0))
+        n, failed, matched, first, last, in_view, no_amount, negatives = rows.get(c.id, (0, 0, 0, None, None, 0, 0, 0))
         out.append({"id": c.id, "name": c.name, "type": c.connector_type, "active": bool(c.is_active), "counted": n, "rejected": failed,
                     "matched": matched, "first_record": _day(first, tz) if first else None, "last_record": _day(last, tz) if last else None,
                     "in_view": in_view, "last_checked": c.last_sync_at.isoformat() if c.last_sync_at else None,
@@ -86,6 +87,9 @@ def run(db: Session, tenant_id: str, period_days: int = 30, now: Optional[dateti
         if n and no_amount > 0.5 * n:
             findings.append(_finding("warning", f"Most of its records ({no_amount:,} of {n:,}) have no amount, so they add nothing to sales or expenses.", c.name,
                                      "Check that the Amount column is mapped correctly."))
+        if negatives:       # a hint only: these are counted in the totals like every other record
+            findings.append(_finding("info", f"{negatives:,} sale or expense record{'s have' if negatives != 1 else ' has'} a negative amount. {'They are' if negatives != 1 else 'It is'} counted in your totals as recorded.", c.name,
+                                     "If they are refunds or credits that is expected. If not, check the Amount column is mapped correctly."))
 
     total = sum(r["counted"] for r in out)
     in_view_total = sum(r["in_view"] for r in out)

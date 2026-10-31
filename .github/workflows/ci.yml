@@ -29,8 +29,8 @@ jobs:
       - run: alembic upgrade head
       - name: Migrations match the models
         run: alembic check
-      - name: No unused imports or undefined names in the application
-        run: ruff check --select F app agent scripts
+      - name: No unused imports or undefined names (application and tests)
+        run: ruff check app agent scripts tests
       - run: python -m pytest tests -q -W ignore
       - name: Dependency vulnerabilities
         run: pip-audit -r requirements.txt
@@ -43,6 +43,7 @@ jobs:
         with: {node-version: 22, cache: npm, cache-dependency-path: frontend/package-lock.json}
       - run: npm ci
       - run: npx tsc -b
+      - run: npm run lint
       - run: npm test
       - run: npm run build
       - run: npm audit --audit-level=high --omit=dev

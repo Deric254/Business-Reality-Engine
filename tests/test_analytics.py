@@ -119,14 +119,30 @@ def test_today_and_last_7_days_are_real_periods(db):
     assert one["period"]["days"] == 1 and one["period"]["first_day"] == one["period"]["last_day"]
     assert one["headline"]["sales"]["current"] == 1000 and one["headline"]["spending"]["current"] == 400
     assert one["insights"] == []                       # today is not over: no "down vs yesterday" verdicts
-    assert week["headline"]["sales"]["current"] == 500 and week["period"]["days"] == 7       # complete days: today's 1000 counts from tomorrow
-    assert week["period"]["last_day"] != one["period"]["last_day"] and week["period"]["includes_today"] is False and one["period"]["includes_today"] is True
+    assert week["headline"]["sales"]["current"] == 1500 and week["period"]["days"] == 7       # today's 1000 counts, with the 500 from 3 days ago; the 9000 is outside the 7 days
+    assert week["period"]["last_day"] == one["period"]["last_day"] and week["period"]["includes_today"] is True and one["period"]["includes_today"] is True
+    assert week["notes"] and "still in progress" in week["notes"][0]                        # today is used, and the screen is told it is not over
 
 
-def test_a_steady_business_is_not_shown_falling_because_today_is_unfinished(db):
-    """10,000 of sales every day and nothing yet today must read 0%, not 'down 14%': the period holds complete days only."""
+def test_a_steady_business_is_not_shown_falling_while_nothing_of_today_has_arrived(db):
+    """10,000 of sales every day and nothing yet today must read 0%, not 'down 14%': with no record of today the period is
+    the N whole days before it (a business whose data arrives after the day closes is never shown N-1 days against N)."""
     t = _make_tenant("anasteady")
     _seed(db, t, [(d, "sale", 10000, "A", "Tea", f"c{d % 5}") for d in range(1, 61)])
     for days in (7, 30):
-        h = build_analytics(db, t, days)["headline"]["sales"]
+        a = build_analytics(db, t, days)
+        h = a["headline"]["sales"]
         assert h["current"] == h["previous"] == 10000 * days and h["change_pct"] == 0
+        assert a["period"]["includes_today"] is False and a["notes"] == []
+
+
+def test_the_first_record_of_today_is_counted_and_the_period_says_the_day_is_unfinished(db):
+    """As soon as today has a record the period ends today: it is counted like every other day, and a note says today is
+    still growing, so a change against the earlier whole days can read lower than it will end up."""
+    t = _make_tenant("anapartial")
+    _seed(db, t, [(d, "sale", 10000, "A", "Tea", f"c{d % 5}") for d in range(1, 61)] + [(0, "sale", 2500, "A", "Tea", "c1")])
+    for days in (7, 30):
+        a = build_analytics(db, t, days)
+        h = a["headline"]["sales"]
+        assert h["current"] == 10000 * (days - 1) + 2500 and h["previous"] == 10000 * days       # today's 2,500 is in
+        assert a["period"]["includes_today"] is True and a["notes"] and "still in progress" in a["notes"][0]

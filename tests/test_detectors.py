@@ -191,7 +191,7 @@ def test_daily_anomaly_mad_floor_on_constant_history(db, tid):
 # ---------- data silence ----------
 def test_silence_create_update_resolve_and_skip_never_synced(db, tid):
     c = connector(db, tid, freq="realtime")
-    never = connector(db, tid, name="Never")           # never sent anything: onboarding, not incident
+    connector(db, tid, name="Never")           # never sent anything: onboarding, not incident
     put(db, tid, c.id, "sale", NOW - dt.timedelta(hours=30), 10); db.commit()
     out = D.detect_data_silence(db, tid, NOW)
     assert len(out) == 1 and out[0].evidence["connector_id"] == c.id

@@ -62,8 +62,8 @@ def _validate_event(event) -> list[str]:
     """Section 12 minimal inline checks. Extend here, not per-connector.
     Accepts anything exposing entity/amount/timestamp/entity_id (payload or row)."""
     errors = []
-    if event.amount is not None and event.amount < 0 and event.entity in {"sale", "expense"}:
-        errors.append("negative amount on sale/expense — check source mapping")
+    # A negative sale or expense (a refund, a credit, a correction) is real data: it is kept and counted. The Data check
+    # points it out so the owner can confirm it; it is never a reason to leave a record out of the totals.
     if event.timestamp > utcnow():
         errors.append("event timestamp is in the future")
     if event.entity_id and len(event.entity_id) > 255:

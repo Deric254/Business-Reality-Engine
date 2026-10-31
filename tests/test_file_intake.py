@@ -1,9 +1,7 @@
 """A file is understood, not just taken: empty rows and columns are ignored and counted, a column is judged by the cells that
 have something in them, a file with no date can be dated as a whole, and the owner is told what was found."""
 import datetime as dt
-import io
 
-import pandas as pd
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import text

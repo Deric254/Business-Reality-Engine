@@ -3,6 +3,18 @@
   "plugins": ["react", "typescript", "oxc"],
   "rules": {
     "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
+    "react/only-export-components": ["warn", { "allowConstantExport": true }],
+    // Pages deliberately show the cached answer for the current business at once, then reset and reload when the
+    // business or the record changes (stale-while-revalidate). That is a state update inside an effect by design,
+    // guarded against late answers, and covered by the component tests.
+    "react/set-state-in-effect": "off"
+  },
+  "overrides": [
+    {
+      // ui.tsx is the shared kit: small components plus their formatting helpers (money, pct, today, compact) and the
+      // useSlow hook, imported from one place by 30 files. Splitting them would only move imports around.
+      "files": ["src/components/ui.tsx"],
+      "rules": { "react/only-export-components": "off" }
+    }
+  ]
 }

@@ -1,7 +1,6 @@
 """The guided connect flow's server side: testing a live source without storing anything, and replacing a lost link."""
 import datetime as dt
 
-import pytest
 from sqlalchemy import text
 
 from app.core.db import engine

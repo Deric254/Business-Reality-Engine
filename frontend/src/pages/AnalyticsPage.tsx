@@ -136,7 +136,7 @@ function Body({ tenant }: { tenant: Tenant }) {
         <div>
           <h1 className="display text-3xl sm:text-4xl">Analytics</h1>
           <p className="text-ink-muted mt-1.5 max-w-prose">
-            {a ? <>{dayShort(a.period.first_day)} to {dayLong(a.period.last_day)}. {a.period.days === 1 ? "Today counts up to the latest records that passed validation." : "Complete days only, ending yesterday on your business's clock, so today's records count from tomorrow. Records that passed validation."}</> : "Loading your figures."}
+            {a ? <>{dayShort(a.period.first_day)} to {dayLong(a.period.last_day)}. {a.period.days === 1 ? "Today counts up to the latest records that passed validation." : "Days on your business's clock, ending today. Today's records are included and the day is still in progress. Records that passed validation."}</> : "Loading your figures."}
           </p>
           <p className="hidden print:block text-sm mt-1">{tenant.name}. Prepared {new Date().toLocaleDateString("en-KE", { day: "numeric", month: "long", year: "numeric" })}.</p>
         </div>
@@ -161,8 +161,9 @@ function Body({ tenant }: { tenant: Tenant }) {
 
       {a && !empty && (
         <div className={`space-y-9 transition-opacity ${stale ? "opacity-60" : ""}`} aria-busy={stale}>
+          {a.notes && a.notes.length > 0 && days > 1 && <p role="note" className="text-xs text-ink-muted -mb-4">{a.notes[0]}</p>}
           {days > 1 && a.headline.sales.current === 0 && a.headline.spending.current === 0 && (
-            <p role="status" className="text-sm text-ink-text bg-panel border border-border rounded-sm px-3 py-2">No complete days are recorded in this period yet. Today's records count from tomorrow; choose Today to see them now.</p>
+            <p role="status" className="text-sm text-ink-text bg-panel border border-border rounded-sm px-3 py-2">Nothing is recorded in this period yet. New records show here after your next sync or upload.</p>
           )}
           {days === 1 && a.headline.sales.current === 0 && a.headline.spending.current === 0 && (
             <p role="status" className="text-sm text-ink-text bg-panel border border-border rounded-sm px-3 py-2">Nothing has been recorded today yet. New records show here after your next sync or upload. The charts below still show your recent history.</p>

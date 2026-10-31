@@ -13,8 +13,8 @@ validated records and nothing else.
   forecast           a straight-line projection of weekly sales, with its fit quality and an honest band
   insights           plain sentences generated from the figures above, never from a model's guess
 
-Every total uses the same period boundaries as the rest of the product (app/core/periods.py: complete days on the
-business's own calendar, ending yesterday; "Today" is the day so far), so a figure here can never disagree with the Overview. Only validated records count.
+Every total uses the same period boundaries as the rest of the product (app/core/periods.py: days on the
+business's own calendar, ending today, so today's records count and are marked as still in progress), so a figure here can never disagree with the Overview. Only validated records count.
 """
 import math
 import re
@@ -371,6 +371,8 @@ def build_analytics(db: Session, tenant_id: str, days: int, now: Optional[dateti
         "daily": [{"date": d.isoformat(), "sales": round(v["sales"], 2), "spending": round(v["spending"], 2)}
                   for d, v in sorted(daily.items()) if d >= heat_from],
         "forecast": forecast,
-        # Today is not over, so comparing it with whole days would only say "down" every morning: no verdicts for it.
+        # Today alone is never judged against whole days. A longer period that ends today says so, because its latest day is still growing.
+        "notes": ["Today is still in progress, so its figures are growing and a change against the earlier period can read lower than it will end up."]
+                 if per.last_day == per.today and not per.all_time else [],
         "insights": [] if days == 1 else _insights(headline, branches, products, spending, weekdays, customers, forecast, fmt, days),
     }

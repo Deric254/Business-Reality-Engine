@@ -37,7 +37,7 @@ def test_a_source_that_was_never_synced_and_one_that_returned_nothing_are_named(
     r = _check(client, t, h)
     assert any(f["source"] == "My sheet" and "never been synced" in f["text"] for f in r["findings"])
     _sheet()                                                                                     # only a header: the sheet is empty
-    resp = client.post(f"/api/connectors/{cid}/sync-url?tenant_id={t}", headers=h)
+    client.post(f"/api/connectors/{cid}/sync-url?tenant_id={t}", headers=h)
     r = _check(client, t, h)
     assert r["sources"][0]["status"] == "failed" and r["sources"][0]["error"]
     assert any("The last sync failed" in x for x in _texts(r, "problem"))
@@ -120,3 +120,17 @@ def test_the_last_7_days_view_suggests_only_a_wider_period(client, server):
     narrow = _check(client, t, h, days=7)
     assert narrow["range"]["in_view"] == 0 and narrow["range"]["suggest_days"] == 30
     assert _check(client, t, h, days=30)["range"]["suggest_days"] is None          # something is in view: nothing to suggest
+
+
+def test_a_negative_amount_is_counted_and_only_hinted_at(client, server):
+    """A refund or credit is real data: it stays in the totals, and the check points it out without calling it a problem."""
+    t, h = make_owner(client, "dcneg")
+    cid = mk(client, t, h, name="Sheet", connector_type="url", config={"url": server + "/sheet.csv", "auth_type": "none", **CFG}).json()["id"]
+    _sheet((_day(3), 1000, "Meru"), (_day(2), -200, "Meru"), (_day(1), 500, "Meru"))
+    assert client.post(f"/api/connectors/{cid}/sync-url?tenant_id={t}", headers=h).status_code == 200
+    r = _check(client, t, h)
+    assert r["sources"][0]["counted"] == 3 and r["sources"][0]["rejected"] == 0                 # nothing was left out
+    assert any("1 sale or expense record has a negative amount" in x for x in _texts(r, "info"))
+    assert r["verdict"] == "ok"                                                                 # a hint, not a warning
+    k = client.get(f"/api/questions/kpis?tenant_id={t}&period_days=30", headers=h).json()
+    assert k["revenue"]["current"] == 1300                                                      # 1000 - 200 + 500
