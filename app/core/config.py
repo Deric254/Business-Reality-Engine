@@ -83,8 +83,6 @@ class Settings:
         # unset, unlike API_KEY's dev-mode fallback — a new sensitive
         # endpoint category should default to unavailable, not open.
         self.ADMIN_API_KEY: str = os.getenv("ADMIN_API_KEY", "")
-        # Lets the owner's CRM read the short alert feed of businesses that opted in (app/api/advisor_feed.py). Unset means the feed does not exist.
-        self.ADVISOR_FEED_KEY: str = os.getenv("ADVISOR_FEED_KEY", "")
 
         # Section 47/51 performance: DB connection pool, tunable per
         # deployment. Defaults are conservative-but-real, not SQLAlchemy's

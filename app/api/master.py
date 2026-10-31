@@ -135,6 +135,21 @@ def issue_licences(body: IssueIn, request: Request, db: Session = Depends(get_db
     return {"keys": keys, "note": "These keys are shown once and cannot be recovered. Copy them now."}
 
 
+class PairIn(BaseModel):
+    key: str = Field(min_length=32, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+@router.post("/advisor-keys")
+def pair_advisor(body: PairIn, request: Request, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+    """Pair the owner's CRM: it made up a key and passed it along when the owner opened this system from it. Only the platform owner's own
+    signed-in session can do this, so nobody else can hand the system a key."""
+    from app.api.advisor_feed import register_key
+    user = master_user(authorization, db)
+    register_key(db, body.key)
+    audit.record(db, "master.advisor_paired", request=request, tenant_id=user.tenant_id, actor_user_id=user.id)
+    return {"paired": True}
+
+
 class RevokeIn(BaseModel):
     reason: Optional[str] = Field(default=None, max_length=300)
 

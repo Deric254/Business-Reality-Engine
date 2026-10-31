@@ -106,7 +106,7 @@ async def handle_db_error(request: Request, exc: SQLAlchemyError):
 # /api/system needs the admin key. Webhooks use per-connector tokens.
 app.include_router(health.router, prefix="/api/health", tags=["health"])
 app.include_router(ecosystem_api.router, prefix="/api/ecosystem", tags=["ecosystem"])   # public, secret-free capability card
-app.include_router(advisor_feed_api.router, prefix="/api/advisor", tags=["advisor"])   # key-protected; absent unless ADVISOR_FEED_KEY is set
+app.include_router(advisor_feed_api.router, prefix="/api/advisor", tags=["advisor"])   # key-protected; absent until the owner's CRM has paired
 app.include_router(
     connectors.router, prefix="/api/connectors", tags=["connectors"],
 )

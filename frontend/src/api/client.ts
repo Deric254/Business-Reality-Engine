@@ -658,6 +658,7 @@ export const masterApi = {
   overview: () => request<MasterOverview>("/api/master/overview"),
   accounts: () => request<MasterAccount[]>("/api/master/accounts"),
   issue: (count: number, label: string, price: number, ref?: string) => request<{ keys: { id: string; key: string; hint: string }[] }>("/api/master/licences", { method: "POST", body: JSON.stringify({ count, label, price, ...(ref ? { ref } : {}) }) }),
+  pairAdvisor: (key: string) => request<{ paired: boolean }>("/api/master/advisor-keys", { method: "POST", body: JSON.stringify({ key }) }),
   revoke: (id: string, reason: string) => request<{ status: string }>(`/api/master/licences/${id}/revoke`, { method: "POST", body: JSON.stringify({ reason }) }),
   reinstate: (id: string) => request<{ status: string }>(`/api/master/licences/${id}/reinstate`, { method: "POST" }),
   demoBusinesses: () => request<{ businesses: DemoBusiness[] }>("/api/master/demo-businesses", { method: "POST", body: JSON.stringify({}) }),

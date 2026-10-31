@@ -34,6 +34,17 @@ class Licence(Base):
                       Index("ix_licences_status", "status"))
 
 
+class AdvisorKey(Base):
+    """A key the owner's CRM was paired with (see app/api/advisor_feed.py). Only a hash is kept, so the database never holds a usable key."""
+    __tablename__ = "advisor_keys"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    key_hash = Column(String(64), nullable=False)
+    created_at = Column(DateTime, default=utcnow)
+
+    __table_args__ = (Index("ix_advisor_keys_hash", "key_hash", unique=True),)
+
+
 class LicencePayment(Base):
     """The ledger: every amount received for a licence. Revenue figures are sums of these rows, nothing estimated."""
     __tablename__ = "licence_payments"

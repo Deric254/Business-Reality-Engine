@@ -12,7 +12,19 @@ function Stat({ label, value, busy }: { label: string; value: string; busy: bool
   return <div className="min-w-0"><div className="text-sm text-ink-muted">{label}</div>{busy ? <Skeleton className="h-9 w-28 mt-1.5" /> : <div className="figure text-3xl mt-0.5 kpi-figure">{value}</div>}</div>;
 }
 
+/** Pairs the owner's CRM once, if it opened this page with a key. Quiet when there is none. */
+function usePairing(): boolean {
+  const [paired, setPaired] = useState(false);
+  useEffect(() => {
+    let key: string | null = null;
+    try { key = sessionStorage.getItem("bre.pendingFeed"); sessionStorage.removeItem("bre.pendingFeed"); } catch { /* none */ }
+    if (key) masterApi.pairAdvisor(key).then(() => setPaired(true)).catch(() => undefined);
+  }, []);
+  return paired;
+}
+
 function Body() {
+  const paired = usePairing();
   const [ov, setOv] = useState<MasterOverview | null>(null);
   const [rows, setRows] = useState<MasterAccount[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +49,7 @@ function Body() {
     <>
       <h1 className="display text-3xl sm:text-4xl">Licences</h1>
       {error && <Notice error={error} />}
+      {paired && <p role="status" className="text-sm text-opportunity">Your CRM is now connected for alerts from businesses that choose to share them.</p>}
       <Card className="!p-5 sm:!p-7 space-y-6">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-6">
           <Stat busy={wait} label="Monthly recurring" value={ov ? usd(ov.monthly_recurring) : ""} />

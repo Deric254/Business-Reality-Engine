@@ -12,8 +12,6 @@ services:
         sync: false         # paste your Neon connection string (ends ?sslmode=require)
       - key: ADMIN_API_KEY
         generateValue: true # needed once, to create your first business
-      - key: ADVISOR_FEED_KEY
-        sync: false         # optional: lets your CRM read the alert feed of businesses that chose to share it (docs/ECOSYSTEM.md)
       - key: LICENCE_ENFORCED
         value: "false"      # switch to "true" after you create the master account (see README, Licences)
       - key: LICENCE_GRACE_DAYS

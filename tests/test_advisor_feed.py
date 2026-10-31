@@ -1,23 +1,20 @@
 """The advisor feed: only licensed-from-a-lead businesses that switched it on, only serious open alerts, only the headline, only with the key."""
 import uuid
 
-import pytest
 
-from app.core.config import get_settings
 from app.core.db import SessionLocal
+from app.api.advisor_feed import key_hash, register_key
 from app.models.alerts import Alert, AlertSeverity, AlertState
+from app.models.licence import AdvisorKey
 from tests.conftest import bearer
+from tests.test_block_c import make_owner
 from tests import test_licensing
 from tests.test_licensing import activate, issue
 
 master = test_licensing.master            # the same fixture: a signed-in platform owner
 
-KEY = {"X-Advisor-Key": "feed-key-for-tests"}
-
-
-@pytest.fixture(autouse=True)
-def feed_key(monkeypatch):
-    monkeypatch.setattr(get_settings(), "ADVISOR_FEED_KEY", "feed-key-for-tests")
+PAIR = uuid.uuid4().hex + uuid.uuid4().hex          # new each run, so the shared test database never already knows it
+KEY = {"X-Advisor-Key": PAIR}
 
 
 def licensed_business(client, h, ref):
@@ -35,17 +32,30 @@ def raise_alert(tenant_id, title, severity=AlertSeverity.high, state=AlertState.
 
 
 def feed(client, **params):
+    with SessionLocal() as db:
+        register_key(db, PAIR)                      # a paired CRM (the pairing itself is tested above)
     r = client.get("/api/advisor/alerts", params=params, headers=KEY)
     assert r.status_code == 200, r.text
     return r.json()["alerts"]
 
 
-def test_the_feed_does_not_exist_without_the_key(client, monkeypatch):
+def test_the_feed_does_not_exist_until_the_owner_pairs_a_crm_and_only_the_owner_can(client, master):
+    other = uuid.uuid4().hex + uuid.uuid4().hex
     assert client.get("/api/advisor/alerts").status_code == 404
-    assert client.get("/api/advisor/alerts", headers={"X-Advisor-Key": "wrong"}).status_code == 404
-    monkeypatch.setattr(get_settings(), "ADVISOR_FEED_KEY", "")
-    assert client.get("/api/advisor/alerts", headers={"X-Advisor-Key": ""}).status_code == 404       # unset key: nothing opens it
+    assert client.get("/api/advisor/alerts", headers=KEY).status_code == 404                           # nobody paired yet with this key
+    _, ordinary = make_owner(client, "ordinary")
+    for h in (None, ordinary):                                                                           # no login, or an ordinary business: refused, nothing stored
+        assert client.post("/api/master/advisor-keys", json={"key": PAIR}, headers=h or {}).status_code in (404, 401, 422)
     assert client.get("/api/advisor/alerts", headers=KEY).status_code == 404
+    for bad in ("short", "has spaces " * 5, "x" * 200):
+        assert client.post("/api/master/advisor-keys", json={"key": bad}, headers=master[1]).status_code == 422
+    assert client.post("/api/master/advisor-keys", json={"key": PAIR}, headers=master[1]).json() == {"paired": True}
+    assert client.post("/api/master/advisor-keys", json={"key": PAIR}, headers=master[1]).status_code == 200   # again: nothing changes
+    assert client.get("/api/advisor/alerts", headers=KEY).status_code == 200
+    assert client.get("/api/advisor/alerts", headers={"X-Advisor-Key": other}).status_code == 404
+    assert client.get("/api/advisor/alerts", headers={"X-Advisor-Key": PAIR.upper()}).status_code == 404    # keys are case sensitive
+    with SessionLocal() as db:                                                                           # only a hash is stored
+        assert not db.query(AdvisorKey).filter(AdvisorKey.key_hash == PAIR).first() and db.query(AdvisorKey).filter(AdvisorKey.key_hash == key_hash(PAIR)).first()
 
 
 def test_off_by_default_and_only_after_the_business_turns_it_on(client, master):
@@ -92,6 +102,7 @@ def test_since_returns_only_newer_alerts_and_bad_dates_are_refused(client, maste
     assert not [a for a in feed(client, since=first[0]["at"]) if a["ref"] == ref]
     raise_alert(tid, "second")
     assert [a["headline"] for a in feed(client, since=first[0]["at"]) if a["ref"] == ref] == ["second"]
+    feed(client)
     assert client.get("/api/advisor/alerts", params={"since": "yesterday"}, headers=KEY).status_code == 400
 
 
