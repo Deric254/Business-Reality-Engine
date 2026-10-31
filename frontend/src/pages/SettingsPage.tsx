@@ -8,6 +8,7 @@ import { SecurityQuestionsForm } from "../components/SecurityQuestionsForm";
 import { getClaims } from "../api/session";
 import { AiProviders } from "../components/AiProviders";
 import { BusinessArea } from "../components/BusinessArea";
+import { AdvisorSharing } from "../components/AdvisorSharing";
 import { localHourToUtc, localToUtc, utcHourToLocal, utcToLocal } from "../lib/zone";
 
 const SEVERITIES = ["critical", "high", "medium", "informational"];
@@ -189,6 +190,8 @@ function SettingsBody() {
         {notice && <p role="status" className="text-sm text-opportunity">{notice}</p>}
 
         {tenant && isOwner && <BusinessArea />}
+
+        {tenant && isOwner && <AdvisorSharing />}
 
         {tenant && (
           <section aria-labelledby="ai">

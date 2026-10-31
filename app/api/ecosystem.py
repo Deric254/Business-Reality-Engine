@@ -22,5 +22,7 @@ def card():
         "accepts": ["events.webhook", "events.batch", "files.upload"],
         "health": "/api/health/",
         # Ready-made links other systems may offer their owner: the page to open, with {name} replaced. Relative to this system's address.
-        "handoffs": {"licence.issue": "/master?issue_to={name}"},
+        "handoffs": {"licence.issue": "/master?issue_to={name}&ref={ref}"},
+        # Where a system may read from this one, and under what rules (a key the owner holds; only businesses that opted in). Paths on this system.
+        "feeds": {"advisor.alerts": "/api/advisor/alerts"},
     }

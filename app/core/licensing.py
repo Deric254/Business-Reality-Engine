@@ -49,12 +49,12 @@ def hash_key(key: str) -> str:
     return hashlib.sha256(normalize(key).encode()).hexdigest()
 
 
-def issue(db: Session, count: int, label: Optional[str], price_cents: int, currency: str, created_by: Optional[str]) -> list[dict]:
+def issue(db: Session, count: int, label: Optional[str], price_cents: int, currency: str, created_by: Optional[str], source_ref: Optional[str] = None) -> list[dict]:
     out = []
     for _ in range(count):
         key = new_key()
         lic = Licence(key_hash=hash_key(key), key_hint=f"{key[:8]}…{key[-4:]}", label=label, status="unused",
-                      price_cents=price_cents, currency=currency, created_by_user_id=created_by)
+                      price_cents=price_cents, currency=currency, created_by_user_id=created_by, source_ref=source_ref)
         db.add(lic); db.flush()
         out.append({"id": lic.id, "key": key, "hint": lic.key_hint})
     db.commit()

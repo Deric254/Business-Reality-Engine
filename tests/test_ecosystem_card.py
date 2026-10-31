@@ -19,3 +19,5 @@ def test_card_is_public_valid_and_secret_free():
 def test_handoffs_are_plain_paths_on_this_system():
     h = ecosystem.card()["handoffs"]
     assert h and all(k and v.startswith("/") and not v.startswith("//") and ":" not in v.split("?")[0] for k, v in h.items())
+    f = ecosystem.card()["feeds"]
+    assert f and all(k and v.startswith("/") and not v.startswith("//") for k, v in f.items())

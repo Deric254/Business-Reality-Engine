@@ -38,6 +38,7 @@ class TenantSettings(BaseModel):
     country: Optional[str] = None
     language: str = "en"
     area: Optional[str] = None
+    share_alerts_with_advisor: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -49,6 +50,7 @@ class TenantSettingsUpdate(BaseModel):
     country: Optional[str] = None
     language: Optional[str] = None
     area: Optional[str] = None
+    share_alerts_with_advisor: Optional[bool] = None
 
 
 def _me(authorization: Optional[str], need_owner: bool = False):
@@ -81,6 +83,8 @@ def update_my_tenant(payload: TenantSettingsUpdate, db: Session = Depends(get_db
             raise HTTPException(400, "country must be a 2-letter ISO code such as KE")
     if "language" in data and data["language"] not in SUPPORTED_LANGUAGES:
         raise HTTPException(400, f"language must be one of {sorted(SUPPORTED_LANGUAGES)}")
+    if "share_alerts_with_advisor" in data and data["share_alerts_with_advisor"] is None:
+        raise HTTPException(400, "share_alerts_with_advisor must be true or false")
     if "name" in data and not (data["name"] or "").strip():
         raise HTTPException(400, "name cannot be empty")
     if "area" in data:

@@ -2,7 +2,7 @@
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-EXPECTED_REVISION = "c4d8f2a6b731"          # the newest alembic revision; a test fails if a migration is added without updating it
+EXPECTED_REVISION = "e7a9c2d4f618"          # the newest alembic revision; a test fails if a migration is added without updating it
 
 
 def status(db: Session) -> dict:

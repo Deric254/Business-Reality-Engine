@@ -27,6 +27,7 @@ class Licence(Base):
     revoked_at = Column(DateTime, nullable=True)
     revoked_reason = Column(String, nullable=True)
     paid_through = Column(DateTime, nullable=True)               # the end of the last period a payment was recorded for
+    source_ref = Column(String(64), nullable=True)               # who in the issuer's own records asked for it (a lead id from another system); only used to match, never shown to the business
 
     __table_args__ = (Index("ix_licences_key_hash", "key_hash", unique=True),
                       Index("ix_licences_tenant", "tenant_id", unique=True),

@@ -123,12 +123,14 @@ class IssueIn(BaseModel):
     count: int = Field(default=1, ge=1, le=100)
     label: Optional[str] = Field(default=None, max_length=120)
     price: float = Field(default=1.0, ge=0, le=100000)
+    ref: Optional[str] = Field(default=None, max_length=64)      # which lead in another of the owner's systems this is for (see advisor_feed)
 
 
 @router.post("/licences")
 def issue_licences(body: IssueIn, request: Request, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
     user = master_user(authorization, db)
-    keys = licensing.issue(db, body.count, (body.label or "").strip() or None, int(round(body.price * 100)), "USD", user.id)
+    keys = licensing.issue(db, body.count, (body.label or "").strip() or None, int(round(body.price * 100)), "USD", user.id,
+                          source_ref=(body.ref or "").strip() or None)
     audit.record(db, "master.licences_issued", request=request, tenant_id=user.tenant_id, actor_user_id=user.id, detail={"count": body.count, "label": body.label})
     return {"keys": keys, "note": "These keys are shown once and cannot be recovered. Copy them now."}
 

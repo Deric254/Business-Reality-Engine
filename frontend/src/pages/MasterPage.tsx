@@ -19,13 +19,14 @@ function Body() {
   const [keys, setKeys] = useState<{ id: string; key: string }[] | null>(null);
   const [demos, setDemos] = useState<DemoBusiness[] | null>(null);
   // A link from another system (the CRM's "won" button) can pre-fill who the key is for. It only fills the box; the owner still presses Issue.
+  const [ref] = useState(() => (new URLSearchParams(window.location.search).get("ref") ?? "").slice(0, 64));   // which lead in the owner's CRM this key is for; only used to match later
   const [issue, setIssue] = useState(() => ({ count: "1", label: (new URLSearchParams(window.location.search).get("issue_to") ?? "").slice(0, 120), price: "1" }));
   const [busy, setBusy] = useState(false);
   const load = useCallback(() => { Promise.all([masterApi.overview(), masterApi.accounts()]).then(([o, a]) => { setOv(o); setRows(a); }).catch((e) => setError(e.message)); }, []);
   useEffect(() => { load(); }, [load]);
 
   async function act(fn: () => Promise<unknown>) { setBusy(true); setError(null); try { await fn(); load(); } catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(false); } }
-  const issueKeys = () => act(async () => { const r = await masterApi.issue(Math.max(1, Number(issue.count) || 1), issue.label.trim(), Number(issue.price) || 0); setKeys(r.keys); });
+  const issueKeys = () => act(async () => { const r = await masterApi.issue(Math.max(1, Number(issue.count) || 1), issue.label.trim(), Number(issue.price) || 0, ref); setKeys(r.keys); });
   const revoke = (a: MasterAccount) => { const why = window.prompt(`Revoke ${a.business ?? a.hint}? They lose access at once. Reason (optional):`); if (why !== null) void act(() => masterApi.revoke(a.id, why)); };
   const reinstate = (a: MasterAccount) => { if (window.confirm(`Reinstate ${a.business ?? a.hint}? They get access back on their next request.`)) void act(() => masterApi.reinstate(a.id)); };
   const makeDemos = () => act(async () => setDemos((await masterApi.demoBusinesses()).businesses));

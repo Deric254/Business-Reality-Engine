@@ -49,6 +49,8 @@ class Tenant(Base):
     # Bumped every time this business's records change (see app.core.cache.invalidate_tenant). Open screens poll it
     # (app.api.live) and reload the moment it moves, so nobody keeps looking at figures from before a sync.
     data_version = Column(Integer, nullable=False, default=0, server_default="0")
+    # The business's own switch, off unless the owner turns it on: lets the person who set them up hear about their serious alerts. See app/api/advisor_feed.py.
+    share_alerts_with_advisor = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime, default=utcnow)
 
 

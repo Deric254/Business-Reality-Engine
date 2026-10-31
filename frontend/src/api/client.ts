@@ -467,7 +467,7 @@ async function requestVoid(path: string, method: string): Promise<void> {
 }
 
 // ---- tenant settings ----
-export interface TenantSettings { id: string; name: string; timezone: string; base_currency: string; country: string | null; language: string; area: string | null }
+export interface TenantSettings { id: string; name: string; timezone: string; base_currency: string; country: string | null; language: string; area: string | null; share_alerts_with_advisor: boolean }
 export const tenantApi = {
   me: () => request<TenantSettings>("/api/tenants/me"),
   update: (patch: Partial<Omit<TenantSettings, "id">>) => request<TenantSettings>("/api/tenants/me", { method: "PATCH", ...json(patch) }),
@@ -657,7 +657,7 @@ export const masterApi = {
   whoami: () => request<{ master: boolean }>("/api/master/whoami").then(() => true).catch(() => false),
   overview: () => request<MasterOverview>("/api/master/overview"),
   accounts: () => request<MasterAccount[]>("/api/master/accounts"),
-  issue: (count: number, label: string, price: number) => request<{ keys: { id: string; key: string; hint: string }[] }>("/api/master/licences", { method: "POST", body: JSON.stringify({ count, label, price }) }),
+  issue: (count: number, label: string, price: number, ref?: string) => request<{ keys: { id: string; key: string; hint: string }[] }>("/api/master/licences", { method: "POST", body: JSON.stringify({ count, label, price, ...(ref ? { ref } : {}) }) }),
   revoke: (id: string, reason: string) => request<{ status: string }>(`/api/master/licences/${id}/revoke`, { method: "POST", body: JSON.stringify({ reason }) }),
   reinstate: (id: string) => request<{ status: string }>(`/api/master/licences/${id}/reinstate`, { method: "POST" }),
   demoBusinesses: () => request<{ businesses: DemoBusiness[] }>("/api/master/demo-businesses", { method: "POST", body: JSON.stringify({}) }),

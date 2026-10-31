@@ -11,7 +11,7 @@ from app.core.scheduler import start_scheduler, stop_scheduler
 from app.core.keepalive import start_keepalive, stop_keepalive
 from app.spa import mount_spa, SPA_CSP
 from app.core.rate_limit import RateLimitMiddleware
-from app.api import health, connectors, events, alerts, entities, detection, coverage, cases, questions, tenants, forecasting, simulation, webhooks, agent as agent_api, system, auth, notifications, monitoring, audit as audit_api, users, business, accuracy as accuracy_api, capture, ai as ai_api, master as master_api, live as live_api, goals as goals_api, demo as demo_api, ecosystem as ecosystem_api
+from app.api import health, connectors, events, alerts, entities, detection, coverage, cases, questions, tenants, forecasting, simulation, webhooks, agent as agent_api, system, auth, notifications, monitoring, audit as audit_api, users, business, accuracy as accuracy_api, capture, ai as ai_api, master as master_api, live as live_api, goals as goals_api, demo as demo_api, ecosystem as ecosystem_api, advisor_feed as advisor_feed_api
 
 # Without this, every logger.info() call in the app is silently dropped —
 # Python's root logger defaults to WARNING with no handler configured.
@@ -106,6 +106,7 @@ async def handle_db_error(request: Request, exc: SQLAlchemyError):
 # /api/system needs the admin key. Webhooks use per-connector tokens.
 app.include_router(health.router, prefix="/api/health", tags=["health"])
 app.include_router(ecosystem_api.router, prefix="/api/ecosystem", tags=["ecosystem"])   # public, secret-free capability card
+app.include_router(advisor_feed_api.router, prefix="/api/advisor", tags=["advisor"])   # key-protected; absent unless ADVISOR_FEED_KEY is set
 app.include_router(
     connectors.router, prefix="/api/connectors", tags=["connectors"],
 )
