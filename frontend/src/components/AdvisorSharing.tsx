@@ -21,7 +21,7 @@ export function AdvisorSharing() {
     <section aria-labelledby="advisor">
       <h2 id="advisor" className="text-base font-semibold mb-1">Tell my DericBI advisor about serious problems</h2>
       <p className="text-sm text-ink-muted mb-3">
-        Only if this was set up for you by DericBI. When it is on, they see the headline of your critical or high alerts (for example "Westlands sales are down 15%") so they can call you.
+        Only if this was set up for you by DericBI. When it is on, they see the headline of your critical or high alerts (for example "Westlands sales are down 15%", so it can name a branch or product and include a percentage) so they can call you.
         They never see your sales, customers or other records. It is off until you turn it on, and you can turn it off at any time.
       </p>
       <label className="flex items-center gap-2 text-sm font-medium">
