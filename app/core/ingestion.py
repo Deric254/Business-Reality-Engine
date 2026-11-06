@@ -129,20 +129,28 @@ def _same_amount(a, b) -> bool:
     return (a is None and b is None) or (a is not None and b is not None and abs(float(a) - float(b)) < 0.005)
 
 
-def _find_cross_source_duplicates(db: Session, chunk: list[NormalizedEvent], rows: list[dict]) -> None:
+def _find_cross_source_duplicates(db: Session, chunk: list[NormalizedEvent], rows: list[dict], connectors: dict[str, Connector]) -> None:
     """Mark rows that are the same record as one ALREADY counted from a different source: same entity and id, same
     amount, within a day of each other. Needs a shared id (a receipt or order number); without one there is no safe
-    way to tell two real sales apart, so those rows are never merged."""
-    keys = {(p.tenant_id, p.entity, p.entity_id) for p in chunk if p.entity_id}
-    if not keys or not db.query(Connector.id).filter(Connector.tenant_id.in_({k[0] for k in keys}), Connector.id.notin_({p.connector_id for p in chunk})).first():
+    way to tell two real sales apart, so those rows are never merged.
+    A connected system (smePro, Imara, Pharmacy ERP) is never part of this: its ids are its own row numbers (sale 7 in
+    one system is a different sale from sale 7 in another), and its copy must add up exactly to the system itself."""
+    def mirrored(connector_id: str) -> bool:
+        c = connectors.get(connector_id)
+        return bool(c and c.connector_type == "system")
+    keys = {(p.tenant_id, p.entity, p.entity_id) for p in chunk if p.entity_id and not mirrored(p.connector_id)}
+    if not keys or not db.query(Connector.id).filter(Connector.tenant_id.in_({k[0] for k in keys}), Connector.id.notin_({p.connector_id for p in chunk}),
+                                                     Connector.connector_type != "system").first():
         return                                                        # nothing to compare with: no other source
+    system_ids = {c for (c,) in db.query(Connector.id).filter(Connector.tenant_id.in_({k[0] for k in keys}), Connector.connector_type == "system")}
     originals: dict[tuple, list] = {}
     for ev in db.query(BusinessEvent).filter(
             BusinessEvent.tenant_id.in_({k[0] for k in keys}), BusinessEvent.validation_status == "validated",
             BusinessEvent.entity_id.in_({k[2] for k in keys})):          # one column, so the (tenant, id) index serves it
-        originals.setdefault((ev.tenant_id, ev.entity, ev.entity_id), []).append(ev)
+        if ev.connector_id not in system_ids:
+            originals.setdefault((ev.tenant_id, ev.entity, ev.entity_id), []).append(ev)
     for p, row in zip(chunk, rows):
-        if row["validation_status"] != "validated" or not p.entity_id:
+        if row["validation_status"] != "validated" or not p.entity_id or mirrored(p.connector_id):
             continue
         for ev in originals.get((p.tenant_id, p.entity, p.entity_id), []):
             if ev.connector_id != p.connector_id and _same_amount(ev.amount, row["amount"]) and abs(ev.timestamp - row["timestamp"]) < timedelta(days=1):
@@ -203,7 +211,7 @@ def _ingest_chunk(db: Session, chunk: list[NormalizedEvent], connectors: dict[st
             "validation_status": "failed" if errors else "validated",
             "validation_errors": errors or None,
         })
-    _find_cross_source_duplicates(db, chunk, rows)
+    _find_cross_source_duplicates(db, chunk, rows, connectors)
     # Uniform keys across rows (required for executemany).
     all_keys = {k for r in rows for k in r}
     for r in rows:

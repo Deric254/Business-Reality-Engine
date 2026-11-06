@@ -12,16 +12,6 @@ import { useT } from "../lib/i18n";
 import { useOnLiveChange } from "../lib/liveContext";
 import type { Tenant } from "../api/client";
 
-/** Today usually has no (or partial) sales yet; a last day with no sales would draw a false crash to zero, so leave it out. */
-function chartDays(t: Trend): Trend {
-  const last = t.current[t.current.length - 1];
-  if (last && last.sales === 0) {
-    const n = t.current.length - 1;
-    return { ...t, current: t.current.slice(0, n), previous: t.previous.slice(0, n) };
-  }
-  return t;
-}
-
 const PERIODS = [7, 30, 90, 180, 0];                       // 0 = all time
 const periodName = (d: number) => (d === 0 ? "all time" : `last ${d} days`);
 const shortDay = (iso: string, year = false) => new Date(iso + "T00:00:00").toLocaleDateString("en-KE", { day: "numeric", month: "short", ...(year ? { year: "numeric" } : {}) });
@@ -192,7 +182,7 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
             <Kpi busy={busy} days={days} cur={cur} label={`Profit, ${periodName(days)}`} value={kpis.profit.current} delta={kpis.profit.change_pct} goodWhen="up" />
           </div>
           {!busy && kpis && <p className="text-xs text-ink-muted -mt-3 kpi-figure">{shortDay(kpis.period.first_day, true)} to {shortDay(kpis.period.last_day, true)}, {kpis.period.includes_today ? (days === 1 ? "the day so far" : "today included; it is still in progress, so the change can read lower than it will end up") : "complete days on your business's clock"}.</p>}
-          {busy ? <Skeleton className="h-[260px] w-full" /> : trend && <TrendChart current={chartDays(trend).current} previous={chartDays(trend).previous} bucket={trend.bucket} />}
+          {busy ? <Skeleton className="h-[260px] w-full" /> : trend && <TrendChart current={trend.current} previous={trend.previous} bucket={trend.bucket} unfinished={trend.period.includes_today} />}
           {!busy && kpis.largest_contributor && kpis.profit.change_pct != null && <p className="text-sm text-ink-muted border-t border-border pt-4">Biggest effect on your profit compared with the {days} days before: <span className="font-semibold text-ink-text">{kpis.largest_contributor}</span>.</p>}
         </Card>
       )}

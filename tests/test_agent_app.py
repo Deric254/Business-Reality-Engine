@@ -102,6 +102,44 @@ def test_a_second_copy_does_not_start(ui):
         A.build_server(home, [], port=port)
 
 
+def test_a_second_launch_leaves_the_key_alone_and_opens_the_running_page(ui, monkeypatch):
+    """Regression: the second launch used to overwrite ui.key before noticing the port was taken, so the page it opened was refused."""
+    call, srv, home, port = ui
+    before = (home / "ui.key").read_text()
+    with pytest.raises(OSError):
+        A.build_server(home, [], port=port)
+    assert (home / "ui.key").read_text() == before
+    opened = []
+    monkeypatch.setattr(A.webbrowser, "open", opened.append)
+    monkeypatch.setattr(A, "PORT", port)
+    monkeypatch.setattr(A, "home_dir", lambda: home)
+    assert A.main([]) == 0
+    assert opened and opened[0].endswith(f"?k={before}")
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    c.request("GET", f"/?k={before}", headers={"Host": f"127.0.0.1:{port}"})
+    assert c.getresponse().status == 302
+
+
+def test_an_older_agent_that_lost_its_key_is_still_reachable(ui):
+    """The key file decides: whatever it holds opens the page, even if an older copy rewrote it."""
+    call, srv, home, port = ui
+    (home / "ui.key").write_text("rewritten-by-an-old-copy")
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    c.request("GET", "/?k=rewritten-by-an-old-copy", headers={"Host": f"127.0.0.1:{port}"})
+    assert c.getresponse().status == 302
+
+
+def test_a_stranger_on_the_port_is_reported_not_silently_ignored(tmp_path, monkeypatch):
+    import socket
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); s.listen(1)
+    port = s.getsockname()[1]
+    lines = []
+    monkeypatch.setattr(A.webbrowser, "open", lambda u: lines.append("opened"))
+    assert A.show_running(tmp_path, port, lines.append) is False
+    assert lines and "opened" not in lines and "another program" in lines[0]
+    s.close()
+
+
 def test_a_system_added_while_running_starts_by_itself(client, tmp_path):
     rig = Rig(client, tmp_path, "imara", imara_db)
     cfg = {"base_url": "http://localhost", "systems": [], "state_file": str(tmp_path / "loop.db"), "poll_seconds": 0.05, "heartbeat_seconds": 0, "force_pass_seconds": 0}
