@@ -43,6 +43,14 @@ describe("Software flow", () => {
     expect(screen.getByText(/open the helper app and paste your code/)).toBeInTheDocument();
   });
 
+  it("always shows the download button, and says so when the newest version is still being prepared", async () => {
+    api.list.mockResolvedValueOnce(NONE).mockResolvedValue([sys("smepro", "smePro", { connected: true, connector_id: "c1", state: "waiting", download_url: "https://example.com/RealityAgent.exe", download_ready: false }), ...NONE.slice(1)]);
+    renderFlow();
+    await pick("smePro");
+    expect(await screen.findByRole("link", { name: /Download the helper app/ })).toHaveAttribute("href", "https://example.com/RealityAgent.exe");
+    expect(screen.getByText(/still being prepared/)).toBeInTheDocument();
+  });
+
   it("says plainly that there is nothing to download yet, instead of sending people away", async () => {
     api.list.mockResolvedValueOnce(NONE).mockResolvedValue([sys("smepro", "smePro", { connected: true, connector_id: "c1", state: "waiting" }), ...NONE.slice(1)]);
     renderFlow();

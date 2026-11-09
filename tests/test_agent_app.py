@@ -246,7 +246,7 @@ def test_download_link_is_found_by_itself_and_never_points_at_a_missing_file(mon
     monkeypatch.delenv("AGENT_DOWNLOAD_URL", raising=False)
     monkeypatch.delenv("AGENT_GITHUB_REPO", raising=False)
     monkeypatch.delenv("RENDER_GIT_REPO_SLUG", raising=False)
-    ag._DL_CACHE.update(key=None, url=None, until=0.0)
+    ag._DL_CACHE.update(key=None, url=None, ready=False, until=0.0)
     assert ag.agent_download_url() is None                                    # no repository known: no link
     calls = []
 
@@ -260,18 +260,18 @@ def test_download_link_is_found_by_itself_and_never_points_at_a_missing_file(mon
 
     monkeypatch.setenv("RENDER_GIT_REPO_SLUG", "o/r")
     monkeypatch.setattr(ag.urllib.request, "urlopen", published)
-    assert ag.agent_download_url().endswith("/agent-latest/RealityAgent.exe")
+    assert ag.agent_download()[1] is True and ag.agent_download_url().endswith("/agent-latest/RealityAgent.exe")
     assert ag.agent_download_url().endswith("/agent-latest/RealityAgent.exe") and len(calls) == 1      # cached
 
     def missing(req, timeout=0):
         raise OSError("404")
 
-    ag._DL_CACHE.update(key=None, url=None, until=0.0)
+    ag._DL_CACHE.update(key=None, url=None, ready=False, until=0.0)
     monkeypatch.setattr(ag.urllib.request, "urlopen", missing)
-    assert ag.agent_download_url() is None                                    # not built yet: honest, no dead link
+    assert ag.agent_download() == ("https://github.com/o/r/releases/download/agent-latest/RealityAgent.exe", False)   # not seen yet: the button stays, flagged not ready
     monkeypatch.setenv("AGENT_DOWNLOAD_URL", "https://example.com/x.exe")
     assert ag.agent_download_url() == "https://example.com/x.exe"             # an explicit setting always wins
     monkeypatch.setenv("AGENT_DOWNLOAD_URL", "")
     monkeypatch.setenv("RENDER_GIT_REPO_SLUG", "bad repo/../x")
-    ag._DL_CACHE.update(key=None, url=None, until=0.0)
+    ag._DL_CACHE.update(key=None, url=None, ready=False, until=0.0)
     assert ag.agent_download_url() is None                                    # a malformed repository is never fetched

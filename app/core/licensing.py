@@ -6,7 +6,9 @@ next request (the per-business status cache is dropped at once).
 """
 import hashlib
 import os
+import math
 import secrets
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -20,7 +22,19 @@ from app.core.clock import utcnow
 
 ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"            # no 0/O/1/I/L: keys get read aloud and typed from messages
 STATUS_TTL_SECONDS = 20
-DEFAULT_GRACE_DAYS = 7
+DEFAULT_GRACE_DAYS = 5
+WARN_DAYS = 14                                          # a licence with this many days or fewer left shows a renewal notice
+OVERDUE_MESSAGE = "Your subscription has expired, so this is view-only. Renew to add or change anything."
+
+# The method and path of the request being served, set once per request by the middleware in app/main.py, so the licence
+# check (called from many places that have no Request in hand) can tell a read from a write. Unset = treated as a write.
+request_scope: ContextVar[tuple[str, str]] = ContextVar("licence_request_scope", default=("POST", ""))
+
+
+class LicenceReadOnly(HTTPException):
+    """An overdue business tried to add or change something. Answered by main.py with the licence payload the web app reads."""
+    def __init__(self):
+        super().__init__(403, OVERDUE_MESSAGE)
 
 
 def enforced() -> bool:
@@ -99,7 +113,14 @@ def record_payment(db: Session, lic: Licence, amount_cents: int, months: int, re
     db.add(pay)
     lic.paid_through = pay.period_end
     db.commit()
+    if lic.tenant_id:
+        cache.invalidate_prefix(f"licence:{lic.tenant_id}")                # access resumes on the next request, not after the cache expires
     return pay
+
+
+def _due(paid_through: Optional[datetime], redeemed_at: Optional[datetime]) -> Optional[datetime]:
+    """The end of the last paid period, or the activation day if the licence never paid."""
+    return paid_through or redeemed_at
 
 
 def access_state(status: str, price_cents: Optional[int], paid_through: Optional[datetime], redeemed_at: Optional[datetime],
@@ -108,7 +129,7 @@ def access_state(status: str, price_cents: Optional[int], paid_through: Optional
     end of its last paid period (or, if it never paid, the day it was activated) is more than the grace period in the past.
     A free licence (price 0) is never overdue."""
     if status == "active" and (price_cents or 0) > 0:
-        due = paid_through or redeemed_at
+        due = _due(paid_through, redeemed_at)
         if due and (now or utcnow()) > due + timedelta(days=grace_days()):
             return "overdue"
     return status
@@ -128,6 +149,9 @@ def tenant_status(tenant_id: str) -> str:
     return cache.cached(f"licence:{tenant_id}", STATUS_TTL_SECONDS, compute)
 
 
+READ_METHODS = ("GET", "HEAD", "OPTIONS")
+
+
 def require_licence(tenant_id: str) -> None:
     """Called for every signed-in request. No-op until LICENCE_ENFORCED is switched on."""
     if not enforced():
@@ -136,7 +160,26 @@ def require_licence(tenant_id: str) -> None:
     if status == "revoked":
         raise HTTPException(403, "This licence has been revoked. Contact the service provider.")
     if status == "overdue":
-        raise HTTPException(403, "This subscription is overdue, so access is paused. Your data is kept. "
-                                 "Contact the service provider to renew and access resumes at once.")
+        method, path = request_scope.get()
+        if method in READ_METHODS or path.startswith("/api/auth/"):       # view-only: reads, exports, downloads and sign-in keep working
+            return
+        raise LicenceReadOnly()
     if status != "active":
         raise HTTPException(403, "This business has no active licence.")
+
+
+def licence_state(lic: Optional[Licence], now: Optional[datetime] = None) -> dict:
+    """What the web app shows a business about its own subscription: full use or view-only, how long is left, and what a
+    renewal costs (from this licence's own price and currency). Only a paid, active licence can expire or be paid for."""
+    now = now or utcnow()
+    if not lic or lic.status != "active" or (lic.price_cents or 0) <= 0:
+        return {"ok": True, "kind": "free", "read_only": False, "grace": False, "payable": False}
+    due = _due(lic.paid_through, lic.redeemed_at)
+    overdue = access_state(lic.status, lic.price_cents, lic.paid_through, lic.redeemed_at, now) == "overdue"
+    in_grace = bool(due) and not overdue and now > due
+    left = lambda end: max(0, math.ceil((end - now).total_seconds() / 86400))
+    return {"ok": not overdue, "kind": "overdue" if overdue else "licensed", "read_only": overdue, "grace": in_grace, "payable": True,
+            "expires": due.isoformat() if due else None,
+            "days_left": left(due) if due and not in_grace and not overdue else 0,
+            "grace_days_left": left(due + timedelta(days=grace_days())) if in_grace else 0,
+            "licence_id": lic.id, "amount_cents": lic.price_cents, "currency": lic.currency, "interval_months": lic.interval_months}

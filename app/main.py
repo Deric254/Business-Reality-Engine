@@ -6,6 +6,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
 
+from app.core import licensing
 from app.core.config import get_settings
 from app.core.auth import require_admin_key
 from app.core.scheduler import start_scheduler, stop_scheduler
@@ -64,6 +65,7 @@ app.add_middleware(
 async def security_headers(request: Request, call_next):
     """Defence-in-depth headers on every response. The API serves JSON only, so the CSP forbids everything
     (the interactive docs pages need their own scripts and are exempted); credentials-bearing responses are never cached."""
+    licensing.request_scope.set((request.method, request.url.path))      # lets the licence check tell a read from a write
     response = await call_next(request)
     h = response.headers
     h.setdefault("X-Content-Type-Options", "nosniff")
@@ -84,6 +86,13 @@ async def security_headers(request: Request, call_next):
 
 app.add_middleware(GZipMiddleware, minimum_size=1024)       # last added = outermost, so every answer is compressed
 # (the comment above on why: the script bundle is ~280 kB raw, ~87 kB gzipped; that is a slow versus quick first load on a phone)
+
+
+@app.exception_handler(licensing.LicenceReadOnly)
+async def handle_licence_read_only(request: Request, exc: licensing.LicenceReadOnly):
+    # 403 as before for an overdue business, now with the licence block the web app reads to show the renewal notice.
+    return JSONResponse(status_code=403, content={"detail": exc.detail, "error": exc.detail,
+                                                  "licence": {"ok": False, "kind": "overdue", "read_only": True}})
 
 
 @app.exception_handler(DataError)

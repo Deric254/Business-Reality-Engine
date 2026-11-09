@@ -3,6 +3,7 @@ import { api, ApiError, type Tenant } from "../api/client";
 import { cache } from "../api/cache";
 import { Sidebar } from "./Sidebar";
 import { Skeleton, SlowHint, useSlow } from "./ui";
+import { LicenceNotice } from "./Licence";
 import { LiveProvider } from "../lib/live";
 import { useLive } from "../lib/liveContext";
 
@@ -32,6 +33,7 @@ export function Shell({ children, wide = false }: { children: (tenant: Tenant) =
       <main className="lg:pl-64 print:!pl-0 max-lg:pb-24 print:!pb-0">
         <div className={`${wide ? "max-w-6xl" : "max-w-4xl"} mx-auto px-4 sm:px-8 py-8 lg:py-10 space-y-9`}>
           <OfflineNotice />
+          <LicenceNotice />
           {error && <p role="alert" className="text-sm text-critical">{error}</p>}
           {loading && !error && (
             <div className="space-y-4" aria-busy="true">

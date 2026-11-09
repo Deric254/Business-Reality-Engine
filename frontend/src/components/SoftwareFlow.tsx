@@ -59,6 +59,7 @@ export function SoftwareFlow({ tenantId, start, onClose, onChanged }: { tenantId
   }
 
   const downloadUrl = links.find((l) => l.download_url)?.download_url ?? null;
+  const downloadReady = links.find((l) => l.download_url)?.download_ready !== false;   // false: the link is the permanent one, but the build has not been seen publishing the file yet
   const phone = isPhoneOrTablet();                    // a phone cannot run the helper app: say where it goes instead of offering a download it cannot use
   const names = mine.map((l) => l.label).join(" and ");
 
@@ -93,6 +94,7 @@ export function SoftwareFlow({ tenantId, start, onClose, onChanged }: { tenantId
                 </>
               : <a className={primaryCls + " inline-block"} href={downloadUrl}>Download the helper app for Windows</a>}
           {downloadUrl && !phone && <p className="text-sm text-ink-muted">Open it by double-clicking. A page opens in your browser.</p>}
+          {downloadUrl && !downloadReady && <p className="text-sm text-ink-muted">If the download says the file was not found, the newest version is still being prepared. Try again in a few minutes.</p>}
         </Step>
         <Step n={2} title="Paste this code on that page, then press Connect" done={started}>
           {code

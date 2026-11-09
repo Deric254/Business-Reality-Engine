@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.api.auth import TokenPair, _check_new_password, _throttle, _tokens
 from app.core import audit, demo, licensing
 from app.core.auth import require_admin_key
-from app.core.auth_users import decode_token, hash_password
+from app.core.auth_users import CurrentUser, decode_token, get_current_user, hash_password
 from app.core.db import get_db
 from app.models.core import BusinessEvent, Connector, Tenant, User
 from app.models.licence import Licence, LicencePayment
@@ -244,6 +244,12 @@ class ActivateIn(BaseModel):
     password: str
     timezone: str = "Africa/Nairobi"
     base_currency: str = "KES"
+
+
+@public.get("/mine")
+def my_licence(db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
+    """The signed-in business's own subscription state, for the renewal notice and pay window. Works while view-only."""
+    return licensing.licence_state(db.query(Licence).filter(Licence.tenant_id == user.tenant_id).first())
 
 
 @public.post("/activate", response_model=TokenPair)
