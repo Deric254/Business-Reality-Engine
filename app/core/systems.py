@@ -239,11 +239,13 @@ def summary(db: Session, connector: Connector, now: Optional[datetime] = None) -
 def detect_system_links(db: Session, tenant_id: str, now: Optional[datetime] = None) -> list:
     """Raise an alert when a system's link has been down for more than ALERT_AFTER; close it the moment the link is back.
     A system that has never reported is being set up, not broken, so it raises nothing."""
-    from app.core.detection import resolve_alert, _find_open_alert
+    from app.core.detection import close_orphans, resolve_alert, _find_open_alert
     from app.core.detectors import _upsert
     from app.models.alerts import AlertSeverity
     now = now or utcnow()
     out = []
+    close_orphans(db, tenant_id, "system_link:", {c.id for c in db.query(Connector.id).filter(Connector.tenant_id == tenant_id, Connector.connector_type == "system",
+                                                                                           Connector.is_active == True)}, now)   # noqa: E712  switched off or removed: nothing watches it any more
     for c in db.query(Connector).filter(Connector.tenant_id == tenant_id, Connector.connector_type == "system", Connector.is_active == True).all():  # noqa: E712
         row = db.get(AgentStatus, c.id)
         if row is None or row.last_seen_at is None:

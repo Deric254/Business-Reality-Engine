@@ -191,7 +191,7 @@ def analytics_pdf(tenant_id: str, days: int = Query(30, ge=0, le=3650), db: Sess
            .order_by(Alert.priority_rank.desc().nullslast(), Alert.created_at.desc()).limit(3).all())
     try:                                                      # same complete-day windows as the figures above, so the two can never disagree
         from app.core import movers
-        changes = movers.build(db, tenant_id, days)
+        changes = movers.cached_build(db, tenant_id, days)
     except Exception:                                         # the report must never fail because one section could not be worked out
         logging.getLogger("business_reality_engine").exception("analytics.pdf: what-changed section failed")
         db.rollback()

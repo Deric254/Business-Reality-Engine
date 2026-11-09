@@ -188,7 +188,8 @@ def test_pdf_endpoint_includes_what_changed_and_survives_it_failing(client, db, 
     t, h = make_owner(client, "pdfchg"); _seed(db, t, SPEC)
     ok = client.get(f"/api/business/analytics.pdf?tenant_id={t}&days=30", headers=h)
     assert ok.status_code == 200 and "What changed" in _text(ok.content)
-    from app.core import movers
+    from app.core import cache, movers
+    cache.clear_local()                                                            # the first download kept its figures for a moment; make the second one compute them
 
     def boom(*_a, **_k):
         raise RuntimeError("simulated failure")
@@ -197,3 +198,15 @@ def test_pdf_endpoint_includes_what_changed_and_survives_it_failing(client, db, 
     assert failed.status_code == 200 and failed.content.startswith(b"%PDF")        # one section failing never costs the owner the report
     text = _text(failed.content)
     assert "could not be prepared" in text and "Branch by branch" in text
+
+
+def test_what_changed_figures_are_shared_and_dropped_the_moment_records_change(client, db):
+    from app.core import cache, movers
+    t, h = make_owner(client, "chgcache"); _seed(db, t, SPEC)
+    cache.clear_local()
+    first = client.get(f"/api/goals/changes?tenant_id={t}&days=30", headers=h).json()
+    assert movers.cached_build(db, t, 30) == first                                 # the report and the page read the very same answer
+    keys = [k for k in cache._local if k.startswith(f"analytics:{t}:changes:30:")]
+    assert len(keys) == 1
+    cache.invalidate_tenant(t, detect=False)                                       # records changed: nothing derived from the old ones may survive
+    assert not [k for k in cache._local if k.startswith(f"analytics:{t}:")]

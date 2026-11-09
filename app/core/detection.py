@@ -165,6 +165,22 @@ def close_if_cleared(db: Session, tenant_id: str, dedup_key: str, now: datetime)
         resolve_alert(db, open_alert, now)
 
 
+def close_orphans(db: Session, tenant_id: str, prefix: str, live_ids: set, now: datetime) -> int:
+    """Close every open alert whose dedup_key is `prefix` + an id that is no longer watched (a source switched off or
+    removed, a limit that no longer exists). Nothing looks at such an alert any more, so it would otherwise stay on screen
+    with its old numbers for ever. The record stays (state resolved, with when it was closed)."""
+    closed = 0
+    for a in (db.query(Alert).filter(Alert.tenant_id == tenant_id, Alert.state.in_(ACTIVE_STATES),
+                                     Alert.evidence["dedup_key"].as_string().startswith(prefix, autoescape=True)).all()):
+        if (a.evidence or {}).get("dedup_key", "")[len(prefix):] not in live_ids:
+            a.state, a.resolved_at = AlertState.resolved, now
+            a.evidence = {**(a.evidence or {}), "recovered_at": now.isoformat(), "closed_because": "What it was watching is switched off or removed."}
+            closed += 1
+    if closed:
+        db.commit()
+    return closed
+
+
 def _keep_lifecycle(existing, evidence: dict) -> dict:
     """A refresh replaces the measurements but must not erase lifecycle stamps (escalation)."""
     keep = {k: v for k, v in (existing.evidence or {}).items() if k == "escalated_at"}
@@ -450,6 +466,7 @@ def detect_historical_deviation(
         "baseline_periods_used": len(valid_baseline),
         "direction": direction,
         "dedup_key": dedup_key,
+        "confirmed_at": now.isoformat(),          # the last time a check found this still true (see alert_engine.close_unconfirmed)
     }
     what_happened = comparison_text(entity, field, current_value, baseline_avg, period_days, len(valid_baseline), money_formatter(db, tenant_id, field))
 
@@ -532,10 +549,11 @@ def detect_threshold_breach(
     value = _sum_metric(db, tenant_id, entity, field, start, now)
 
     breached = value < threshold if direction == "below" else value > threshold
+    dedup_key = f"threshold:{entity}:{field}:{direction}:{threshold}"
     if not breached:
+        close_if_cleared(db, tenant_id, dedup_key, now)        # back on the right side of the line: the alert is over, whatever state it was in
         return None
 
-    dedup_key = f"threshold:{entity}:{field}:{direction}:{threshold}"
     evidence = {
         "metric": f"{entity}.{field}",
         "value": value,
@@ -543,6 +561,7 @@ def detect_threshold_breach(
         "direction": direction,
         "period_days": period_days,
         "dedup_key": dedup_key,
+        "confirmed_at": now.isoformat(),
     }
 
     existing = _find_open_alert(db, tenant_id, dedup_key)

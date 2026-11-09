@@ -29,8 +29,8 @@ from app.core import coverage as coverage_mod
 from app.core.alert_engine import post_process_tenant
 from app.core.business_memory import measure_due_cases
 from app.core.detection import (
-    _headline, _noun, close_if_cleared, compare_headline, comparison_text, money_formatter, resolve_alert,
-    METRIC_FIELDS, _find_open_alert, _in_cooldown, _sum_metric,
+    _headline, _noun, close_if_cleared, close_orphans, compare_headline, comparison_text, money_formatter, resolve_alert,
+    ACTIVE_STATES, METRIC_FIELDS, _find_open_alert, _in_cooldown, _sum_metric,
     detect_historical_deviation, detect_threshold_breach, explain_deviation,
 )
 from app.models.alerts import Alert, AlertSeverity, AlertState
@@ -48,7 +48,7 @@ def default_direction(entity: str) -> str:
 
 def _upsert(db: Session, tenant_id: str, dedup_key: str, now: datetime, evidence: dict, fields: dict) -> Optional[Alert]:
     """Update the open alert for dedup_key, else create one unless in cooldown."""
-    evidence = {**evidence, "dedup_key": dedup_key}
+    evidence = {**evidence, "dedup_key": dedup_key, "confirmed_at": now.isoformat()}     # the last time a check found this still true
     existing = _find_open_alert(db, tenant_id, dedup_key)
     if existing:
         keep = {k: v for k, v in (existing.evidence or {}).items() if k in ("escalated_at",)}
@@ -255,6 +255,7 @@ def detect_data_silence(db: Session, tenant_id: str, now: Optional[datetime] = N
         .filter(BusinessEvent.tenant_id == tenant_id).group_by(BusinessEvent.connector_id).all()
     )
     out = []
+    close_orphans(db, tenant_id, "data_silence:", {c.id for c in connectors if c.connector_type != "system" and last.get(c.id) is not None}, now)   # switched off or removed: nothing watches it any more
     for c in connectors:
         last_at = last.get(c.id)
         if last_at is None or c.connector_type == "system":      # a system is watched by its link (detect_system_links), not by how long it was quiet
@@ -323,6 +324,17 @@ def run_metric_detectors(db: Session, tenant_id: str, *, entity: str, field: str
         steps.append(lambda: detect_threshold_breach(
             db, tenant_id, entity, field, float(absolute_threshold), "below" if direction == "drop" else "above",
             period_days=period_days, severity=AlertSeverity.high, now=now))
+    try:                                            # a limit that was changed or removed: the alert about the old line is not true any more
+        current = (f"threshold:{entity}:{field}:{'below' if direction == 'drop' else 'above'}:{float(absolute_threshold)}"
+                   if absolute_threshold is not None and has_data else None)
+        prefix = f"threshold:{entity}:{field}:"
+        for old in (db.query(Alert).filter(Alert.tenant_id == tenant_id, Alert.state.in_(ACTIVE_STATES),
+                                           Alert.evidence["dedup_key"].as_string().startswith(prefix, autoescape=True)).all()):
+            if old.evidence.get("dedup_key") != current:
+                resolve_alert(db, old, now_)
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Old limit alerts could not be closed for tenant={tenant_id} {entity}.{field}: {e}")
     alerts = []
     for step in steps:
         try:
@@ -388,6 +400,13 @@ def run_tenant_cycle(db: Session, tenant_id: str, metrics: list[dict], now: Opti
     except Exception as e:
         db.rollback(); errors += 1
         logger.error(f"Model versioning failed for tenant={tenant_id}: {e}")
+    try:
+        if not replay:                          # nothing a check has stopped confirming stays on screen (see alert_engine.close_unconfirmed)
+            from app.core.alert_engine import close_unconfirmed
+            close_unconfirmed(db, tenant_id, now)
+    except Exception as e:
+        db.rollback(); errors += 1
+        logger.error(f"Closing unconfirmed alerts failed for tenant={tenant_id}: {e}")
     try:
         post = post_process_tenant(db, tenant_id, now)
     except Exception as e:

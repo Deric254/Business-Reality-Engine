@@ -25,6 +25,35 @@ ACTIVE = [AlertState.detected, AlertState.investigating, AlertState.acknowledged
           AlertState.action_planned, AlertState.action_taken, AlertState.monitoring]
 
 
+# Every check stamps the alerts it finds still true with evidence["confirmed_at"]. An alert from a check that has not confirmed it
+# for this long is no longer something any check stands behind (its source or branch went away, a check stopped looking at it,
+# the service was down for days), so it is closed instead of staying on screen with old numbers.
+UNCONFIRMED_AFTER = timedelta(days=3)
+
+
+def close_unconfirmed(db: Session, tenant_id: str, now: datetime) -> int:
+    """Close open alerts that came from a check but that no check has confirmed for UNCONFIRMED_AFTER. The record stays
+    (state resolved, with when and why). Never touches alerts typed in by a person, or payment alerts (an event, not a
+    condition: it stays while someone works on it). An alert with no stamp yet (raised before stamps existed) gets one now,
+    so it has a full grace period and a still-true alert is re-stamped by its own check long before it matters."""
+    closed = 0
+    for a in (db.query(Alert).filter(Alert.tenant_id == tenant_id, Alert.state.in_(ACTIVE), Alert.evidence["dedup_key"].as_string().isnot(None)).all()):
+        ev = a.evidence or {}
+        if a.kind == "payment" or str(ev.get("dedup_key", "")).startswith("large_payment:"):
+            continue
+        try:
+            seen = datetime.fromisoformat(str(ev["confirmed_at"])).replace(tzinfo=None)
+        except (KeyError, ValueError):
+            a.evidence = {**ev, "confirmed_at": now.isoformat()}
+            continue
+        if now - seen >= UNCONFIRMED_AFTER:
+            a.state, a.resolved_at = AlertState.resolved, now
+            a.evidence = {**ev, "recovered_at": now.isoformat(), "closed_because": f"No check has found this still true for {UNCONFIRMED_AFTER.days} days."}
+            closed += 1
+    db.commit()
+    return closed
+
+
 def priority_score(alert: Alert, now: datetime) -> float:
     """Higher = look at it first. Severity dominates; within a severity, bigger moves, more
     confident findings and better-covered data rank higher; escalated alerts jump the queue.

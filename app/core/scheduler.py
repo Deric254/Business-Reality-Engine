@@ -86,7 +86,14 @@ def _metrics_for_tenant(db, tenant_id: str) -> list[dict]:
 
 def _active_tenant_ids(db) -> list[str]:
     rows = db.query(distinct(Connector.tenant_id)).filter(Connector.is_active == True).all()
-    return [r[0] for r in rows]
+    ids = [r[0] for r in rows]
+    # A business whose sources were all switched off still has to be checked while it has open alerts, or they could never close.
+    from app.models.alerts import Alert
+    from app.core.detection import ACTIVE_STATES
+    for (t,) in db.query(distinct(Alert.tenant_id)).filter(Alert.state.in_(ACTIVE_STATES)).all():
+        if t not in ids:
+            ids.append(t)
+    return ids
 
 
 def run_detection_cycle():

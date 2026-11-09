@@ -94,4 +94,4 @@ def explain_goal(goal_id: str, tenant_id: str, db: Session = Depends(get_db), au
 def changes(tenant_id: str, days: int = Query(30, ge=0, le=3650), db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
     """What improved and what got worse since the period before."""
     authorize_tenant(authorization, tenant_id)
-    return movers.build(db, tenant_id, days)
+    return movers.cached_build(db, tenant_id, days)

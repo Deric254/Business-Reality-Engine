@@ -73,3 +73,13 @@ def build(db: Session, tenant_id: str, days: int, now: Optional[datetime] = None
     for kind in ("improved", "worse"):
         base[kind] = sorted([x for x in lines if x["kind"] == kind], key=lambda x: -abs(x["change"]))[:TOP]
     return base
+
+
+def cached_build(db: Session, tenant_id: str, days: int) -> dict:
+    """build(), kept for 30 seconds. The key starts with "analytics:<tenant>:", so the moment the business's records change
+    (cache.invalidate_tenant) it is dropped with the Analytics numbers: this can never show figures older than they do, and
+    the Overview, the report and the downloaded file all read the same answer."""
+    from fastapi.encoders import jsonable_encoder
+    from app.core.cache import cached
+    day = periods.local_today(db, tenant_id).isoformat()
+    return cached(f"analytics:{tenant_id}:changes:{days}:{day}", 30, lambda: jsonable_encoder(build(db, tenant_id, days)))
