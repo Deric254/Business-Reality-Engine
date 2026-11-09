@@ -90,3 +90,27 @@ def test_only_the_owner_can_disconnect_and_only_in_their_business(client, tenant
     other_t, other_h = make_owner(client, "sot7")
     assert client.delete(f"/api/connectors/{a}?tenant_id={other_t}", headers=other_h).status_code == 404
     assert client.delete(f"/api/connectors/{a}?tenant_id={t}", headers=h).status_code == 200
+
+
+def _system_connector(db, t, name):
+    from app.models.core import Connector
+    c = Connector(tenant_id=t, name=name, connector_type="system", config={"system": "imara"})
+    db.add(c); db.commit()
+    return c.id
+
+
+def test_connected_systems_never_merge_with_each_other_or_with_a_file(client, db):
+    """Sale 7 in one system is not sale 7 in another: ids are row numbers. Merging them dropped real sales from the totals,
+    so BRE showed less than the systems themselves."""
+    from app.core import ingestion
+    from app.core.ingestion import NormalizedEvent
+    t, h = make_owner(client, "sot_sys")
+    a, b = _system_connector(db, t, "Imara"), _system_connector(db, t, "Pharmacy ERP")
+    ts = dt.datetime.utcnow() - dt.timedelta(hours=5)
+    mk_ev = lambda cid, src: NormalizedEvent(tenant_id=t, connector_id=cid, source=src, entity="sale", entity_id="7", event_type="sale.payment_received", timestamp=ts, amount=1000.0)
+    ingestion.ingest_events_bulk(db, [mk_ev(a, "Imara")])
+    ingestion.ingest_events_bulk(db, [mk_ev(b, "Pharmacy ERP")])
+    _source(client, t, h, "POS", ("7", 1000, "Meru"))                                                       # a file whose receipt 7 is also 1000
+    rows = db.query(BusinessEvent).filter(BusinessEvent.tenant_id == t).all()
+    assert sorted(r.validation_status for r in rows) == ["validated"] * 3
+    assert _revenue(client, t, h) == 3000

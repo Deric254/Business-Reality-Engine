@@ -32,39 +32,45 @@ CONFIRM_WINDOW = timedelta(minutes=15)
 # ---- where owners download the agent ------------------------------------------------------------------------------
 
 _DL_LOCK = threading.Lock()
-_DL_CACHE: dict = {"key": None, "url": None, "until": 0.0}
+_DL_CACHE: dict = {"key": None, "url": None, "ready": False, "until": 0.0}
 RELEASE_TAG = "agent-latest"                  # the "Windows agent" GitHub workflow republishes RealityAgent.exe here on every change
 RELEASE_FILE = "RealityAgent.exe"
 
 
-def agent_download_url() -> Optional[str]:
-    """The link to RealityAgent.exe, with nothing to configure. An explicit AGENT_DOWNLOAD_URL always wins. Otherwise the
-    repository is taken from AGENT_GITHUB_REPO or, on Render, from the repository the service was deployed from, and the
-    link is offered only once the build has really published the file (checked at most every 10 minutes, a miss is
-    rechecked after 2). So the button never points at a missing file; before the first build the screen says so plainly."""
+def agent_download() -> tuple[Optional[str], bool]:
+    """(link, ready) for RealityAgent.exe, with nothing to configure. An explicit AGENT_DOWNLOAD_URL always wins. Otherwise the
+    repository is taken from AGENT_GITHUB_REPO or, on Render, from the repository the service was deployed from. `ready` says
+    the build has really published the file (checked at most every 10 minutes, a miss is rechecked after 2). The Download
+    button is shown whenever there is a link: when the file is not published yet the link is the permanent one the build
+    will publish to, and the screen says the new version may still be being prepared. It never just disappears."""
     explicit = os.getenv("AGENT_DOWNLOAD_URL")
     if explicit:
-        return explicit
+        return explicit, True
     repo = (os.getenv("AGENT_GITHUB_REPO") or os.getenv("RENDER_GIT_REPO_SLUG") or "").strip().strip("/")
     if repo.count("/") != 1 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./" for c in repo):
-        return None
+        return None, False
     now = time.monotonic()
     with _DL_LOCK:
         if _DL_CACHE["key"] == repo and now < _DL_CACHE["until"]:
-            return _DL_CACHE["url"]
-    url = None
+            return _DL_CACHE["url"], _DL_CACHE["ready"]
+    found = None
     try:
         req = urllib.request.Request(f"https://api.github.com/repos/{repo}/releases/tags/{RELEASE_TAG}",
                                      headers={"Accept": "application/vnd.github+json", "User-Agent": "business-reality-engine"})
         with urllib.request.urlopen(req, timeout=4) as r:                      # a fixed GitHub address: nothing a user typed
             for a in json.loads(r.read().decode()).get("assets", []):
                 if a.get("name") == RELEASE_FILE and a.get("state", "uploaded") == "uploaded":
-                    url = a.get("browser_download_url")
-    except Exception:                                                          # no release yet, rate limit, offline: no link
-        url = None
+                    found = a.get("browser_download_url")
+    except Exception:                                                          # no release yet, rate limit, offline, private repo
+        found = None
+    url = found or f"https://github.com/{repo}/releases/download/{RELEASE_TAG}/{RELEASE_FILE}"
     with _DL_LOCK:
-        _DL_CACHE.update(key=repo, url=url, until=now + (600 if url else 120))
-    return url
+        _DL_CACHE.update(key=repo, url=url, ready=bool(found), until=now + (600 if found else 120))
+    return url, bool(found)
+
+
+def agent_download_url() -> Optional[str]:
+    return agent_download()[0]
 
 
 # ---- agent side ---------------------------------------------------------------------------------------------------
@@ -155,8 +161,8 @@ def list_systems(tenant_id: str, db: Session = Depends(get_db), authorization: O
     authorize_tenant(authorization, tenant_id)
     have = {(c.config or {}).get("system"): c for c in db.query(Connector).filter(Connector.tenant_id == tenant_id, Connector.connector_type == "system")}
     now = utcnow()
-    download = agent_download_url()                           # where the one-file Windows agent can be downloaded (found by itself)
-    return [{"system": key, "label": meta["label"], "what": meta["what"], "connected": key in have, "download_url": download,
+    download, ready = agent_download()                        # where the one-file Windows agent can be downloaded (found by itself)
+    return [{"system": key, "label": meta["label"], "what": meta["what"], "connected": key in have, "download_url": download, "download_ready": ready,
              **(systems.summary(db, have[key], now) if key in have else {})} for key, meta in systems.SYSTEMS.items()]
 
 

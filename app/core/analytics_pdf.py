@@ -372,6 +372,39 @@ def _alerts_block(alerts: list[dict]) -> list:
     return out + [t]
 
 
+def _move_words(x: dict) -> str:
+    """'up 12%', 'down 40%' or 'new': words as well as colour, so it reads in black and white too."""
+    pct = x.get("change_pct")
+    if pct is None:
+        return "new this period"
+    size = f"{abs(pct) / 100:.0f}x" if abs(pct) >= 1000 else f"{abs(pct):.0f}%"
+    return f"{'up' if x['change'] > 0 else 'down'} {size}"
+
+
+def _changes_block(changes: dict | None, cur: str, days: int) -> list:
+    """What got better and what got worse since the period before (app/core/movers.py): the same complete-day windows as
+    every other figure in the report, so this section can never disagree with the tiles above it. Nothing is invented here:
+    each line is a figure from the records, ranked by how much money moved."""
+    if not changes:
+        return []
+    ref = f"the {days} days before it" if days else "the period before it"
+    out = _section("What changed", f"This period against {ref}. Spending going up counts as worse. Small ups and downs are left out on purpose.", need=60 * mm)
+    if changes.get("note"):
+        return out + [_p(changes["note"], "body")]
+    better, worse = changes.get("improved") or [], changes.get("worse") or []
+    if not better and not worse:
+        return out + [_p("Nothing moved enough to report.", "body")]
+    m = lambda v: f"{cur} {_n(v)}".strip()
+    for title, lines, color, empty in (("Getting better", better, GOOD, "Nothing clearly improved."), ("Getting worse", worse, BAD, "Nothing clearly got worse.")):
+        out.append(_p(title, "h3", color))
+        if not lines:
+            out += [_p(empty, "note"), Spacer(1, 6)]
+            continue
+        rows = [[[_p(x["name"], "cell"), _p(str(x["area"]).lower(), "label")], m(x["before"]), m(x["now"]), _rich(_e(_move_words(x), color, True), "cellr")] for x in lines]
+        out += [_table(["Item", "Before", "Now", "Change"], rows, [WIDTH * 0.40, WIDTH * 0.20, WIDTH * 0.20, WIDTH * 0.20], (1, 2, 3)), Spacer(1, 8)]
+    return out
+
+
 def _insights_block(insights: list[dict]) -> list:
     out = _section("What your records say", "Each line is worked out from the figures in this report, not guessed.")
     rows = [[_rich(_e("\u2022", TONE.get(i["tone"], FAINT), True), "body"), [_p(i["title"], "h3"), _p(i["text"], "small")]] for i in insights]
@@ -401,7 +434,7 @@ def _money_table(head: list[str], rows: list[list], first: float, numeric: tuple
     return _table(head, rows, [first] + [rest] * (len(head) - 1), numeric)
 
 
-def _story(a: dict, alerts: list[dict], business: str, cur: str, prepared: date) -> list:
+def _story(a: dict, alerts: list[dict], business: str, cur: str, prepared: date, changes: dict | None = None) -> list:
     p = a["period"]
     m = lambda v: f"{cur} {_n(v)}".strip()
     pct = lambda v, digits=0: "-" if v is None else f"{v:.{digits}f}%"
@@ -409,6 +442,7 @@ def _story(a: dict, alerts: list[dict], business: str, cur: str, prepared: date)
                    _p(f"{business}  |  {_day(p['first_day'])} to {_day(p['last_day'])}  |  Prepared {_day(prepared.isoformat())}", "meta"),
                    _p("Whole days on your business's clock" + (", today so far included" if p.get("includes_today") else ", ending yesterday") + ", from records that passed validation.", "note"), Spacer(1, 12), _tiles(a, cur)]
     story += _alerts_block(alerts)
+    story += _changes_block(changes, cur, a["days"])
     if a["insights"]:
         story += _insights_block(a["insights"])
 
@@ -516,14 +550,15 @@ def _numbered_canvas(left_text: str):
     return Numbered
 
 
-def build_analytics_pdf(a: dict, alerts: list[dict], business: str, currency: str, prepared: date) -> bytes:
-    """The whole report as PDF bytes. `a` is build_analytics()'s answer; `alerts` the open alerts, most important first."""
+def build_analytics_pdf(a: dict, alerts: list[dict], business: str, currency: str, prepared: date, changes: dict | None = None) -> bytes:
+    """The whole report as PDF bytes. `a` is build_analytics()'s answer; `alerts` the open alerts, most important first;
+    `changes` is movers.build()'s answer (what improved and what got worse), left out of the report when None."""
     business = _t(business)
     buf = io.BytesIO()
     doc = BaseDocTemplate(buf, pagesize=A4, leftMargin=MARGIN_X, rightMargin=MARGIN_X, topMargin=MARGIN_TOP, bottomMargin=MARGIN_BOTTOM,
                           title=f"Analytics, {business}", subject=f"{_day(a['period']['first_day'])} to {_day(a['period']['last_day'])}", creator="Business Reality Engine")
     doc.addPageTemplates([PageTemplate(id="page", frames=[Frame(MARGIN_X, MARGIN_BOTTOM, WIDTH, PAGE_H - MARGIN_TOP - MARGIN_BOTTOM, id="body", leftPadding=0,
                                                                 rightPadding=0, topPadding=0, bottomPadding=0)])])
-    doc.build(_story(a, alerts, business, _t(currency), prepared),
+    doc.build(_story(a, alerts, business, _t(currency), prepared, changes),
               canvasmaker=_numbered_canvas(f"{business}  |  Analytics  |  {_day(a['period']['first_day'])} to {_day(a['period']['last_day'])}"))
     return buf.getvalue()

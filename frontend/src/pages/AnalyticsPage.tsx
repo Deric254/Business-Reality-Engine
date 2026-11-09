@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, businessApi, tenantApi, type AInsight, type Alert, type Analytics, type Tenant } from "../api/client";
+import { api, businessApi, goalsApi, tenantApi, type AInsight, type Alert, type Analytics, type Tenant } from "../api/client";
 import { Shell } from "../components/Shell";
 import { AlertRow } from "../components/AlertRow";
 import { Empty, Notice, Skeleton, btnCls, money, primaryCls } from "../components/ui";
 import { CalendarHeatmap, ChartCard, Change, ForecastChart, HRow, Legend, MarginChart, MonthlyChart, Spark, WeekdayChart } from "../components/charts";
 import { C, dayLong, dayShort, fmtFull } from "../lib/chartKit";
 import { useOnLiveChange } from "../lib/liveContext";
+import { csvOf } from "../lib/analyticsCsv";
 
 const PERIODS = [1, 7, 30, 90, 180, 365, 0];
 const periodLabel = (d: number) => (d === 0 ? "All time" : d === 1 ? "Today" : d === 365 ? "12 months" : `${d} days`);
@@ -58,22 +59,6 @@ function Insight({ i }: { i: AInsight }) {
 
 /* ---------------------------------------------------------------- download */
 
-function csvOf(a: Analytics, cur: string): string {
-  const q = (v: string | number | null) => (v == null ? "" : `"${String(v).replace(/"/g, '""')}"`);
-  const lines: string[] = [];
-  const sect = (title: string, head: string[], rows: (string | number | null)[][]) => { lines.push(q(title), head.map(q).join(","), ...rows.map((r) => r.map(q).join(",")), ""); };
-  sect(`Summary (${a.period.first_day} to ${a.period.last_day}, ${cur})`, ["Measure", "This period", "Period before", "Change %"], [
-    ["Sales", a.headline.sales.current, a.headline.sales.previous, a.headline.sales.change_pct], ["Spending", a.headline.spending.current, a.headline.spending.previous, a.headline.spending.change_pct],
-    ["Profit", a.headline.profit.current, a.headline.profit.previous, a.headline.profit.change_pct], ["Margin %", a.headline.margin_pct.current, a.headline.margin_pct.previous, null],
-    ["Average sale", a.headline.average_sale.current, a.headline.average_sale.previous, a.headline.average_sale.change_pct]]);
-  sect("By month", ["Month", "Sales", "Spending", "Profit", "Margin %"], a.monthly.map((m) => [m.month.slice(0, 7), m.sales, m.spending, m.profit, m.margin_pct]));
-  sect("By branch", ["Branch", "Sales", "Spending", "Profit", "Margin %", "Share of sales %", "Sales change %"], a.branches.map((b) => [b.name, b.sales, b.spending, b.profit, b.margin_pct, b.share_pct, b.sales_change_pct]));
-  sect("Products", ["Product", "Sales", "Share %", "Cumulative %", "Change %"], a.products.top.map((p) => [p.name, p.amount, p.share_pct ?? null, p.cumulative_pct ?? null, p.change_pct]));
-  sect("Spending by category", ["Category", "Amount", "Share %", "Period before", "Change %"], a.spending.categories.map((c) => [c.name, c.amount, c.share_pct ?? null, c.previous, c.change_pct]));
-  sect("Customers", ["Customer", "Sales", "Orders", "Share %"], a.customers.top.map((c) => [c.name, c.amount, c.orders, c.share_pct]));
-  return lines.join("\n");
-}
-
 function download(name: string, text: string) {
   const url = URL.createObjectURL(new Blob(["﻿" + text], { type: "text/csv;charset=utf-8" }));
   const link = document.createElement("a");
@@ -91,6 +76,7 @@ function Body({ tenant }: { tenant: Tenant }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [pdf, setPdf] = useState<"idle" | "busy" | "failed">("idle");
+  const [csv, setCsv] = useState<"idle" | "busy">("idle");
   const latest = useRef(0);                                   // only the newest request may update the page
 
   const load = useCallback((quiet = false) => {          // quiet: refreshed because the data changed, so nothing spins or dims
@@ -118,6 +104,15 @@ function Body({ tenant }: { tenant: Tenant }) {
   const m = (n: number) => money(n, cur);
   const sofar = <span className="text-ink-muted">so far today; the day is not over</span>;
 
+  async function downloadCsv() {
+    if (!a) return;
+    setCsv("busy");
+    try {
+      const changes = await goalsApi.changes(tenant.id, a.days).catch(() => null);   // the same figures the PDF carries; if they cannot be fetched the file still downloads and says so
+      download(`analytics-${a.period.first_day}-to-${a.period.last_day}.csv`, csvOf(a, cur, changes));
+    } finally { setCsv("idle"); }
+  }
+
   async function downloadPdf() {
     if (!a) return;
     setPdf("busy");
@@ -144,7 +139,7 @@ function Body({ tenant }: { tenant: Tenant }) {
           <div ref={periodBar} role="group" aria-label="Period shown" className="inline-flex max-w-full min-w-0 border border-field rounded-sm overflow-x-auto">
             {PERIODS.map((d) => <button key={d} aria-pressed={d === days} onClick={() => setDays(d)} className={`shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-medium ${d === days ? "bg-info text-white" : "bg-panel text-ink-text hover:bg-panel-raised"}`}>{periodLabel(d)}</button>)}
           </div>
-          <button className={btnCls} disabled={!a} onClick={() => a && download(`analytics-${a.period.first_day}-to-${a.period.last_day}.csv`, csvOf(a, cur))}>Download figures</button>
+          <button className={btnCls} disabled={!a || csv === "busy"} onClick={downloadCsv}>{csv === "busy" ? "Preparing file…" : "Download figures"}</button>
           <button className={btnCls} disabled={!a || pdf === "busy"} onClick={downloadPdf}>{pdf === "busy" ? "Preparing PDF…" : "Download PDF"}</button>
         </div>
       </header>

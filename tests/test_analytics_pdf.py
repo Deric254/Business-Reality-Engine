@@ -134,3 +134,66 @@ def test_pdf_endpoint_needs_a_sign_in_is_tenant_scoped_and_downloads_a_pdf(clien
     assert ok.headers["content-disposition"].startswith('attachment; filename="analytics-') and ok.headers["cache-control"] == "no-store"
     other = _make_tenant("pdfother")
     assert client.get(f"/api/business/analytics.pdf?tenant_id={other}&days=30", headers=h).status_code in (401, 403, 404)
+
+
+# ---------- what changed ----------
+
+def _line(area, name, before, now, better, pct="auto"):
+    change = now - before
+    pct = (round(change / abs(before) * 100, 1) if before else None) if pct == "auto" else pct
+    return {"area": area, "name": name, "kind": "improved" if better else "worse", "now": now, "before": before, "change": change, "change_pct": pct, "detail": ""}
+
+
+CHANGES = {"period": {}, "days": 90,
+           "improved": [_line("Business", "Sales", 1e7, 1.05e7, True), _line("Product", "Tea \u5e97", 0.0, 4e5, True)],
+           "worse": [_line("Business", "Spending", 1.8e6, 1.9e6 * 3, False), _line("Branch", "Meru", 3e6, 2e6, False)]}
+
+
+def _text(pdf: bytes) -> str:
+    return "\n".join(p.extract_text() for p in _pages(pdf))
+
+
+def test_report_features_what_changed_with_both_sides_and_clear_words():
+    text = _text(build_analytics_pdf(_full(random.Random(11)), ALERTS, "DericBI", "KES", TODAY, CHANGES))
+    for expected in ("What changed", "Getting better", "Getting worse", "Sales", "Meru", "KES 10,000,000", "KES 10,500,000", "up 5%", "down 33%", "new this period", "up 217%"):
+        assert expected in text, expected
+    assert text.index("Needs your attention") < text.index("What changed") < text.index("What your records say")
+
+
+def test_what_changed_is_left_out_without_data_and_says_why_when_there_is_nothing_to_show():
+    plain = _text(build_analytics_pdf(_full(random.Random(12)), ALERTS, "DericBI", "KES", TODAY))
+    assert "What changed" not in plain                                              # callers that do not pass it get the report as before
+    quiet = _text(build_analytics_pdf(_full(random.Random(12)), ALERTS, "DericBI", "KES", TODAY, {"improved": [], "worse": []}))
+    assert "Nothing moved enough to report" in quiet
+    note = _text(build_analytics_pdf(_full(random.Random(12)), ALERTS, "DericBI", "KES", TODAY, {"improved": [], "worse": [], "note": "All time has nothing earlier to compare with."}))
+    assert "All time has nothing earlier to compare with." in note
+    one_side = _text(build_analytics_pdf(_full(random.Random(12)), ALERTS, "DericBI", "KES", TODAY, {"improved": CHANGES["improved"], "worse": []}))
+    assert "Nothing clearly got worse." in one_side
+
+
+def test_what_changed_survives_odd_names_negative_profit_and_a_business_with_no_records():
+    odd = {"improved": [], "worse": [_line("Business", "Profit", 1e5, -5e5, False), _line("Branch", "Ma\u00fcua <b>&</b> \u5e97", 9e5, 1e5, False)]}
+    assert "What changed" in _text(build_analytics_pdf(_full(random.Random(13)), ALERTS, "Caf\u00e9 & Sons", "\u20a6", TODAY, odd))
+    pages = _pages(build_analytics_pdf(_empty(), [], "Quiet Shop", "KES", TODAY, {"improved": [], "worse": [], "note": "No records in this period or the one before it."}))
+    assert "No records in this period or the one before it." in "\n".join(p.extract_text() for p in pages)
+
+
+def test_pages_still_flow_with_what_changed_in_the_report():
+    pages = _pages(build_analytics_pdf(_full(random.Random(14)), ALERTS, "DericBI", "KES", TODAY, CHANGES))
+    for page in pages[:-1]:
+        assert _lowest_body_text(page) - MARGIN_BOTTOM <= 0.25 * PAGE_H
+
+
+def test_pdf_endpoint_includes_what_changed_and_survives_it_failing(client, db, monkeypatch):
+    t, h = make_owner(client, "pdfchg"); _seed(db, t, SPEC)
+    ok = client.get(f"/api/business/analytics.pdf?tenant_id={t}&days=30", headers=h)
+    assert ok.status_code == 200 and "What changed" in _text(ok.content)
+    from app.core import movers
+
+    def boom(*_a, **_k):
+        raise RuntimeError("simulated failure")
+    monkeypatch.setattr(movers, "build", boom)
+    failed = client.get(f"/api/business/analytics.pdf?tenant_id={t}&days=30", headers=h)
+    assert failed.status_code == 200 and failed.content.startswith(b"%PDF")        # one section failing never costs the owner the report
+    text = _text(failed.content)
+    assert "could not be prepared" in text and "Branch by branch" in text

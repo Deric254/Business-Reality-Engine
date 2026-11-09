@@ -31,7 +31,7 @@
 | Source shows "Waiting for data" or stale | Connectors page: Sync now shows the error; database/SFTP/IMAP hosts must be public (private hosts are blocked by default when `ENV=production`; set `BLOCK_PRIVATE_CONNECTOR_HOSTS=false` only for a single-business install that must reach its own network) |
 | Alerts too noisy or quiet | Accuracy page: log known incidents, run a backtest, adopt the suggested sensitivity; add promotions/holidays under Business |
 | Slow dashboard on a large tenant | KPIs are cached 30 s; measured reads stay sub-second to 500k events per tenant; beyond several million consider rollups/partitions |
-| A business is told its subscription is overdue | Licences page shows "Paused, not paid". Record a payment (access returns at once), or lengthen `LICENCE_GRACE_DAYS`. A revoked licence shows a Reinstate button |
+| A business is told its subscription is overdue | Licences page shows "Paused, not paid" (the business is view-only: it can read and export, not change). Record a payment (full use returns at once), or lengthen `LICENCE_GRACE_DAYS`. A revoked licence shows a Reinstate button |
 | M-Pesa payments do not arrive | Open the M-Pesa source, Manage, and press **Get a new link** if the link was lost, then give Safaricom the new one (the old one stops at once). To prove the link itself works, the setup page's **Test my link** shows what a sample payment would become and stores nothing. A payment delivered twice is still counted once |
 | A prospect needs something to look at | Licences page, "Create demo businesses" (logins shown once); or a new business can load a sample from the Data page |
 | Locked-out sole owner, no email | Operator creates a new owner: `POST /api/auth/register` with `x-admin-key` |

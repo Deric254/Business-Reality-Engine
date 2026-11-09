@@ -66,3 +66,9 @@ def test_the_shipped_manifest_and_worker_exist_and_agree_with_the_icons():
         assert (public / icon["src"].lstrip("/")).is_file(), icon["src"]
     worker = (public / "sw.js").read_text()
     assert '"/api/"' in worker                              # the API is never handled by the worker
+
+
+def test_big_answers_are_compressed_when_the_client_accepts_it(client):
+    big = client.get("/openapi.json", headers={"Accept-Encoding": "gzip"})
+    assert big.status_code == 200 and big.headers.get("content-encoding") == "gzip" and big.json()["paths"]   # decoded by the client
+    assert "content-encoding" not in client.get("/openapi.json", headers={"Accept-Encoding": "identity"}).headers

@@ -13,6 +13,7 @@ requests from other websites, so a web page cannot use it to connect the agent t
     RealityAgent.exe --background   start quietly (what runs at start-up)
     RealityAgent.exe --remove-startup
 """
+import http.client
 import http.server
 import json
 import os
@@ -146,15 +147,17 @@ draw();setInterval(draw,3000);
 
 def build_server(home: Path, runners: list, port: int = PORT, log=print, key: str | None = None):
     """The local page and its small API. `runners` is the live list from run_loop."""
-    key = key or secrets.token_urlsafe(24)
     home.mkdir(parents=True, exist_ok=True)
     key_file = home / "ui.key"
-    key_file.write_text(key, encoding="utf-8")
-    try:
-        os.chmod(key_file, 0o600)
-    except OSError:
-        pass
+    key = key or secrets.token_urlsafe(24)
     write_lock = threading.Lock()
+
+    def current_key() -> str:
+        """The key file is the one source of truth, so a page opened with whatever the file holds is always accepted."""
+        try:
+            return key_file.read_text(encoding="utf-8").strip() or key
+        except OSError:
+            return key
 
     class Handler(http.server.BaseHTTPRequestHandler):
         server_version = "RealityAgent"
@@ -185,6 +188,7 @@ def build_server(home: Path, runners: list, port: int = PORT, log=print, key: st
             return (self.headers.get("Host") or "") in (f"127.0.0.1:{self._port()}", f"localhost:{self._port()}")
 
         def _cookie_ok(self):
+            key = current_key()
             for part in (self.headers.get("Cookie") or "").split(";"):
                 name, _, val = part.strip().partition("=")
                 if name == "bre_k" and secrets.compare_digest(val, key):
@@ -196,10 +200,11 @@ def build_server(home: Path, runners: list, port: int = PORT, log=print, key: st
                 return self._json(403, {"error": "Not allowed"})
             url = urlparse(self.path)
             given = (parse_qs(url.query).get("k") or [""])[0]
+            key = current_key()
             if given and secrets.compare_digest(given, key):          # opened from the agent itself: remember the key, then drop it from the address
                 return self._send(302, b"", "text/plain", extra={"Location": "/", "Set-Cookie": f"bre_k={key}; HttpOnly; SameSite=Strict; Path=/"})
             if not self._cookie_ok():
-                return self._send(403, "Open this page from the agent (double-click it again).", "text/plain")
+                return self._send(403, "Open this page by double-clicking RealityAgent.exe.", "text/plain")
             if url.path == "/api/status":
                 return self._json(200, {"systems": status_list(home, runners)})
             if url.path == "/":
@@ -251,7 +256,12 @@ def build_server(home: Path, runners: list, port: int = PORT, log=print, key: st
         daemon_threads = True
         allow_reuse_address = False          # a second copy must fail to start: that is how it knows one is already running
 
-    srv = Server(("127.0.0.1", port), Handler)
+    srv = Server(("127.0.0.1", port), Handler)      # binds first: a second copy fails here and must not touch the key file
+    key_file.write_text(key, encoding="utf-8")
+    try:
+        os.chmod(key_file, 0o600)
+    except OSError:
+        pass
     srv.key = key
     return srv
 
@@ -291,6 +301,27 @@ def run_agent(home: Path, stop: threading.Event, log, runners: list) -> None:
     S.run_loop(cfg, profiles_for(home), stop, log, reload=reload, runners=runners)
 
 
+def show_running(home: Path, port: int, log) -> bool:
+    """A copy is already running (usually started with the computer): open its page with the key it accepts.
+    False, with a line in the log, if whatever holds the port is not this agent."""
+    try:
+        key = (home / "ui.key").read_text(encoding="utf-8").strip()
+    except OSError:
+        key = ""
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        c.request("GET", f"/?k={key}", headers={"Host": f"127.0.0.1:{port}"})
+        ours = c.getresponse().status == 302
+        c.close()
+    except (OSError, http.client.HTTPException):
+        ours = False
+    if not ours:
+        log(f"port {port} is used by another program or by an older agent that must be closed (Task Manager, RealityAgent.exe)")
+        return False
+    webbrowser.open(f"http://127.0.0.1:{port}/?k={key}")
+    return True
+
+
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     home = home_dir()
@@ -302,12 +333,8 @@ def main(argv=None) -> int:
     runners: list = []
     try:
         srv = build_server(home, runners, PORT, log)
-    except OSError:                                              # already running: just show its page
-        try:
-            webbrowser.open(f"http://127.0.0.1:{PORT}/?k={(home / 'ui.key').read_text(encoding='utf-8').strip()}")
-        except OSError:
-            pass
-        return 0
+    except OSError:                                              # the port is taken: normally our own copy, already running
+        return 0 if show_running(home, PORT, log) else 1
     stop = threading.Event()
     threading.Thread(target=srv.serve_forever, daemon=True, name="page").start()
     threading.Thread(target=run_agent, args=(home, stop, log, runners), daemon=True, name="agent").start()

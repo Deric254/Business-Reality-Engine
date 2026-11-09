@@ -8,6 +8,9 @@ export const API_BASE: string = import.meta.env.VITE_API_BASE ?? (import.meta.en
 // A request that gets no answer for this long is abandoned with a clear message, instead of spinning forever.
 const REQUEST_TIMEOUT_MS = 45_000;
 
+/** Fired when the server refuses a change because the subscription has expired (view-only); the renewal notice listens. */
+export const LICENCE_READ_ONLY_EVENT = "licence:read-only";
+
 class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -19,6 +22,7 @@ class ApiError extends Error {
 async function parseError(res: Response): Promise<ApiError> {
   const body = await res.json().catch(() => ({ detail: res.statusText }));
   const detail = typeof body.detail === "string" ? body.detail : `Request failed (${res.status})`;
+  if (body.licence?.read_only) window.dispatchEvent(new Event(LICENCE_READ_ONLY_EVENT));   // an expired subscription refused a change: the renewal notice answers it
   return new ApiError(res.status, detail);
 }
 
@@ -536,7 +540,7 @@ export const demoApi = {
 };
 
 export type SystemLink = {
-  system: string; label: string; what: string; connected: boolean; download_url?: string | null; connector_id?: string;
+  system: string; label: string; what: string; connected: boolean; download_url?: string | null; download_ready?: boolean; connector_id?: string;
   state?: string; headline?: string; detail?: string | null; notice?: string | null; is_active?: boolean; paused?: boolean; checking?: boolean;
   last_seen_at?: string | null; last_synced_at?: string | null; in_sync?: boolean; records?: number;
   status?: { path?: string; path_source?: string; searched?: string[]; candidates?: string[]; scopes?: { id: string; name: string }[]; scope_id?: string | null; scope_name?: string | null; schema_version?: string | null };
@@ -665,6 +669,13 @@ export const masterApi = {
   demoBusinesses: () => request<{ businesses: DemoBusiness[] }>("/api/master/demo-businesses", { method: "POST", body: JSON.stringify({}) }),
   pay: (id: string, amount: number, months: number, reference: string) => request<{ paid_through: string }>(`/api/master/licences/${id}/payments`, { method: "POST", body: JSON.stringify({ amount, months, reference: reference || null }) }),
 };
+/** A business's own subscription, as the renewal notice and pay window need it. Amount and currency are the licence's own. */
+export interface MyLicence {
+  ok: boolean; kind: "licensed" | "overdue" | "free"; read_only: boolean; grace: boolean; payable: boolean;
+  expires?: string | null; days_left?: number; grace_days_left?: number;
+  licence_id?: string; amount_cents?: number; currency?: string; interval_months?: number;
+}
+export const licenceApi = { mine: () => request<MyLicence>("/api/licences/mine") };
 export async function activateLicence(body: { licence_key: string; business_name: string; email: string; password: string }): Promise<void> {
   const res = await fetch(`${API_BASE}/api/licences/activate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   if (!res.ok) throw await parseError(res);

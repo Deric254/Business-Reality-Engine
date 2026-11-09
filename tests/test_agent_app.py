@@ -102,6 +102,44 @@ def test_a_second_copy_does_not_start(ui):
         A.build_server(home, [], port=port)
 
 
+def test_a_second_launch_leaves_the_key_alone_and_opens_the_running_page(ui, monkeypatch):
+    """Regression: the second launch used to overwrite ui.key before noticing the port was taken, so the page it opened was refused."""
+    call, srv, home, port = ui
+    before = (home / "ui.key").read_text()
+    with pytest.raises(OSError):
+        A.build_server(home, [], port=port)
+    assert (home / "ui.key").read_text() == before
+    opened = []
+    monkeypatch.setattr(A.webbrowser, "open", opened.append)
+    monkeypatch.setattr(A, "PORT", port)
+    monkeypatch.setattr(A, "home_dir", lambda: home)
+    assert A.main([]) == 0
+    assert opened and opened[0].endswith(f"?k={before}")
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    c.request("GET", f"/?k={before}", headers={"Host": f"127.0.0.1:{port}"})
+    assert c.getresponse().status == 302
+
+
+def test_an_older_agent_that_lost_its_key_is_still_reachable(ui):
+    """The key file decides: whatever it holds opens the page, even if an older copy rewrote it."""
+    call, srv, home, port = ui
+    (home / "ui.key").write_text("rewritten-by-an-old-copy")
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    c.request("GET", "/?k=rewritten-by-an-old-copy", headers={"Host": f"127.0.0.1:{port}"})
+    assert c.getresponse().status == 302
+
+
+def test_a_stranger_on_the_port_is_reported_not_silently_ignored(tmp_path, monkeypatch):
+    import socket
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); s.listen(1)
+    port = s.getsockname()[1]
+    lines = []
+    monkeypatch.setattr(A.webbrowser, "open", lambda u: lines.append("opened"))
+    assert A.show_running(tmp_path, port, lines.append) is False
+    assert lines and "opened" not in lines and "another program" in lines[0]
+    s.close()
+
+
 def test_a_system_added_while_running_starts_by_itself(client, tmp_path):
     rig = Rig(client, tmp_path, "imara", imara_db)
     cfg = {"base_url": "http://localhost", "systems": [], "state_file": str(tmp_path / "loop.db"), "poll_seconds": 0.05, "heartbeat_seconds": 0, "force_pass_seconds": 0}
@@ -208,7 +246,7 @@ def test_download_link_is_found_by_itself_and_never_points_at_a_missing_file(mon
     monkeypatch.delenv("AGENT_DOWNLOAD_URL", raising=False)
     monkeypatch.delenv("AGENT_GITHUB_REPO", raising=False)
     monkeypatch.delenv("RENDER_GIT_REPO_SLUG", raising=False)
-    ag._DL_CACHE.update(key=None, url=None, until=0.0)
+    ag._DL_CACHE.update(key=None, url=None, ready=False, until=0.0)
     assert ag.agent_download_url() is None                                    # no repository known: no link
     calls = []
 
@@ -222,18 +260,18 @@ def test_download_link_is_found_by_itself_and_never_points_at_a_missing_file(mon
 
     monkeypatch.setenv("RENDER_GIT_REPO_SLUG", "o/r")
     monkeypatch.setattr(ag.urllib.request, "urlopen", published)
-    assert ag.agent_download_url().endswith("/agent-latest/RealityAgent.exe")
+    assert ag.agent_download()[1] is True and ag.agent_download_url().endswith("/agent-latest/RealityAgent.exe")
     assert ag.agent_download_url().endswith("/agent-latest/RealityAgent.exe") and len(calls) == 1      # cached
 
     def missing(req, timeout=0):
         raise OSError("404")
 
-    ag._DL_CACHE.update(key=None, url=None, until=0.0)
+    ag._DL_CACHE.update(key=None, url=None, ready=False, until=0.0)
     monkeypatch.setattr(ag.urllib.request, "urlopen", missing)
-    assert ag.agent_download_url() is None                                    # not built yet: honest, no dead link
+    assert ag.agent_download() == ("https://github.com/o/r/releases/download/agent-latest/RealityAgent.exe", False)   # not seen yet: the button stays, flagged not ready
     monkeypatch.setenv("AGENT_DOWNLOAD_URL", "https://example.com/x.exe")
     assert ag.agent_download_url() == "https://example.com/x.exe"             # an explicit setting always wins
     monkeypatch.setenv("AGENT_DOWNLOAD_URL", "")
     monkeypatch.setenv("RENDER_GIT_REPO_SLUG", "bad repo/../x")
-    ag._DL_CACHE.update(key=None, url=None, until=0.0)
+    ag._DL_CACHE.update(key=None, url=None, ready=False, until=0.0)
     assert ag.agent_download_url() is None                                    # a malformed repository is never fetched

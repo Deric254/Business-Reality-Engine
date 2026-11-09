@@ -1,4 +1,5 @@
 """Business-level views: health summary, relationships, data quality, discovery, external context, FX."""
+import logging
 import re
 from datetime import date
 from typing import Optional
@@ -178,7 +179,8 @@ def analytics(tenant_id: str, days: int = Query(30, ge=0, le=3650), db: Session 
 @router.get("/analytics.pdf")
 def analytics_pdf(tenant_id: str, days: int = Query(30, ge=0, le=3650), db: Session = Depends(get_db),
                   authorization: Optional[str] = Header(default=None)):
-    """The Analytics page as a finished PDF report, built from the records alone (no AI service involved)."""
+    """The Analytics page as a finished PDF report, built from the records alone (no AI service involved): the figures,
+    alerts and insights, plus what changed against the period before."""
     from app.core import periods
     from app.core.analytics_pdf import build_analytics_pdf
     from app.core.detection import ACTIVE_STATES, currency_of
@@ -187,8 +189,15 @@ def analytics_pdf(tenant_id: str, days: int = Query(30, ge=0, le=3650), db: Sess
     a = analytics(tenant_id, days, db, authorization)        # same authorisation and cache as the page itself
     top = (db.query(Alert).filter(Alert.tenant_id == tenant_id, Alert.state.in_(ACTIVE_STATES))
            .order_by(Alert.priority_rank.desc().nullslast(), Alert.created_at.desc()).limit(3).all())
+    try:                                                      # same complete-day windows as the figures above, so the two can never disagree
+        from app.core import movers
+        changes = movers.build(db, tenant_id, days)
+    except Exception:                                         # the report must never fail because one section could not be worked out
+        logging.getLogger("business_reality_engine").exception("analytics.pdf: what-changed section failed")
+        db.rollback()
+        changes = {"improved": [], "worse": [], "note": "This section could not be prepared just now. Every other figure in this report is unaffected."}
     pdf = build_analytics_pdf(a, [{"severity": al.severity.value, "title": al.title, "what_happened": al.what_happened} for al in top],
-                              db.get(Tenant, tenant_id).name, currency_of(db, tenant_id), periods.local_today(db, tenant_id))
+                              db.get(Tenant, tenant_id).name, currency_of(db, tenant_id), periods.local_today(db, tenant_id), changes)
     name = f"analytics-{a['period']['first_day']}-to-{a['period']['last_day']}.pdf"
     return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
 

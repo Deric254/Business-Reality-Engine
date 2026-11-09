@@ -15,8 +15,10 @@ const day = (iso: string, bucket: Bucket = "day") => {
 };
 
 /** Daily sales and expenses for the period, with the previous period's sales as a faint reference line.
- *  Drawn at real pixel width so text stays readable on phones. */
-export function TrendChart({ current, previous, bucket = "day", height = 260 }: { current: TrendDay[]; previous: TrendDay[]; bucket?: Bucket; height?: number }) {
+ *  Drawn at real pixel width so text stays readable on phones. `unfinished` is the calendar's word, not the data's: when the
+ *  period ends today (period.includes_today) its last point is still growing, so the last step is dashed and labelled "so far";
+ *  a finished day with no sales is a real zero and is drawn as one. */
+export function TrendChart({ current, previous, bucket = "day", height = 260, unfinished = false }: { current: TrendDay[]; previous: TrendDay[]; bucket?: Bucket; height?: number; unfinished?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const [w, setW] = useState(640);
   const [hover, setHover] = useState<number | null>(null);
@@ -40,6 +42,10 @@ export function TrendChart({ current, previous, bucket = "day", height = 260 }: 
   }, [current, previous, w, height]);
 
   const { padL, padR, padT, padB, n, max, x, y, line } = geo;
+  const live = unfinished && n > 1;                                       // the last point is still in progress
+  const upTo = live ? n - 1 : n;                                          // points drawn as finished history
+  const part = (vals: number[]) => line(vals.slice(0, upTo));
+  const tail = (vals: number[]) => `M${x(n - 2).toFixed(1)} ${y(vals[n - 2]).toFixed(1)}L${x(n - 1).toFixed(1)} ${y(vals[n - 1]).toFixed(1)}`;
   const salesPath = line(current.map((d) => d.sales));
   const area = `${salesPath}L${x(n - 1).toFixed(1)} ${y(0)}L${x(0).toFixed(1)} ${y(0)}Z`;
   const ticks = [0, 0.5, 1].map((f) => max / 1.08 * f);
@@ -68,8 +74,10 @@ export function TrendChart({ current, previous, bucket = "day", height = 260 }: 
         ))}
         <path d={area} fill={SALES} opacity="0.08" />
         <path d={line(previous.map((d) => d.sales))} fill="none" stroke={PREV} strokeWidth="1.5" strokeDasharray="4 4" />
-        <path d={line(current.map((d) => d.expenses))} fill="none" stroke={EXPENSES} strokeWidth="2" strokeLinejoin="round" />
-        <path d={salesPath} fill="none" stroke={SALES} strokeWidth="2.75" strokeLinejoin="round" strokeLinecap="round" pathLength={1} className="draw" />
+        <path d={part(current.map((d) => d.expenses))} fill="none" stroke={EXPENSES} strokeWidth="2" strokeLinejoin="round" />
+        <path d={part(current.map((d) => d.sales))} fill="none" stroke={SALES} strokeWidth="2.75" strokeLinejoin="round" strokeLinecap="round" pathLength={1} className="draw" />
+        {live && <path d={tail(current.map((d) => d.expenses))} fill="none" stroke={EXPENSES} strokeWidth="2" strokeDasharray="3 3" />}
+        {live && <path d={tail(current.map((d) => d.sales))} fill="none" stroke={SALES} strokeWidth="2.75" strokeDasharray="3 3" strokeLinecap="round" />}
         {hd && hover != null && (
           <g>
             <line x1={x(hover)} x2={x(hover)} y1={padT} y2={height - padB} stroke="#16211e" strokeOpacity="0.25" />
@@ -81,7 +89,7 @@ export function TrendChart({ current, previous, bucket = "day", height = 260 }: 
       {hd && hover != null && (
         <div className="pointer-events-none absolute top-1 z-10 rounded-sm border border-border bg-panel px-3 py-2 text-xs shadow-sm"
           style={{ left: Math.min(Math.max(x(hover) + 12, 8), w - 168) }}>
-          <div className="font-semibold text-ink-text mb-1">{day(hd.date, bucket)}</div>
+          <div className="font-semibold text-ink-text mb-1">{day(hd.date, bucket)}{live && hover === n - 1 ? " (so far)" : ""}</div>
           <div className="flex justify-between gap-6"><span style={{ color: SALES }}>Sales</span><span className="kpi-figure">{Math.round(hd.sales).toLocaleString("en-KE")}</span></div>
           <div className="flex justify-between gap-6"><span style={{ color: EXPENSES }}>Spending</span><span className="kpi-figure">{Math.round(hd.expenses).toLocaleString("en-KE")}</span></div>
         </div>
@@ -89,6 +97,7 @@ export function TrendChart({ current, previous, bucket = "day", height = 260 }: 
       <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-ink-muted mt-1 pl-[46px]">
         <span className="inline-flex items-center gap-1.5"><span className="inline-block w-4 h-[3px] rounded" style={{ background: SALES }} />Sales</span>
         <span className="inline-flex items-center gap-1.5"><span className="inline-block w-4 h-[2px] rounded" style={{ background: EXPENSES }} />Spending</span>
+        {live && <span className="inline-flex items-center gap-1.5"><span className="inline-block w-4 border-t-2 border-dashed" style={{ borderColor: SALES }} />Still in progress</span>}
         {previous.length > 0 && <span className="inline-flex items-center gap-1.5"><span className="inline-block w-4 border-t-2 border-dashed" style={{ borderColor: PREV }} />Sales in the period before</span>}
       </div>
     </div>
