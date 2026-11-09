@@ -382,7 +382,7 @@ def _move_words(x: dict) -> str:
 
 
 def _changes_block(changes: dict | None, cur: str, days: int) -> list:
-    """What got better and what got worse since the period before (app/core/movers.py): the same complete-day windows as
+    """What got better and what got worse since the period before (app/core/movers.py): the same windows as
     every other figure in the report, so this section can never disagree with the tiles above it. Nothing is invented here:
     each line is a figure from the records, ranked by how much money moved."""
     if not changes:

@@ -12,8 +12,8 @@ import { useT } from "../lib/i18n";
 import { useOnLiveChange } from "../lib/liveContext";
 import type { Tenant } from "../api/client";
 
-const PERIODS = [7, 30, 90, 180, 0];                       // 0 = all time
-const periodName = (d: number) => (d === 0 ? "all time" : `last ${d} days`);
+const PERIODS = [1, 7, 30, 90, 180, 0];                       // 0 = all time
+const periodName = (d: number) => (d === 0 ? "all time" : d === 1 ? "today so far" : `last ${d} days`);
 const shortDay = (iso: string, year = false) => new Date(iso + "T00:00:00").toLocaleDateString("en-KE", { day: "numeric", month: "short", ...(year ? { year: "numeric" } : {}) });
 
 function change(cur: number, prev: number): number | null {
@@ -34,7 +34,7 @@ function Kpi({ label, value, delta, goodWhen, days, cur, busy }: { label: string
       <div className="text-sm text-ink-muted">{label}</div>
       <div className="figure text-3xl sm:text-4xl mt-0.5 break-words">{money(value, cur)}</div>
       <div className="text-sm mt-1 kpi-figure" style={{ color: good == null ? "var(--neutral)" : good ? "var(--good)" : "var(--bad)" }}>
-        {delta == null ? (days === 0 ? "All your records, so there is no earlier period" : "No earlier records to compare with") : Math.abs(delta) < 0.5 ? `About the same as the ${days} days before` : `${delta > 0 ? "Up" : "Down"} ${Math.abs(delta).toFixed(0)}% compared with the ${days} days before`}
+        {delta == null ? (days === 0 ? "All your records, so there is no earlier period" : days === 1 ? "Nothing to compare with yet today" : "No earlier records to compare with") : Math.abs(delta) < 0.5 ? (days === 1 ? "About the same as this time yesterday" : `About the same as the ${days} days before`) : `${delta > 0 ? "Up" : "Down"} ${Math.abs(delta).toFixed(0)}% ${days === 1 ? "on this time yesterday" : `compared with the ${days} days before`}`}
       </div>
     </div>
   );
@@ -170,7 +170,7 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
               {PERIODS.map((d) => (
                 <button key={d} aria-pressed={d === days} onClick={() => setDays(d)}
                   className={`px-3 py-1.5 text-sm font-medium ${d === days ? "bg-info text-white" : "bg-panel text-ink-text hover:bg-panel-raised"}`}>
-                  {d === 7 ? "Last 7 days" : d === 0 ? "All time" : `${d} days`}
+                  {d === 1 ? "Today" : d === 7 ? "Last 7 days" : d === 0 ? "All time" : `${d} days`}
                 </button>
               ))}
             </div>
@@ -181,7 +181,7 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
             <Kpi busy={busy} days={days} cur={cur} label={`Spending, ${periodName(days)}`} value={kpis.expenses.current} delta={change(kpis.expenses.current, kpis.expenses.previous)} goodWhen="down" />
             <Kpi busy={busy} days={days} cur={cur} label={`Profit, ${periodName(days)}`} value={kpis.profit.current} delta={kpis.profit.change_pct} goodWhen="up" />
           </div>
-          {!busy && kpis && <p className="text-xs text-ink-muted -mt-3 kpi-figure">{shortDay(kpis.period.first_day, true)} to {shortDay(kpis.period.last_day, true)}, {kpis.period.includes_today ? (days === 1 ? "the day so far" : "today included; it is still in progress, so the change can read lower than it will end up") : "complete days on your business's clock"}.</p>}
+          {!busy && kpis && <p className="text-xs text-ink-muted -mt-3 kpi-figure">{shortDay(kpis.period.first_day, true)} to {shortDay(kpis.period.last_day, true)}, {kpis.period.includes_today ? (days === 1 ? "the day so far" : "today included; it is still in progress, so the change can read lower than it will end up") : "days on your business's clock"}.</p>}
           {busy ? <Skeleton className="h-[260px] w-full" /> : trend && <TrendChart current={trend.current} previous={trend.previous} bucket={trend.bucket} unfinished={trend.period.includes_today} />}
           {!busy && kpis.largest_contributor && kpis.profit.change_pct != null && <p className="text-sm text-ink-muted border-t border-border pt-4">Biggest effect on your profit compared with the {days} days before: <span className="font-semibold text-ink-text">{kpis.largest_contributor}</span>.</p>}
         </Card>

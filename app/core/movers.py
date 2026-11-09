@@ -1,5 +1,5 @@
 """
-What got better and what got worse, since the period before: the same complete-day windows as everywhere else
+What got better and what got worse, since the period before: the same windows as everywhere else
 (app/core/periods.py), so these lines can never disagree with the Overview or Analytics.
 
 Two kinds of line, each ranked by how much money moved:

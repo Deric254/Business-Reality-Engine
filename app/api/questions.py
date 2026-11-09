@@ -31,7 +31,9 @@ def ask(payload: AskRequest, db: Session = Depends(get_db), authorization: Optio
     # Only real answers are kept, so a moment's outage is never remembered; new data drops the tenant's entries.
     import hashlib
     q = " ".join(payload.question.lower().split())
-    key = f"ask:{payload.tenant_id}:{payload.period_days}:{hashlib.sha256(q.encode()).hexdigest()[:20]}"
+    from app.core.periods import local_today
+    day = local_today(db, payload.tenant_id).isoformat()          # "today" moves at the business's midnight, so an answer never crosses it
+    key = f"ask:{payload.tenant_id}:{payload.period_days}:{day}:{hashlib.sha256(q.encode()).hexdigest()[:20]}"
     return cached(key, ASK_CACHE_SECONDS, lambda: answer_question(db, payload.tenant_id, payload.question, payload.period_days),
                   store_if=lambda r: bool(r.get("answered")))
 

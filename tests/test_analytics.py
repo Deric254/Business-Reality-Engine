@@ -94,7 +94,7 @@ def test_forecast_needs_enough_weeks_and_admits_a_poor_fit(db):
     assert len(f["projection"]) == 4 and f["r_squared"] is not None and f["reliable"] is False and "band" in f["note"]
     assert all(p["low"] <= p["expected"] <= p["high"] for p in f["projection"])
     young = build_analytics(db, _seed_young(db), 90)["forecast"]
-    assert young["projection"] == [] and "complete weeks" in young["note"]
+    assert young["projection"] == [] and "needs at least 3 weeks" in young["note"]
 
 
 def _seed_young(db):

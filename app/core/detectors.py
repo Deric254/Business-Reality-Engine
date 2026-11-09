@@ -20,7 +20,7 @@ import statistics
 from datetime import datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
-from app.core.tenant_time import start_of_local_day, tenant_zone
+from app.core.tenant_time import tenant_zone
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -30,7 +30,7 @@ from app.core.alert_engine import post_process_tenant
 from app.core.business_memory import measure_due_cases
 from app.core.detection import (
     _headline, _noun, close_if_cleared, close_orphans, compare_headline, comparison_text, money_formatter, resolve_alert,
-    ACTIVE_STATES, METRIC_FIELDS, _find_open_alert, _in_cooldown, _sum_metric,
+    ACTIVE_STATES, METRIC_FIELDS, _find_open_alert, _in_cooldown, _sum_metric, data_start, earlier_sum, oldest_scaled, partial_day_note, thin_note,
     detect_historical_deviation, detect_threshold_breach, explain_deviation,
 )
 from app.models.alerts import Alert, AlertSeverity, AlertState
@@ -82,10 +82,12 @@ def detect_opportunity(
     now = now or utcnow()
     cur_start = now - timedelta(days=period_days)
     current = _sum_metric(db, tenant_id, entity, field, cur_start, now)
+    first = data_start(db, tenant_id)
     base = [
-        _sum_metric(db, tenant_id, entity, field, now - timedelta(days=period_days * (i + 1)), now - timedelta(days=period_days * i))
+        earlier_sum(db, tenant_id, entity, field, now - timedelta(days=period_days * (i + 1)), now - timedelta(days=period_days * i), first)
         for i in range(1, baseline_periods + 1)
     ]
+    scaled = oldest_scaled(first, now, period_days, baseline_periods)
     base = [v for v in base if v > 0]
     if not base:
         return None
@@ -108,7 +110,8 @@ def detect_opportunity(
          "change_pct": round(change * 100, 2), "period_days": period_days, "direction": direction},
         dict(
             severity=AlertSeverity.opportunity, title=_headline(entity, field, change, period_days),
-            what_happened="Good news. " + comparison_text(entity, field, current, avg, period_days, len(base), money_formatter(db, tenant_id, field)),
+            what_happened=("Good news. " + comparison_text(entity, field, current, avg, period_days, len(base), money_formatter(db, tenant_id, field))
+                           + thin_note(len(base), scaled) + partial_day_note(db, tenant_id, now)),
             magnitude=round(change, 4), period_start=cur_start, period_end=now,
             related_variables=related, possible_explanations=drivers, confidence=0.7 if len(base) >= 2 else 0.4,
             recommended_action="Find out what caused this (a promotion, a new customer, a price change) so you can repeat it.",
@@ -140,15 +143,15 @@ def detect_sustained_trend(
     now = now or utcnow()
     trend = forecast_next_period(db, tenant_id, entity, field, period_days, lookback_periods, now)
     vals = trend.historical_values
-    if len(vals) < 4 or vals[0] <= 0 or vals[-1] <= 0 or sum(1 for v in vals if v > 0) < len(vals) - 1:
-        return None
+    if len(vals) < 3 or vals[0] <= 0 or vals[-1] <= 0 or sum(1 for v in vals if v > 0) < len(vals) - 1:
+        return None                      # a trend needs three points to be a line at all; fewer and there is only a single step
     xs = list(range(len(vals)))
     r2 = _r_squared(xs, vals)
     total = (vals[-1] - vals[0]) / vals[0]
     bad = -total if direction == "drop" else total
     steps_bad = sum(1 for a, b in zip(vals, vals[1:]) if (b < a if direction == "drop" else b > a))
     key = f"trend:{entity}:{field}:{period_days}d"
-    if bad < min_total_change or r2 < min_r2 or steps_bad < len(vals) - 2:
+    if bad < min_total_change or r2 < min_r2 or steps_bad < len(vals) - (2 if len(vals) >= 4 else 1):
         if bad < min_total_change / 2:
             close_if_cleared(db, tenant_id, key, now)
         return None
@@ -165,7 +168,8 @@ def detect_sustained_trend(
         dict(
             severity=sev, title=f"{noun} {have} {verb} steadily over the last {len(vals)} {unit}s",
             what_happened=(f"{noun} {have} {verb} {abs(total)*100:.0f}% over the last {len(vals)} {unit}s, from {fmt(vals[0])} to {fmt(vals[-1])}, "
-                           f"and the move has been steady rather than a one-off. If it continues, the next {unit} would come to about {fmt(trend.forecast_next)}."),
+                           f"and the move has been steady rather than a one-off. If it continues, the next {unit} would come to about {fmt(trend.forecast_next)}."
+                           f"{' Only ' + str(len(vals)) + ' periods are on record so far, so this is an early signal.' if len(vals) < 4 else ''}{partial_day_note(db, tenant_id, now)}"),
             magnitude=round(total, 4), period_start=now - timedelta(days=period_days * len(vals)), period_end=now,
             confidence=round(min(0.9, 0.5 + r2 * 0.4), 2), data_coverage_pct=coverage_mod.coverage_pct_for_entity(db, tenant_id, entity, now=now),
             recommended_action=f"A slow change rarely fixes itself. Look at what changed in your {_noun(entity, field).lower()} around the start of this {'slide' if direction == 'drop' else 'climb'}: prices, suppliers, staff, stock or customers.",
@@ -205,12 +209,15 @@ def detect_daily_anomaly(
                     BusinessEvent.timestamp >= s, BusinessEvent.timestamp < e, BusinessEvent.validation_status == "validated")
             .scalar() or 0
         )
-    history = [totals[d] for d in days[1:]]
-    if sum(1 for v in history if v > 0) < 4:
-        return None                           # not enough same-weekday history to judge
+    first = data_start(db, tenant_id)
+    history = [totals[d] for d in days[1:] if first is not None and utc_bounds(d)[1] > first]     # weekdays before the records began are not "quiet days", they are unknown
+    seen = sum(1 for v in history if v > 0)
+    if seen < 1 or not history:
+        return None                           # no same weekday on record to compare with: there is nothing to judge against
     med = statistics.median(history)
     mad = statistics.median([abs(v - med) for v in history])
-    sigma = max(1.4826 * mad, 0.10 * med)     # floor: never divide by ~0 on very regular data
+    thin = seen < 4                           # few same weekdays: say so, and ask for a far bigger gap before raising it
+    sigma = max(1.4826 * mad, (0.20 if thin else 0.10) * med)     # floor: never divide by ~0 on very regular data
     x = totals[target]
     z = (x - med) / sigma
     rel = (x - med) / med if med else 0.0
@@ -234,9 +241,10 @@ def detect_daily_anomaly(
             severity=sev, title=compare_headline(_noun(entity, field), rel, f"a usual {target.strftime('%A')}", past=True),
             what_happened=(f"On {target.strftime('%A')} {target.isoformat()} {_noun(entity, field).lower()} came to {fmt(x)}. "
                            f"A usual {target.strftime('%A')} is about {fmt(med)} (the middle value of the last {len(history)} {target.strftime('%A')}s)."
-                           f"{' This was a public holiday, which may explain it.' if holiday else ''}"),
+                           f"{' This was a public holiday, which may explain it.' if holiday else ''}"
+                           f"{f' Only {seen} earlier ' + target.strftime('%A') + (' is' if seen == 1 else 's are') + ' on record, so this is an early signal.' if thin else ''}"),
             magnitude=round(rel, 4), period_start=utc_bounds(target)[0], period_end=utc_bounds(target)[1],
-            confidence=0.6, kind="daily", data_coverage_pct=coverage_mod.coverage_pct_for_entity(db, tenant_id, entity, now=now),
+            confidence=0.4 if thin else 0.6, kind="daily", data_coverage_pct=coverage_mod.coverage_pct_for_entity(db, tenant_id, entity, now=now),
             recommended_action="Think back to that day: were you closed, out of stock, short of staff, or were some records not entered?",
         ),
     )
@@ -349,11 +357,13 @@ def run_metric_detectors(db: Session, tenant_id: str, *, entity: str, field: str
 
 def run_tenant_cycle(db: Session, tenant_id: str, metrics: list[dict], now: Optional[datetime] = None, replay: bool = False) -> dict:
     """All detectors for one tenant, then ranking/correlation/escalation over its open alerts.
-    A live run compares whole days: the day in progress is incomplete, and counting it would make every week look
-    like a drop. A run for a given `now` (tests, replays) uses exactly that moment."""
+    A live run counts every record, today's included: it compares equal-length windows that all end at the same moment
+    (see periods.analysis_end), so the day in progress cannot make a week look like a drop. A run for a given `now`
+    (tests, replays) uses exactly that moment."""
     live = now is None
     now = now or utcnow()
-    window = start_of_local_day(now, tenant_zone(db, tenant_id)) if live and not replay else now
+    from app.core.periods import analysis_end
+    window = analysis_end(db, tenant_id, now) if live and not replay else now
     alerts, errors = [], 0
     for m in metrics:
         alerts += run_metric_detectors(db, tenant_id, now=window, **m)

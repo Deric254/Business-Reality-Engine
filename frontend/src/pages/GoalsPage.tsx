@@ -68,7 +68,7 @@ function GoalCard({ tenantId, g, cur, isOwner, onChanged }: { tenantId: string; 
     <Card accent={STATUS[g.status].color} className="space-y-4">
       <GoalSummary g={g} cur={cur} />
       <p className="text-sm text-ink-muted">{g.summary}</p>
-      <p className="text-xs text-ink-faint">{rangeText(g)}{g.data_through ? `. Counts records up to ${new Date(g.data_through + "T00:00:00").toLocaleDateString("en-KE", { day: "numeric", month: "short" })}, today included; the pace is judged on complete days.` : "."}</p>
+      <p className="text-xs text-ink-faint">{rangeText(g)}{g.data_through ? `. Counts records up to ${new Date(g.data_through + "T00:00:00").toLocaleDateString("en-KE", { day: "numeric", month: "short" })}, today included, and so is the pace.` : "."}</p>
       {g.history.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-muted" aria-label="Previous periods">
           <span className="font-medium">Before:</span>

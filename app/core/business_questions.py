@@ -134,9 +134,19 @@ def compute_profit_breakdown(
     revenue_current = _sum_metric(db, tenant_id, "sale", "amount", per.start, per.end)
     expense_current = _sum_metric(db, tenant_id, "expense", "amount", per.start, per.end)
     revenue_previous = expense_previous = 0.0
+    compare_note = None
     if not per.all_time:
-        revenue_previous = _sum_metric(db, tenant_id, "sale", "amount", per.prev_start, per.prev_end)
-        expense_previous = _sum_metric(db, tenant_id, "expense", "amount", per.prev_start, per.prev_end)
+        prev_end = per.prev_end
+        if period_days == 1:
+            # Today so far is compared with yesterday up to the same time of day, never with all of yesterday (that would
+            # read as a collapse every morning). Before today's first record there is nothing to compare yet.
+            if periods._has_records(db, tenant_id, per.start, per.end):
+                prev_end = per.prev_start + ((now or utcnow()) - per.start)
+                compare_note = "the same time yesterday"
+            else:
+                prev_end = per.prev_start
+        revenue_previous = _sum_metric(db, tenant_id, "sale", "amount", per.prev_start, prev_end)
+        expense_previous = _sum_metric(db, tenant_id, "expense", "amount", per.prev_start, prev_end)
 
     profit_current = revenue_current - expense_current
     profit_previous = revenue_previous - expense_previous
@@ -164,6 +174,7 @@ def compute_profit_breakdown(
     return {
         "period_days": period_days,
         "period": per.as_dict(),
+        "compared_with": compare_note,
         "as_of": utcnow().isoformat(timespec="seconds") + "Z",
         "revenue": {"current": revenue_current, "previous": revenue_previous},
         "expenses": {"current": expense_current, "previous": expense_previous},

@@ -171,17 +171,24 @@ def _forecast(db, tenant_id, q, days, label, now):
     f = forecast_days(db, tenant_id, entity, period, now)
     if f:
         trend = "flat" if abs(f.trend_pct) < 2 else f"{'up' if f.trend_pct > 0 else 'down'} {abs(f.trend_pct):.0f}%"
-        return {"answer": (f"If your weekly pattern holds, {noun} over the next {period} days will be about {_money(f.total)} "
-                           f"(likely between {_money(f.low)} and {_money(f.high)}). Strongest day: {f.busiest}; quietest: {f.quietest}. "
-                           f"Based on the last {f.weeks_of_history} weeks, with the underlying trend {trend} over that time. "
-                           "Holidays and paydays are not modelled, so treat this as a guide, not a promise."),
+        return {"answer": (f"If {'your weekly pattern holds' if f.weekly_pattern else 'recent days are typical'}, {noun} over the next {period} days will be about {_money(f.total)} "
+                           f"(likely between {_money(f.low)} and {_money(f.high)}). "
+                           + (f"Strongest day: {f.busiest}; quietest: {f.quietest}. " if f.weekly_pattern else "")
+                           + (f"Based on the last {f.weeks_of_history} weeks, with the underlying trend {trend} over that time. " if f.weekly_pattern
+                              else f"{f.note} ")
+                           + (f"Today's records so far ({_money(f.today_so_far)}) are not in the pattern yet; they join it tomorrow. " if f.today_so_far else "")
+                           + "Holidays and paydays are not modelled, so treat this as a guide, not a promise."),
                 "evidence": {"period_days": period, "method": "weekly pattern + trend", "weeks_of_history": f.weeks_of_history,
                              "forecast_total": f.total, "low": f.low, "high": f.high, "trend_pct": f.trend_pct,
+                             "days_of_history": f.days_of_history, "weekly_pattern": f.weekly_pattern, "today_so_far": f.today_so_far, "note": f.note,
                              "days": [{"date": d.day.isoformat(), "weekday": d.weekday, "expected": d.expected, "low": d.low, "high": d.high} for d in f.days]}}
     t = forecast_next_period(db, tenant_id, entity, "amount", period, 6, now)
     vals = t.historical_values
-    if sum(1 for v in vals if v > 0) < 3:
-        return {"answer": f"There is not enough {noun} history yet (needs at least 3 of the last 6 {period}-day periods) to project the next one.",
+    if sum(1 for v in vals if v > 0) < 1:
+        return {"answer": f"There are no {noun} on record yet, so there is nothing to project from. It starts by itself as soon as records arrive.",
+                "evidence": {"values": vals}}
+    if sum(1 for v in vals if v > 0) < 2:
+        return {"answer": f"Only one {period}-day period of {noun} is on record so far, and a projection needs two to draw a line through. It starts by itself as soon as a second period has records.",
                 "evidence": {"values": vals}}
     unit = "month" if period == 30 else "week"
     return {"answer": (f"If the recent trend continues, {noun} next {unit} will be about {_money(t.forecast_next)} "

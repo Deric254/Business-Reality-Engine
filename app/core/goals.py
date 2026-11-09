@@ -3,8 +3,8 @@ Targets: is the business meeting what its owner set out to do, and if not, why.
 
 A goal is a figure for the CURRENT calendar week, month, quarter or year on the business's own clock. Progress is
 always computed on demand from validated records, so it follows every sync at once and can never disagree with the
-Overview or Analytics. Progress counts every record up to now, today's included. The pace and the projection use complete days only (today is unfinished and would
-bend them; see app/core/periods.py), exactly like alerts.
+Overview or Analytics. Progress counts every record up to now, today's included, and so do the pace and the projection: the time elapsed is
+measured to the same moment as the records (periods.analysis_end), so a part-day cannot bend them.
 
   reach  (sales, profit)   met when the total so far is at or above the target.
   within (spending)        off track the moment the total passes the target.
@@ -13,9 +13,10 @@ For the days still to come the pace so far is carried forward in a straight line
   on_track   the pace lands on or past the target (reach) / at or under it (within)
   at_risk    the pace lands within 10% of missing it
   off_track  the pace lands further away than that, or a 'within' limit is already passed
-Nothing is claimed before there is a complete day to judge by ("not_started"), or before any record exists ("no_data").
+Nothing is claimed before the period is a day old ("not_started": a pace over a few hours would be noise), or before any
+record exists ("no_data"). The figures so far are always shown.
 """
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -65,14 +66,14 @@ def _met(metric: str, actual: float, target: float) -> bool:
     return actual <= target if direction(metric) == "within" else actual >= target
 
 
-def judge(metric: str, actual: float, target: float, elapsed: int, total_days: int, has_data: bool) -> tuple[str, Optional[float]]:
+def judge(metric: str, actual: float, target: float, elapsed: float, total_days: int, has_data: bool) -> tuple[str, Optional[float]]:
     """(status, projected total at the end of the period). Pure, so the rules can be tested without a database."""
     if not has_data:
         return "no_data", None
     reach = direction(metric) == "reach"
     if reach and actual >= target:
         return "met", actual
-    if elapsed <= 0:
+    if elapsed < 1:                       # under a day old: a pace over a few hours is noise, so none is claimed
         return "not_started", None
     projected = actual / elapsed * total_days
     if not reach and actual > target:
@@ -88,18 +89,17 @@ def progress(db: Session, goal: Goal, now: Optional[datetime] = None) -> dict:
     today = periods.local_today(db, tid, now)
     first, last = bounds(goal.cadence, today)
     total_days = (last - first).days + 1
-    elapsed = (today - first).days                                   # complete days so far
     target = float(goal.target_amount)
-    start, done_end = periods.local_midnight_utc(first, tz), periods.local_midnight_utc(today, tz)
-    actual = _total(db, tid, goal.metric, start, periods.local_midnight_utc(today + timedelta(days=1), tz))     # today's records count
-    done = _total(db, tid, goal.metric, start, done_end)                                                     # complete days only, for the pace
+    start = periods.local_midnight_utc(first, tz)
+    end = min(periods.analysis_end(db, tid, now), periods.local_midnight_utc(last + timedelta(days=1), tz))
+    elapsed = max(0.0, (end - start).total_seconds() / 86400)         # days of the period gone, measured to where the records are counted to
+    actual = _total(db, tid, goal.metric, start, periods.local_midnight_utc(today + timedelta(days=1), tz))     # every record counts
     has_data = periods.first_record_day(db, tid, tz) is not None
-    status, projected = judge(goal.metric, done, target, elapsed, total_days, has_data)       # a part-day would bend the pace, so it is not in it
-    if has_data and direction(goal.metric) == "reach" and actual >= target:                   # but a target already reached today is reached
-        status, projected = "met", actual
-    elif has_data and direction(goal.metric) == "within" and actual > target:
+    status, projected = judge(goal.metric, actual, target, elapsed, total_days, has_data)
+    if has_data and direction(goal.metric) == "within" and actual > target:
         status, projected = "off_track", projected if projected is not None else actual
-    remaining = total_days - elapsed                                 # days still to come, today included
+    elapsed_days = int(elapsed)                                      # whole days gone, for display
+    remaining = total_days - elapsed_days                            # days still to come, today included
     fmt = money_formatter(db, tid)
 
     history = []
@@ -112,13 +112,13 @@ def progress(db: Session, goal: Goal, now: Optional[datetime] = None) -> dict:
         history.append({"first_day": f.isoformat(), "last_day": l.isoformat(), "actual": round(got, 2), "met": _met(goal.metric, got, target)})
         cursor = f - timedelta(days=1)
 
-    gap = None if not has_data else round(done - target * elapsed / total_days, 2)         # complete days against an even pace
+    gap = None if not has_data else round(actual - target * min(elapsed, total_days) / total_days, 2)         # so far against an even pace
     return {
         "id": goal.id, "name": goal.name, "metric": goal.metric, "metric_label": METRICS[goal.metric], "cadence": goal.cadence,
         "direction": direction(goal.metric), "target": round(target, 2), "actual": round(actual, 2),
         "pct_of_target": round(actual / target * 100, 1) if target else None,
         "status": status, "projected": None if projected is None else round(projected, 2),
-        "first_day": first.isoformat(), "last_day": last.isoformat(), "days_total": total_days, "days_elapsed": elapsed,
+        "first_day": first.isoformat(), "last_day": last.isoformat(), "days_total": total_days, "days_elapsed": elapsed_days,
         "days_remaining": remaining, "data_through": today.isoformat(), "includes_today": True,
         "pace_gap": gap,                                             # positive = ahead of an even pace (for 'within': above it, which is worse)
         "per_day_needed": round(max(0.0, target - actual) / remaining, 2) if remaining and has_data else None,
@@ -132,7 +132,7 @@ def _sentence(goal: Goal, status: str, actual: float, target: float, projected: 
     if status == "no_data":
         return "No records yet, so there is nothing to measure against this target."
     if status == "not_started":
-        return f"A new {goal.cadence} has just begun: {fmt(actual)} so far, today included. The pace is judged once a full day is recorded."
+        return f"A new {goal.cadence} has just begun: {fmt(actual)} so far, today included. The pace is shown once the {goal.cadence} is a day old."
     if status == "met":
         return f"Target reached: {fmt(actual)} of {fmt(target)}. Everything from here is above it."
     if direction(goal.metric) == "within":
@@ -166,15 +166,18 @@ def drivers(db: Session, goal: Goal, now: Optional[datetime] = None) -> dict:
     tid = goal.tenant_id
     tz = periods.tenant_zone(db, tid)
     today = periods.local_today(db, tid, now)
-    first, _ = bounds(goal.cadence, today)
-    elapsed = (today - first).days
-    if elapsed <= 0:
+    first, last = bounds(goal.cadence, today)
+    start = periods.local_midnight_utc(first, tz)
+    end = min(periods.analysis_end(db, tid, now), periods.local_midnight_utc(last + timedelta(days=1), tz))
+    if end <= start:
         return {"compared": None, "sections": []}
     prev_last = first - timedelta(days=1)
     prev_first, _ = bounds(goal.cadence, prev_last)
-    prev_days = min(elapsed, (prev_last - prev_first).days + 1)          # the same number of days from the start of the previous period
-    cur = (periods.local_midnight_utc(first, tz), periods.local_midnight_utc(today, tz))
-    prev = (periods.local_midnight_utc(prev_first, tz), periods.local_midnight_utc(prev_first + timedelta(days=prev_days), tz))
+    prev_start = periods.local_midnight_utc(prev_first, tz)
+    prev_len = periods.local_midnight_utc(prev_last + timedelta(days=1), tz) - prev_start
+    span = min(end - start, prev_len)                                   # the same stretch from the start of the previous period
+    cur, prev = (start, start + span), (prev_start, prev_start + span)
+    prev_days = max(1, round(span.total_seconds() / 86400))
     specs = []
     if goal.metric in ("sales", "profit"):
         specs += [("Branches", "sale", E.location, +1), ("Products", "sale", E.product_id, +1)]
@@ -190,8 +193,9 @@ def drivers(db: Session, goal: Goal, now: Optional[datetime] = None) -> dict:
         helped = sorted([r for r in rows if r["effect"] > 0], key=lambda r: -r["effect"])[:3]
         if hurt or helped:
             sections.append({"title": title, "hurt": hurt, "helped": helped})
-    return {"compared": {"days": prev_days, "this": [first.isoformat(), (today - timedelta(days=1)).isoformat()],
-                         "before": [prev_first.isoformat(), (prev_first + timedelta(days=prev_days - 1)).isoformat()]},
+    return {"compared": {"days": prev_days, "this": [first.isoformat(), (end - timedelta(microseconds=1)).replace(tzinfo=timezone.utc).astimezone(tz).date().isoformat()],
+                         "before": [prev_first.isoformat(), (prev_start + span - timedelta(microseconds=1)).replace(tzinfo=timezone.utc).astimezone(tz).date().isoformat()],
+                         "includes_today": end > periods.local_midnight_utc(today, tz)},
             "sections": sections}
 
 EXPLAIN_PROMPT = """You explain to a business owner why they are ahead of, on, or behind a target they set.

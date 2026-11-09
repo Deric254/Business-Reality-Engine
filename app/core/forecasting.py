@@ -24,7 +24,7 @@ from typing import Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.detection import _sum_metric
+from app.core.detection import PARTIAL_MIN_COVERAGE, _sum_metric, data_start, earlier_sum
 from app.core.tenant_time import local_midnight_utc, tenant_zone
 from app.models.core import BusinessEvent
 from app.core.clock import utcnow
@@ -60,11 +60,18 @@ def forecast_next_period(
     period_days: int = 7, lookback_periods: int = 6, now: Optional[datetime] = None,
 ) -> PeriodTrend:
     now = now or utcnow()
+    first = data_start(db, tenant_id)
     values = []
     for i in range(lookback_periods, 0, -1):
         end = now - timedelta(days=period_days * (i - 1))
         start = now - timedelta(days=period_days * i)
-        values.append(_sum_metric(db, tenant_id, entity, field, start, end))
+        if i == 1:
+            values.append(_sum_metric(db, tenant_id, entity, field, start, end))      # the latest period is what it is
+        elif first is not None and end - first >= timedelta(0) and (end - max(start, first)) / (end - start) >= PARTIAL_MIN_COVERAGE:
+            values.append(earlier_sum(db, tenant_id, entity, field, start, end, first))     # a part-recorded period is scaled to a whole one
+        elif values:
+            values.append(0.0)                              # a gap after the records began is a real quiet period
+        # before the records began there is no period at all: it is left out, not counted as zero
 
     xs = list(range(len(values)))
     slope, intercept = _least_squares(xs, values)
@@ -82,7 +89,7 @@ def forecast_next_period(
     )
 
 
-LOOKBACK_DAYS, MIN_DAYS, MIN_ACTIVE_DAYS = 84, 28, 12   # twelve weeks at most; four to see a weekly pattern, on 12+ days with sales
+LOOKBACK_DAYS, PATTERN_DAYS = 84, 14   # twelve weeks at most; with two weeks or more each weekday has been seen twice, so the weekly pattern is used
 _Z80 = 1.2816                               # a band that about eight in ten outcomes fall inside, if the pattern holds
 _WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
@@ -107,6 +114,10 @@ class SeasonalForecast:
     busiest: str
     quietest: str
     trend_pct: float                        # change in the seasonally adjusted level across the history
+    days_of_history: int = 0
+    weekly_pattern: bool = True             # False: too little history to tell a Tuesday from a Saturday, so every day gets the average
+    today_so_far: float = 0.0               # what today's records already add up to; today is not in the pattern (it is unfinished) but it is not lost
+    note: str = ""                          # plain words about how early this is, shown with the figures
 
 
 def _daily_totals(db: Session, tenant_id: str, entity: str, first: date, last: date, tz) -> dict[date, float]:
@@ -122,31 +133,35 @@ def _daily_totals(db: Session, tenant_id: str, entity: str, first: date, last: d
 def forecast_days(db: Session, tenant_id: str, entity: str, horizon_days: int = 7, now: Optional[datetime] = None) -> Optional[SeasonalForecast]:
     """The next `horizon_days` days (from tomorrow), day by day, using the business's own weekly pattern: how much
     stronger a Saturday is than a Tuesday, a straight-line trend on what is left once that pattern is removed, and a
-    range from how far past days missed it. Closed weekdays stay at zero. None when there is less than four weeks of
-    history, or too few days with records to show a pattern (weekly totals are not a daily rhythm): nothing is invented."""
+    range from how far past days missed it. Closed weekdays stay at zero. It works from any amount of history: with less
+    than two weeks there is no weekly pattern to learn, so every day gets the average and the result says so. None only
+    when there is no sale/expense on record to learn from. The pattern is learnt from whole days, so today (unfinished) is
+    not one of them; its records so far are reported as `today_so_far`, and they join the pattern tomorrow."""
     now = now or utcnow()
     tz = tenant_zone(db, tenant_id)
     today = now.replace(tzinfo=timezone.utc).astimezone(tz).date()
-    yesterday = today - timedelta(days=1)                       # today is still incomplete, so it is not history
+    yesterday = today - timedelta(days=1)
     totals = _daily_totals(db, tenant_id, entity, today - timedelta(days=LOOKBACK_DAYS), yesterday, tz)
-    if len(totals) < MIN_ACTIVE_DAYS or (yesterday - min(totals)).days + 1 < MIN_DAYS:
+    today_so_far = _daily_totals(db, tenant_id, entity, today, today, tz).get(today, 0.0)
+    if not totals:
         return None
     days = [min(totals) + timedelta(days=i) for i in range((yesterday - min(totals)).days + 1)]
     values = [totals.get(d, 0.0) for d in days]
     mean = sum(values) / len(values)
     if mean <= 0:
         return None
+    patterned = len(days) >= PATTERN_DAYS
     by_weekday = defaultdict(list)
     for d, v in zip(days, values):
         by_weekday[d.weekday()].append(v)
-    factor = {w: (sum(vs) / len(vs)) / mean for w, vs in by_weekday.items()}
+    factor = {w: (sum(vs) / len(vs)) / mean for w, vs in by_weekday.items()} if patterned else {w: 1.0 for w in range(7)}
     adjusted = [(i, v / factor[d.weekday()]) for i, (d, v) in enumerate(zip(days, values)) if factor[d.weekday()] > 0]
-    slope, intercept = _least_squares([float(i) for i, _ in adjusted], [y for _, y in adjusted])
+    slope, intercept = _least_squares([float(i) for i, _ in adjusted], [y for _, y in adjusted]) if patterned else (0.0, mean)
     recent = [y for _, y in adjusted[-28:]]
     recent_level, last_i = sum(recent) / len(recent), len(days) - 1
     level = lambda k: min(max(intercept + slope * (last_i + k), 0.6 * recent_level), 1.4 * recent_level)   # no runaway trends
     residuals = [v - (intercept + slope * i) * factor[d.weekday()] for i, (d, v) in enumerate(zip(days, values))]
-    sigma = math.sqrt(sum(r * r for r in residuals) / max(1, len(residuals) - 2))
+    sigma = math.sqrt(sum(r * r for r in residuals) / max(1, len(residuals) - (2 if patterned else 1)))
     out = []
     for j in range(1, horizon_days + 1):
         day = today + timedelta(days=j)
@@ -156,7 +171,9 @@ def forecast_days(db: Session, tenant_id: str, entity: str, horizon_days: int = 
     strongest, weakest = max(factor, key=factor.get), min(factor, key=factor.get)
     return SeasonalForecast(
         horizon_days, out, round(total, 2), round(max(0.0, total - spread), 2), round(total + spread, 2), len(days) // 7,
-        _WEEKDAYS[strongest], _WEEKDAYS[weakest], round((slope * last_i) / intercept * 100, 1) if intercept > 0 else 0.0)
+        _WEEKDAYS[strongest], _WEEKDAYS[weakest], round((slope * last_i) / intercept * 100, 1) if intercept > 0 else 0.0,
+        days_of_history=len(days), weekly_pattern=patterned, today_so_far=round(today_so_far, 2),
+        note="" if patterned else f"Only {len(days)} day{'s' if len(days) != 1 else ''} of records so far, too few to see which weekdays are stronger, so every day is given the average. It sharpens as records build up.")
 
 
 @dataclass

@@ -61,15 +61,18 @@ class AlertOut(BaseModel):
 
 def _label_periods(db: Session, tenant_id: str, alerts: list) -> list:
     """Say which days each alert is about ("16 Oct to 22 Oct 2026"), so it can be checked against any other screen.
-    Detection compares whole days up to the end of yesterday, so this is the evidence window, not 'now'."""
+    Detection counts every record up to its run, so a window that reaches into today is marked "today so far"."""
     from datetime import timedelta, timezone as _tz
     from app.core.tenant_time import tenant_zone
     tz = tenant_zone(db, tenant_id)
+    from app.core.periods import local_midnight_utc, local_today
+    today_start = local_midnight_utc(local_today(db, tenant_id), tz)
+    tomorrow = local_midnight_utc(local_today(db, tenant_id) + timedelta(days=1), tz)
     day = lambda d: d.replace(tzinfo=_tz.utc).astimezone(tz)
     for a in alerts:
         if a.period_start and a.period_end and a.period_end > a.period_start:
             s, e = day(a.period_start), day(a.period_end - timedelta(microseconds=1))
-            a.period_label = f"{s:%-d %b} to {e:%-d %b %Y}" if (s.date() != e.date()) else f"{s:%-d %b %Y}"
+            a.period_label = (f"{s:%-d %b} to {e:%-d %b %Y}" if (s.date() != e.date()) else f"{s:%-d %b %Y}") + (", today so far" if today_start < a.period_end < tomorrow else "")
     return alerts
 
 

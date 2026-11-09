@@ -15,9 +15,10 @@ to compare against.
 `today` and `today_end` always describe the business's current day, whatever the period, for the views that are not
 sliced by the period (the monthly chart, the heat map, the forecast).
 
-What still uses COMPLETE days only, on purpose, because each one compares or extrapolates and a part-day would bend it:
-the alerts (they compare a window with its own history), the weekly trend/forecast, the daily forecast and the
-"what moved" comparison on goals. They say so on screen.
+Alerts, the weekly trend/forecast and goals' pace use every record too, today's included (see `analysis_end`). They
+compare equal-length windows that end at the same moment (the last 7 x 24 hours against the 7 x 24 hours before, and so
+on), so a part-day cannot bend them, and they say when the latest day is still in progress. The only place a day is
+treated as a unit is the day-by-day forecast, which learns the pattern of whole days and starts from tomorrow.
 """
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -71,6 +72,18 @@ def _has_records(db: Session, tenant_id: str, start: datetime, end: datetime) ->
     return db.query(BusinessEvent.id).filter(
         BusinessEvent.tenant_id == tenant_id, BusinessEvent.entity.in_(("sale", "expense")), BusinessEvent.validation_status == "validated",
         BusinessEvent.timestamp >= start, BusinessEvent.timestamp < end).first() is not None
+
+
+def analysis_end(db: Session, tenant_id: str, now: Optional[datetime] = None) -> datetime:
+    """Where alerts, trends and goals' pace stop looking: right now, once today has any record, so every record counts.
+    Until the first record of today arrives they stop at the start of today (the same rule `resolve` uses), because a
+    business whose data arrives in a nightly export has nothing of today to count, and windows that ended "now" would then
+    hold a quiet last day against full earlier ones. Windows that all end at this moment are equal in length, so the
+    comparison is fair whatever time of day it is."""
+    now = now or utcnow()
+    tz = tenant_zone(db, tenant_id)
+    midnight = local_midnight_utc(local_today(db, tenant_id, now), tz)
+    return now if _has_records(db, tenant_id, midnight, now) else midnight
 
 
 def resolve(db: Session, tenant_id: str, days: int, now: Optional[datetime] = None) -> Period:

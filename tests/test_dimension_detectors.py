@@ -10,7 +10,7 @@ from app.models.alerts import Alert, AlertState
 from app.models.core import BusinessEvent, Connector
 from tests.conftest import _make_tenant
 
-NOW = dt.datetime(2026, 9, 30, 21, 0)          # 1 Oct, 00:00 in Nairobi: whole days up to 30 Sep
+NOW = dt.datetime(2026, 9, 30, 21, 0)          # 1 Oct, 00:00 in Nairobi
 
 
 @pytest.fixture()
@@ -25,6 +25,9 @@ def tid(db):
     t = _make_tenant("dimdet")
     c = Connector(tenant_id=t, name="Books", connector_type="file", expected_frequency="periodic", is_active=True)
     db.add(c); db.commit()
+    db.add(BusinessEvent(tenant_id=t, connector_id=c.id, source="t", entity="sale", event_type="sale.x", timestamp=NOW - dt.timedelta(days=125),
+                         amount=0, validation_status="validated"))      # the books began before the oldest window the tests fill
+    db.commit()
     return t
 
 
@@ -60,13 +63,28 @@ def test_category_spike_names_the_category_and_the_branch(db, tid):
     assert "Rent" not in got[0].title                                   # a steady cost is not blamed
 
 
-def test_category_with_no_usual_or_a_small_rise_stays_quiet(db, tid):
+def test_a_small_rise_stays_quiet_and_one_earlier_window_is_enough_but_says_how_early(db, tid):
     put(db, tid, "expense", 1, 10_000, cat="Licences"); put(db, tid, "expense", 0, 90_000, cat="Licences")      # one earlier window only
     for w in (1, 2, 3):
         put(db, tid, "expense", w, 10_000, cat="Fuel")
     put(db, tid, "expense", 0, 13_000, cat="Fuel")                                                              # +30%
     db.commit()
-    assert DD.detect_category_spikes(db, tid, NOW) == []
+    got = DD.detect_category_spikes(db, tid, NOW)
+    assert [a.evidence["category"] for a in got] == ["Licences"]                  # no minimum history: one earlier window is a usual
+    assert "early signal" in got[0].what_happened and float(got[0].confidence) <= 0.5
+
+
+def test_a_window_only_partly_on_record_is_scaled_not_read_as_a_rise(db):
+    """The books began 45 days ago: the oldest window holds 15 of its 30 days. Spending that is steady must not read as a rise."""
+    t = _make_tenant("dimpart"); c = Connector(tenant_id=t, name="Books", connector_type="file", expected_frequency="periodic", is_active=True)
+    db.add(c); db.commit()
+    for day in range(1, 46):                                                   # a record every day for 45 days, always the same
+        db.add(BusinessEvent(tenant_id=t, connector_id=c.id, source="t", entity="expense", event_type="e", timestamp=NOW - dt.timedelta(days=day),
+                             amount=1_000, product_id="Fuel", validation_status="validated"))
+        db.add(BusinessEvent(tenant_id=t, connector_id=c.id, source="t", entity="sale", event_type="s", timestamp=NOW - dt.timedelta(days=day),
+                             amount=5_000, validation_status="validated"))
+    db.commit()
+    assert DD.detect_category_spikes(db, t, NOW) == []
 
 
 def test_one_large_payment_gets_one_alert_not_two(db, tid):

@@ -272,11 +272,11 @@ def test_profit_risk_projection_and_already_negative(db):
 
 def test_insufficient_data_alert_then_self_resolves(db):
     t = _make_tenant("unk"); c = mk_conn(db, t)
-    weekly(db, t, c, "sale", [100, 100])
+    weekly(db, t, c, "sale", [100])                                       # only the latest period has records: nothing earlier to compare with
     a = detect_insufficient_data(db, t, "sale", "amount", 7, 4, now=NOW)
-    assert a and a.kind == "unknown" and a.severity == AlertSeverity.informational and a.evidence["periods_with_data"] == 2
+    assert a and a.kind == "unknown" and a.severity == AlertSeverity.informational and a.evidence["periods_with_data"] == 0
     assert detect_insufficient_data(db, _make_tenant("unk0"), "sale", "amount", 7, 4, now=NOW) is None   # no data at all: onboarding
-    weekly(db, t, c, "sale", [100, 100, 100, 100, 100], now=NOW - dt.timedelta(days=14))
+    weekly(db, t, c, "sale", [100], now=NOW - dt.timedelta(days=7))      # one earlier period is enough: the alerts speak, and say how early
     assert detect_insufficient_data(db, t, "sale", "amount", 7, 4, now=NOW) is None
     db.expire_all()
     assert db.get(Alert, a.id).state == AlertState.resolved

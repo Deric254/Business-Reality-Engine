@@ -214,7 +214,7 @@ function Body({ tenant }: { tenant: Tenant }) {
             <ChartCard title="Where weekly sales are heading"
               sub={a.forecast.projection.length ? `A straight-line view of your last ${a.forecast.weeks.length} complete weeks.${a.forecast.reliable ? "" : " Weekly sales swing a lot, so read the range, not the middle line."} Not affected by the period buttons.` : a.forecast.note}
               table={a.forecast.weeks.length ? { head: ["Week from", "Sales", "Spending", "Outlook"], numeric: [1, 2, 3], rows: [...a.forecast.weeks.map((x) => [x.week_start, x.sales, x.spending, "—"]), ...a.forecast.projection.map((p) => [p.week_start, "—", "—", `${fmtFull(p.low)} to ${fmtFull(p.high)}`])] } : undefined}>
-              {a.forecast.weeks.length >= 2 ? <ForecastChart weeks={a.forecast.weeks} projection={a.forecast.projection} cur={cur} /> : <p className="text-sm text-ink-muted py-10 text-center">Needs a few complete weeks of sales before it can draw anything.</p>}
+              {a.forecast.weeks.length >= 2 ? <ForecastChart weeks={a.forecast.weeks} projection={a.forecast.projection} cur={cur} /> : <p className="text-sm text-ink-muted py-10 text-center">Needs three weeks of sales before it can draw a trend line.</p>}
               {a.forecast.r_squared != null && <p className="text-xs text-ink-faint mt-2">How well a straight line fits: {(a.forecast.r_squared * 100).toFixed(0)}%. Weekly sales vary about {a.forecast.weekly_noise_pct?.toFixed(0)}% around their average.</p>}
             </ChartCard>
           </div>

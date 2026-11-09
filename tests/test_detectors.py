@@ -41,8 +41,8 @@ def put(db, tid, cid, entity, ts, amount):
 def weekly(db, tid, cid, entity, per_period, period_days=7, now=NOW):
     """per_period[0] = most recent period (the 'current' one), then older ones."""
     for i, total in enumerate(per_period):
-        mid = now - dt.timedelta(days=period_days * i + period_days / 2)
-        put(db, tid, cid, entity, mid, total)
+        at = now - dt.timedelta(days=period_days * (i + 1)) + dt.timedelta(hours=1)     # near the start of its period: the records begin with the oldest period, not half-way through it
+        put(db, tid, cid, entity, at, total)
     db.commit()
 
 
@@ -153,11 +153,19 @@ def test_daily_anomaly_respects_weekday_seasonality(db, tid):
     assert D.detect_daily_anomaly(db, tid, "sale", "amount", "drop", now=NOW) is None
 
 
-def test_daily_anomaly_needs_history_and_ignores_good_direction(db, tid):
+def test_daily_anomaly_works_on_thin_history_but_asks_for_a_bigger_gap_and_says_so(db, tid):
     c = connector(db, tid)
     s = tuesday_series(300)
-    daily(db, tid, c.id, "sale", {k: v for k, v in list(s.items())[:4]})     # only target + 3 history days
-    assert D.detect_daily_anomaly(db, tid, "sale", "amount", "drop", now=NOW) is None
+    tgt = dt.date(2026, 3, 17)
+    daily(db, tid, c.id, "sale", {d: v for d, v in s.items() if d == tgt or d >= tgt - dt.timedelta(days=21)})     # the target + 3 earlier Tuesdays
+    a = D.detect_daily_anomaly(db, tid, "sale", "amount", "drop", now=NOW)   # 300 against ~1000: a collapse, so it is raised
+    assert a and "early signal" in a.what_happened and float(a.confidence) < 0.6
+    t0 = _make_tenant("thin-mild"); c0 = connector(db, t0)
+    daily(db, t0, c0.id, "sale", {k: v for k, v in tuesday_series(700).items() if k >= dt.date(2026, 2, 24)})     # -30% on 3 Tuesdays: ordinary swing, not raised on so little
+    assert D.detect_daily_anomaly(db, t0, "sale", "amount", "drop", now=NOW) is None
+    t1 = _make_tenant("no-history"); c1 = connector(db, t1)
+    daily(db, t1, c1.id, "sale", {dt.date(2026, 3, 17): 100})                 # nothing earlier to compare with
+    assert D.detect_daily_anomaly(db, t1, "sale", "amount", "drop", now=NOW) is None
     t2 = _make_tenant("good"); c2 = connector(db, t2)
     daily(db, t2, c2.id, "sale", tuesday_series(3000))
     assert D.detect_daily_anomaly(db, t2, "sale", "amount", "drop", now=NOW) is None

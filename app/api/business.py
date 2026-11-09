@@ -189,7 +189,7 @@ def analytics_pdf(tenant_id: str, days: int = Query(30, ge=0, le=3650), db: Sess
     a = analytics(tenant_id, days, db, authorization)        # same authorisation and cache as the page itself
     top = (db.query(Alert).filter(Alert.tenant_id == tenant_id, Alert.state.in_(ACTIVE_STATES))
            .order_by(Alert.priority_rank.desc().nullslast(), Alert.created_at.desc()).limit(3).all())
-    try:                                                      # same complete-day windows as the figures above, so the two can never disagree
+    try:                                                      # same windows as the figures above, so the two can never disagree
         from app.core import movers
         changes = movers.cached_build(db, tenant_id, days)
     except Exception:                                         # the report must never fail because one section could not be worked out

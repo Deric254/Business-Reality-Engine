@@ -8,26 +8,30 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core import coverage as coverage_mod
-from app.core.detection import _be, _in_cooldown, _noun, _one_off_driver, money_formatter, METRIC_FIELDS, _find_open_alert, _sum_metric, close_if_cleared, resolve_alert
+from app.core.detection import data_start, earlier_sum, partial_day_note, thin_note, _be, _in_cooldown, _noun, _one_off_driver, money_formatter, METRIC_FIELDS, _find_open_alert, _sum_metric, close_if_cleared, resolve_alert
 from app.core.detectors import _period_phrase, _r_squared, _upsert
 from app.core.forecasting import _least_squares, forecast_next_period
 from app.models.alerts import Alert, AlertSeverity
 from app.models.core import BusinessEvent
 from app.core.clock import utcnow
 
-MIN_PERIODS_WITH_DATA = 4
+MIN_PERIODS_WITH_DATA = 2      # a line needs two points; fewer periods than that and there is only a single figure
+PROFIT_TREND_PERIODS = 4       # projecting when profit would reach zero needs a line over several periods; before that the plain loss check (one day is enough) speaks
 
 
 def _period_values(db, tenant_id, entity, field, period_days, n, now):
-    """Oldest -> newest totals for n consecutive complete periods ending at `now`."""
-    return [_sum_metric(db, tenant_id, entity, field, now - timedelta(days=period_days * i),
-                        now - timedelta(days=period_days * (i - 1))) for i in range(n, 0, -1)]
+    """Oldest -> newest totals for n consecutive periods ending at `now`. A period only partly on record (the records
+    begin inside it) is scaled to a whole one; one before the records begin has nothing and counts 0."""
+    first = data_start(db, tenant_id)
+    return [(_sum_metric(db, tenant_id, entity, field, now - timedelta(days=period_days), now) if i == 1 else
+             earlier_sum(db, tenant_id, entity, field, now - timedelta(days=period_days * i), now - timedelta(days=period_days * (i - 1)), first))
+            for i in range(n, 0, -1)]
 
 
 def detect_forecast_deviation(db: Session, tenant_id: str, entity: str, field: str, direction: str,
                               period_days: int = 7, threshold: float = 0.25,
                               now: Optional[datetime] = None) -> Optional[Alert]:
-    """The last complete period vs what the trend of the periods BEFORE it predicted (Section 43)."""
+    """The latest period vs what the trend of the periods BEFORE it predicted (Section 43)."""
     if field not in METRIC_FIELDS:
         raise ValueError(f"field must be one of {METRIC_FIELDS}")
     now = now or utcnow()
@@ -61,8 +65,9 @@ def detect_forecast_deviation(db: Session, tenant_id: str, entity: str, field: s
          "history": [round(v, 2) for v in history], "period_days": period_days, "direction": direction,
          "method": "linear trend of prior periods"},
         dict(kind="forecast", severity=sev, title=f"{noun} {_be(noun)} {abs(rel)*100:.0f}% {word} where your recent trend was heading",
-             what_happened=(f"In the last {period_days} complete days {noun.lower()} came to {fmt(actual)}. The direction of your previous {unit}s "
-                            f"pointed to about {fmt(pred)}, so the result is {fmt(abs(actual - pred))} {word} that."),
+             what_happened=(f"In the last {period_days} days {noun.lower()} came to {fmt(actual)}. The direction of your previous {unit}s "
+                            f"pointed to about {fmt(pred)}, so the result is {fmt(abs(actual - pred))} {word} that."
+                            f"{thin_note(sum(1 for v in history if v > 0), False) if sum(1 for v in history if v > 0) < 3 else ''}{partial_day_note(db, tenant_id, now)}"),
              magnitude=round(rel, 4), period_start=now - timedelta(days=period_days), period_end=now,
              confidence=0.55, data_coverage_pct=coverage_mod.coverage_pct_for_entity(db, tenant_id, entity, now=now),
              recommended_action="Find out what changed in this period compared with before: prices, stock, staff, opening hours, or a one-off event."),
@@ -75,7 +80,7 @@ def _already_explained(db: Session, tenant_id: str, entity: str, field: str, per
     return _find_open_alert(db, tenant_id, key) is not None or _in_cooldown(db, tenant_id, key, now)
 
 
-LOSS_WINDOW_DAYS, LOSS_MIN_DAYS_WITH_SALES = 30, 2
+LOSS_WINDOW_DAYS, LOSS_MIN_DAYS_WITH_SALES = 30, 1
 
 
 def _loss_one_off(db: Session, tenant_id: str, start: datetime, end: datetime, spent: float, sold: float, fmt) -> Optional[tuple[str, str]]:
@@ -114,7 +119,7 @@ def _current_loss(db: Session, tenant_id: str, now: datetime, period_days: int) 
     sev = AlertSeverity.high if spent >= 1.25 * sold else AlertSeverity.medium
     fmt = money_formatter(db, tenant_id)
     what_happened = (f"Over the last {LOSS_WINDOW_DAYS} days (or since your records began) you spent {fmt(spent)} and sold {fmt(sold)}, "
-                     f"which is a loss of {fmt(loss)}. This is simple subtraction of your records, not a forecast.")
+                     f"which is a loss of {fmt(loss)}. This is simple subtraction of your records, not a forecast.{partial_day_note(db, tenant_id, now)}")
     action = "Look at your biggest costs, and check that every sale is being recorded. If this is a launch or a big stock purchase, compare it with your plan."
     why = _loss_one_off(db, tenant_id, start, now, spent, sold, fmt)
     if why:
@@ -137,7 +142,9 @@ def detect_profit_risk(db: Session, tenant_id: str, period_days: int = 7, horizo
     now = now or utcnow()
     sales = _period_values(db, tenant_id, "sale", "amount", period_days, 6, now)
     exp = _period_values(db, tenant_id, "expense", "amount", period_days, 6, now)
-    if sum(1 for v in sales if v > 0) < MIN_PERIODS_WITH_DATA or sum(1 for v in exp if v > 0) < MIN_PERIODS_WITH_DATA:
+    lead = next((i for i, (s_, e_) in enumerate(zip(sales, exp)) if s_ > 0 or e_ > 0), 0)
+    sales, exp = sales[lead:], exp[lead:]                  # periods before the records began are not zero-profit periods, they are unknown
+    if sum(1 for v in sales if v > 0) < PROFIT_TREND_PERIODS or sum(1 for v in exp if v > 0) < PROFIT_TREND_PERIODS:
         return _current_loss(db, tenant_id, now, period_days)       # too little history for a trend, but a loss needs no baseline
     net = [s - e for s, e in zip(sales, exp)]
     xs = list(range(len(net)))
@@ -154,9 +161,9 @@ def detect_profit_risk(db: Session, tenant_id: str, period_days: int = 7, horizo
         return None
     sev = AlertSeverity.high if already else AlertSeverity.medium
     fmt = money_formatter(db, tenant_id)
-    msg = (f"In the last {period_days} complete days you spent {fmt(-current)} more than you sold." if already else
+    msg = (f"In the last {period_days} days you spent {fmt(-current)} more than you sold." if already else
            f"Your sales minus spending is shrinking. If it keeps going this way you could start losing money within about {crossing * period_days} days.")
-    text = msg if already else msg + " This is a forecast based on your past weeks, not a certainty."
+    text = (msg if already else msg + " This is a forecast based on your past weeks, not a certainty.") + partial_day_note(db, tenant_id, now)
     action = "See which costs grew and whether sales are softening, and decide what to cut or fix before it turns into a loss."
     if already:
         why = _loss_one_off(db, tenant_id, now - timedelta(days=period_days), now, exp[-1], sales[-1], fmt)
@@ -168,7 +175,7 @@ def detect_profit_risk(db: Session, tenant_id: str, period_days: int = 7, horizo
          "trend_fit_r2": round(fit, 2), "periods_to_zero": crossing, "projection": True},
         dict(kind="risk", severity=sev, title="Your profit is shrinking" if not already else "Spending exceeds sales",
              what_happened=text,
-             magnitude=None, period_start=now - timedelta(days=period_days * 6), period_end=now,
+             magnitude=None, period_start=now - timedelta(days=period_days * len(net)), period_end=now,
              confidence=round(min(0.7, 0.35 + fit * 0.35), 2),
              data_coverage_pct=coverage_mod.coverage_pct_for_entity(db, tenant_id, "sale", now=now),
              recommended_action=action),
@@ -181,20 +188,21 @@ def detect_insufficient_data(db: Session, tenant_id: str, entity: str, field: st
     Closes itself once enough history exists."""
     now = now or utcnow()
     key = f"unknown:{entity}:{field}:{period_days}d"
-    need = max(MIN_PERIODS_WITH_DATA, baseline_periods + 1)
-    have = sum(1 for v in _period_values(db, tenant_id, entity, field, period_days, need, now) if v > 0)
+    first = data_start(db, tenant_id)
+    have = sum(1 for i in range(1, baseline_periods + 1)
+               if earlier_sum(db, tenant_id, entity, field, now - timedelta(days=period_days * (i + 1)), now - timedelta(days=period_days * i), first) > 0)
     open_alert = _find_open_alert(db, tenant_id, key)
     any_data = db.query(BusinessEvent.id).filter(BusinessEvent.tenant_id == tenant_id, BusinessEvent.entity == entity).first()
-    if have >= need or not any_data:
+    if have >= 1 or not any_data:                 # one earlier period is enough to compare with; the alerts say how early they are
         if open_alert:
             resolve_alert(db, open_alert, now)
         return None
     return _upsert(
         db, tenant_id, key, now,
-        {"metric": f"{entity}.{field}", "periods_with_data": have, "periods_needed": need, "period_days": period_days},
-        dict(kind="unknown", severity=AlertSeverity.informational, title=f"Not enough history yet to judge {_noun(entity, field).lower()}",
-             what_happened=(f"Only {have} of the last {need} {period_days}-day periods have {entity} records, so we cannot tell yet whether "
-                            f"{_noun(entity, field).lower()} are normal. Until then, no alert about it does not mean all is well."),
+        {"metric": f"{entity}.{field}", "periods_with_data": have, "periods_needed": 1, "period_days": period_days},
+        dict(kind="unknown", severity=AlertSeverity.informational, title=f"Nothing earlier yet to compare {_noun(entity, field).lower()} with",
+             what_happened=(f"There are {entity} records, but none from before the last {period_days} days, so there is nothing to compare "
+                            f"{_noun(entity, field).lower()} with yet. Comparison starts by itself as soon as an earlier period has records; until then, no alert about it does not mean all is well."),
              confidence=1.0, data_coverage_pct=coverage_mod.coverage_pct_for_entity(db, tenant_id, entity, now=now),
              recommended_action="Keep your data source connected, or upload older records so monitoring can start sooner."),
     )

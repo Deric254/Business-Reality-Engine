@@ -48,6 +48,56 @@ def _sum_metric(db: Session, tenant_id: str, entity: str, field: str, start: dat
     return float(result or 0)
 
 
+PARTIAL_MIN_COVERAGE = 0.25      # an earlier window with less than a quarter of its days on record is a sliver, not a "usual"
+FULL_COVERAGE = 0.9              # a window on record for 90% or more of its length is whole: records begin hours in, not at the stroke of the window
+
+
+def data_start(db: Session, tenant_id: str) -> Optional[datetime]:
+    """When this business's records begin (its first validated sale or expense), or None when there are none."""
+    return (db.query(func.min(BusinessEvent.timestamp))
+            .filter(BusinessEvent.tenant_id == tenant_id, BusinessEvent.entity.in_(("sale", "expense")),
+                    BusinessEvent.validation_status == "validated").scalar())
+
+
+def earlier_sum(db: Session, tenant_id: str, entity: str, field: str, start: datetime, end: datetime, first: Optional[datetime]) -> float:
+    """The total of an EARLIER window used as a "usual". Records that begin part-way through it (the business connected
+    ten days ago, so the window before the last one is only partly on record) are scaled up to a whole window, so a thin
+    history is never read as a rise or a fall. A window before the records begin is 0 (nothing to compare with), and so
+    is a sliver (less than PARTIAL_MIN_COVERAGE of it on record)."""
+    if first is None or end <= first:
+        return 0.0
+    covered = (end - max(start, first)).total_seconds() / (end - start).total_seconds()
+    if covered < PARTIAL_MIN_COVERAGE:
+        return 0.0
+    total = _sum_metric(db, tenant_id, entity, field, start, end)
+    return total if covered >= FULL_COVERAGE else total / covered
+
+
+def oldest_scaled(first: Optional[datetime], now: datetime, period_days: int, baseline_periods: int) -> bool:
+    """Was the oldest earlier window only partly on record (so `earlier_sum` scaled it up)?"""
+    if first is None:
+        return False
+    start, end = now - timedelta(days=period_days * (baseline_periods + 1)), now - timedelta(days=period_days * baseline_periods)
+    covered = (end - max(start, first)).total_seconds() / (end - start).total_seconds()
+    return PARTIAL_MIN_COVERAGE <= covered < FULL_COVERAGE
+
+
+def partial_day_note(db: Session, tenant_id: str, end: datetime) -> str:
+    """A sentence for alerts whose window ends part-way through a day, so the owner knows today so far is counted."""
+    from app.core.tenant_time import start_of_local_day, tenant_zone
+    return "" if end == start_of_local_day(end, tenant_zone(db, tenant_id)) else " Today so far is included, so the latest figures can still change as more records arrive."
+
+
+def thin_note(periods_used: int, scaled: bool) -> str:
+    """A sentence for alerts judged on little history: still shown, but honest about how early the signal is."""
+    bits = []
+    if periods_used < 2:
+        bits.append(f"This rests on only {periods_used} earlier period of records, so treat it as an early signal.")
+    if scaled:
+        bits.append("The earliest period had only part of its days on record, so it was scaled up to a full period.")
+    return (" " + " ".join(bits)) if bits else ""
+
+
 _NOUNS = {("sale", "amount"): "Sales", ("expense", "amount"): "Spending", ("sale", "quantity"): "Items sold"}
 
 
@@ -101,7 +151,7 @@ def comparison_text(entity: str, field: str, current: float, usual: float, perio
     noun = _noun(entity, field).lower()
     fmt = fmt or (lambda v: f"{v:,.0f}")
     gap = abs(current - usual)
-    return (f"In the last {period_days} complete days {noun} came to {fmt(current)}. In a usual {period_days} days it is about {fmt(usual)} "
+    return (f"In the last {period_days} days {noun} came to {fmt(current)}. In a usual {period_days} days it is about {fmt(usual)} "
             f"(the average of the {periods_used} period{'s' if periods_used != 1 else ''} of {period_days} days before). "
             f"That is {fmt(gap)} {'more' if current > usual else 'less'} than usual.")
 
@@ -431,11 +481,13 @@ def detect_historical_deviation(
     current_start = now - timedelta(days=period_days)
     current_value = _sum_metric(db, tenant_id, entity, field, current_start, now)
 
+    first = data_start(db, tenant_id)
     baseline_values = []
     for i in range(1, baseline_periods + 1):
         b_end = now - timedelta(days=period_days * i)
         b_start = now - timedelta(days=period_days * (i + 1))
-        baseline_values.append(_sum_metric(db, tenant_id, entity, field, b_start, b_end))
+        baseline_values.append(earlier_sum(db, tenant_id, entity, field, b_start, b_end, first))
+    scaled = oldest_scaled(first, now, period_days, baseline_periods)
 
     valid_baseline = [v for v in baseline_values if v > 0]
     if not valid_baseline:
@@ -468,7 +520,9 @@ def detect_historical_deviation(
         "dedup_key": dedup_key,
         "confirmed_at": now.isoformat(),          # the last time a check found this still true (see alert_engine.close_unconfirmed)
     }
-    what_happened = comparison_text(entity, field, current_value, baseline_avg, period_days, len(valid_baseline), money_formatter(db, tenant_id, field))
+    what_happened = (comparison_text(entity, field, current_value, baseline_avg, period_days, len(valid_baseline), money_formatter(db, tenant_id, field))
+                     + thin_note(len(valid_baseline), scaled) + partial_day_note(db, tenant_id, now))
+    evidence["includes_today"] = bool(partial_day_note(db, tenant_id, now))
 
     # Explanation (Section 27): compare current period against the single
     # most recent baseline period (not the multi-period average — that's a

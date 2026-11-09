@@ -28,5 +28,5 @@ def local_midnight_utc(day: date, tz: ZoneInfo) -> datetime:
 
 
 def start_of_local_day(now: datetime, tz: ZoneInfo) -> datetime:
-    """Midnight at the start of the business's current day, as naive UTC. Everything before it is a complete day."""
+    """Midnight at the start of the business's current day, as naive UTC. Records from here on belong to today."""
     return local_midnight_utc(now.replace(tzinfo=timezone.utc).astimezone(tz).date(), tz)

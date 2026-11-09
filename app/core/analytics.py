@@ -34,7 +34,7 @@ from app.models.core import BusinessEvent as E
 _GENERIC_BUYER = re.compile(r"walk[\s-]*in|^cash|unknown|anonymous|general|^customer$|^n/?a$|^none$|misc|various", re.I)
 NOT_RECORDED = "Not recorded"
 HEATMAP_DAYS = 182            # 26 weeks
-FORECAST_WEEKS, FORECAST_AHEAD, MIN_FORECAST_WEEKS = 12, 4, 6
+FORECAST_WEEKS, FORECAST_AHEAD, MIN_FORECAST_WEEKS = 12, 4, 3      # three weeks are the fewest a straight line can be fitted through with any spread
 _Z80 = 1.2816                 # an 80% band, as the existing daily forecast uses
 
 
@@ -246,7 +246,7 @@ def _forecast(daily: dict, per) -> dict:
     out = {"weeks": weeks, "projection": [], "method": "straight-line trend of your complete weeks", "r_squared": None, "reliable": False}
     n = len(weeks)
     if n < MIN_FORECAST_WEEKS:
-        out["note"] = f"Needs at least {MIN_FORECAST_WEEKS} complete weeks of sales; there are {n}."
+        out["note"] = f"A trend line needs at least {MIN_FORECAST_WEEKS} weeks of sales; there {'is' if n == 1 else 'are'} {n} so far. It appears by itself as the weeks fill in."
         return out
     xs, ys = list(range(n)), [w["sales"] for w in weeks]
     slope, intercept = _least_squares(xs, ys)
@@ -266,7 +266,10 @@ def _forecast(daily: dict, per) -> dict:
                                   "low": round(max(0.0, mid - half), 2), "high": round(mid + half, 2)})
     out.update(r_squared=round(r2, 3), slope_per_week=round(slope, 2), reliable=r2 >= 0.3,
                average_week=round(my, 2), weekly_noise_pct=round(sd / my * 100, 1) if my else None)
-    if r2 < 0.3:
+    if n < 6:
+        out["note"] = f"Only {n} weeks of sales so far, so this is an early view: read the range, not the middle line."
+        out["reliable"] = False
+    elif r2 < 0.3:
         out["note"] = "Weekly sales swing more than any trend explains, so treat the band as the honest answer and the middle line as a guide only."
     return out
 

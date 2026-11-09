@@ -102,7 +102,7 @@ function ChangeColumn({ title, lines, color, empty, cur }: { title: string; line
   );
 }
 
-/** What got better and what got worse since the period before, from the same complete-day windows as every other figure. */
+/** What got better and what got worse since the period before, from the same windows as every other figure. */
 export function ChangesCard({ changes, busy, label }: { changes: Changes | null; busy: boolean; label: string }) {
   if (!changes) return null;
   const nothing = !changes.improved.length && !changes.worse.length;

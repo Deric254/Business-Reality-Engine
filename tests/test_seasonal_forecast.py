@@ -57,19 +57,27 @@ def test_the_range_widens_when_days_are_unpredictable(client, db):
     assert f.high - f.low > 100                                                                       # honest about the noise
 
 
-def test_less_than_four_weeks_gives_no_forecast_rather_than_an_invented_one(client, db):
+def test_little_history_still_forecasts_but_says_how_early_and_nothing_is_invented_from_no_records(client, db):
     t, _ = _history(client, 3, name="sf4")
-    assert forecast_days(db, t, "sale", 7) is None
+    f = forecast_days(db, t, "sale", 7)                                         # three weeks: a weekly pattern can be seen
+    assert f and f.weekly_pattern and f.days_of_history >= 14
     t2, _ = make_owner(client, "sf5")
-    assert forecast_days(db, t2, "sale", 7) is None
+    assert forecast_days(db, t2, "sale", 7) is None                             # no records at all: there is nothing to learn from
+    t3, h3 = make_owner(client, "sf5b")
+    cid = mk(client, t3, h3, name="s", connector_type="file", config=CFG).json()["id"]
+    rows = [f"{TODAY - dt.timedelta(days=d):%Y-%m-%d} 12:00,400" for d in (1, 2, 3, 4, 5)]
+    client.post(f"/api/connectors/{cid}/upload", data={"tenant_id": t3}, files={"file": ("s.csv", ("Date,Total\n" + "\n".join(rows) + "\n").encode(), "text/csv")}, headers=h3)
+    g = forecast_days(db, t3, "sale", 7)                                        # five days: too few to see weekdays, so a flat average and a note
+    assert g and not g.weekly_pattern and "too few to see which weekdays" in g.note and all(abs(d.expected - 400) < 1 for d in g.days)
 
 
-def test_one_record_a_week_is_not_a_daily_rhythm(client, db):
+def test_one_record_a_week_forecasts_about_one_records_worth_a_week(client, db):
     t, h = make_owner(client, "sf8")
     cid = mk(client, t, h, name="s", connector_type="file", config=CFG).json()["id"]
     rows = [f"{TODAY - dt.timedelta(days=3 + 7 * i):%Y-%m-%d} 12:00,500" for i in range(8)]
     client.post(f"/api/connectors/{cid}/upload", data={"tenant_id": t}, files={"file": ("s.csv", ("Date,Total\n" + "\n".join(rows) + "\n").encode(), "text/csv")}, headers=h)
-    assert forecast_days(db, t, "sale", 7) is None
+    f = forecast_days(db, t, "sale", 7)
+    assert f and abs(f.total - 500) < 50                                          # the week's total stays about one record's worth, not inflated into a daily rhythm
 
 
 def test_asking_for_next_week_uses_the_pattern_and_says_what_it_does_not_know(client):
@@ -77,6 +85,6 @@ def test_asking_for_next_week_uses_the_pattern_and_says_what_it_does_not_know(cl
     out = client.post("/api/questions/ask", json={"tenant_id": t, "question": "What will sales be next week?"}, headers=h).json()
     assert out["intent"] == "forecast" and "weekly pattern" in out["answer"] and "Strongest day: Saturday; quietest: Sunday" in out["answer"]
     assert "Holidays and paydays are not modelled" in out["answer"] and len(out["evidence"]["days"]) == 7
-    young, hy = _history(client, 3, name="sf7")                                                       # too little history: the old, plainer answer
+    young, hy = _history(client, 3, name="sf7")                                                       # little history: still answered, and plain about it
     old = client.post("/api/questions/ask", json={"tenant_id": young, "question": "What will sales be next week?"}, headers=hy).json()
-    assert "weekly pattern" not in old["answer"]
+    assert old["answer"] and old["intent"] == "forecast" and "Holidays and paydays are not modelled" in old["answer"]

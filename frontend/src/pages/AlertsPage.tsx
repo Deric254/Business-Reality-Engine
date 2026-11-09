@@ -41,7 +41,7 @@ function Body({ tenant }: { tenant: Tenant }) {
   const shown = alerts.filter((a) => sev.has(a.severity));
   return (
     <>
-      <PageTitle title={t("nav.alerts")} sub="Most important first. Alerts compare complete days, so today's records count from tomorrow."
+      <PageTitle title={t("nav.alerts")} sub="Most important first. Alerts count every record, today's included."
         action={<div className="flex items-center gap-3"><button onClick={checkNow} disabled={checking} className={btnCls}>{checking ? "Checking…" : "Check now"}</button></div>} />
       {checked && <p role="status" className="text-sm text-ink-muted">{checked}</p>}
       {error && <p role="alert" className="text-sm text-critical">Couldn't load alerts: {error} <button onClick={() => load()} className="text-info font-medium hover:underline">Try again</button></p>}
