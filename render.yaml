@@ -40,6 +40,8 @@ services:
         value: "10"
       - key: LLM_PROVIDER
         value: anthropic
+      - key: GMAIL_APP_PASSWORD
+        sync: false         # a Google app password: lets the Renew window email customers' PayPal screenshots to you (GMAIL_USER and PROOF_TO are optional)
       - key: ANTHROPIC_API_KEY
         sync: false         # optional: plain-language explanations of alerts
       - key: WEB_SEARCH_PROVIDER

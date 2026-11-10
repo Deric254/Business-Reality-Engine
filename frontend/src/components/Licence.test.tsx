@@ -50,18 +50,28 @@ describe("LicenceNotice", () => {
     expect(dialog).toHaveTextContent("LIC-BRE-lic-1-M");
   });
 
-  it("opens PayPal and the proof email only through the allowlist, then remembers the proof was sent", async () => {
+  it("opens PayPal only through the allowlist, asks for the missing details, sends the proof and remembers it", async () => {
     mocks.mine.mockResolvedValue(OVERDUE);
     const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal("fetch", fetchMock);
     render(<LicenceNotice />);
     await userEvent.click(await screen.findByRole("button", { name: "Renew" }));
     await userEvent.click(screen.getByRole("button", { name: "Open PayPal" }));
     expect(open).toHaveBeenLastCalledWith("https://www.paypal.com/myaccount/transfer/homepage", "_blank", "noopener,noreferrer");
-    await userEvent.click(screen.getByRole("button", { name: "Email my proof" }));
-    expect(String(open.mock.calls.at(-1)?.[0])).toMatch(/^mailto:dericmarangu@gmail\.com\?/);
-    expect(screen.getByText(/Proof already sent on/)).toHaveTextContent("Please do not pay again");
-    await userEvent.click(screen.getByRole("button", { name: "I need to pay again" }));
-    expect(screen.getByRole("button", { name: "Email my proof" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Send proof" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Please type your name.");
+    await userEvent.type(screen.getByLabelText(/Your name/), "Amina");
+    await userEvent.type(screen.getByLabelText(/Your phone or email/), "0712345678");
+    await userEvent.click(screen.getByRole("button", { name: "Send proof" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("choose your payment screenshot");
+    const png = new File([Uint8Array.from([0x89, 0x50, 0x4e, 0x47])], "proof.png", { type: "image/png" });
+    await userEvent.upload(screen.getByLabelText(/Payment screenshot/), png);
+    await userEvent.click(screen.getByRole("button", { name: "Send proof" }));
+    expect(await screen.findByText(/Proof sent. Thank you, Amina/)).toBeInTheDocument();
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(sent).toMatchObject({ amount: 45, currency: "USD", name: "Amina", extra: "LIC-BRE-lic-1-M", file: { type: "image/png" } });
+    vi.unstubAllGlobals();
   });
 
   it("opens the pay window once when a change is refused for an expired subscription", async () => {
