@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type Alert, type Tenant } from "../api/client";
+import { api, type Alert, type AlertValue, type Tenant } from "../api/client";
 import { Shell } from "../components/Shell";
 import { FilterBar } from "../components/FilterBar";
 import { AlertRow } from "../components/AlertRow";
 import { Empty, PageTitle, Skeleton, btnCls } from "../components/ui";
 import { useT } from "../lib/i18n";
 import { useOnLiveChange } from "../lib/liveContext";
+import { valueLine } from "../lib/alertValue";
 
 const ALL = ["critical", "high", "medium", "informational", "opportunity"];
 
 function Body({ tenant }: { tenant: Tenant }) {
   const t = useT();
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [value, setValue] = useState<AlertValue | null>(null);
   const [sev, setSev] = useState<Set<string>>(new Set(ALL));
   const [state, setState] = useState("open");
   const [loading, setLoading] = useState(true);
@@ -27,6 +29,9 @@ function Body({ tenant }: { tenant: Tenant }) {
       .then((a) => { if (mine === latest.current) setAlerts(a); })
       .catch((e) => { if (mine === latest.current) setError(e.message); })
       .finally(() => { if (mine === latest.current) setLoading(false); });
+    api.alertValue(tenant.id)                                           // a nice-to-have line: if it cannot be fetched the page is exactly as before
+      .then((v) => { if (mine === latest.current) setValue(v); })
+      .catch(() => { if (mine === latest.current) setValue(null); });
   }, [tenant.id, state]);
   useOnLiveChange(() => load(true));
   useEffect(() => { load(); }, [load]);
@@ -43,6 +48,7 @@ function Body({ tenant }: { tenant: Tenant }) {
     <>
       <PageTitle title={t("nav.alerts")} sub="Most important first. Alerts count every record, today's included."
         action={<div className="flex items-center gap-3"><button onClick={checkNow} disabled={checking} className={btnCls}>{checking ? "Checking…" : "Check now"}</button></div>} />
+      {valueLine(value) && <p className="text-sm text-ink-muted">{valueLine(value)}</p>}
       {checked && <p role="status" className="text-sm text-ink-muted">{checked}</p>}
       {error && <p role="alert" className="text-sm text-critical">Couldn't load alerts: {error} <button onClick={() => load()} className="text-info font-medium hover:underline">Try again</button></p>}
       <section className="space-y-3">

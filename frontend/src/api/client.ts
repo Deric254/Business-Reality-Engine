@@ -146,9 +146,12 @@ export interface Alert {
   correlated_alert_ids?: string[] | null;
   escalated?: boolean;
   period_label?: string | null;
+  at_stake?: number | null;          // money gap behind the alert, when it is about a measurable gap
   created_at?: string | null;
   updated_at?: string | null;
 }
+
+export interface AlertValue { days: number; open_count: number; open_measured: number; open_at_stake: number; raised: number; raised_at_stake: number; back_to_normal: number; currency: string }
 
 export interface AlertDetail extends Alert {
   related: { id: string; title: string }[];
@@ -222,6 +225,7 @@ export const api = {
   listTenants: () => request<Tenant[]>("/api/tenants/"),
 
   runChecks: (tenantId: string) => request<{ alerts: { id: string | null; title: string | null }[]; errors: number }>("/api/detection/run/all", { method: "POST", body: JSON.stringify({ tenant_id: tenantId }) }),
+  alertValue: (tenantId: string) => request<AlertValue>(`/api/alerts/value?tenant_id=${tenantId}`),
   listAlerts: (tenantId: string, filters: { severity?: string; state?: string } = {}) => {
     const params = new URLSearchParams({ tenant_id: tenantId });
     // Skip unset filters: URLSearchParams would otherwise send the literal string "undefined".

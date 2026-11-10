@@ -4,10 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
 from pydantic import BaseModel, model_validator, ConfigDict
 from sqlalchemy.orm import Session
 
-from app.core import audit
+from app.core import audit, value_at_stake
 from app.core.db import get_db
 from app.core.auth_users import authorize_tenant
-from app.core.detection import ACTIVE_STATES, CLOSED_STATES
+from app.core.detection import ACTIVE_STATES, CLOSED_STATES, currency_of
 from app.models.alerts import Alert, AlertState
 from app.core.business_memory import historical_experience
 from app.reasoning.llm_reasoning import reason_about_alert
@@ -46,6 +46,7 @@ class AlertOut(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None   # when the check last confirmed this alert still holds
     period_label: Optional[str] = None      # the exact days the figures cover, on the business's calendar
+    at_stake: Optional[float] = None        # money gap behind the alert (see app/core/value_at_stake.py); None when it is not about a measurable gap
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -56,6 +57,10 @@ class AlertOut(BaseModel):
         ev = getattr(data, "evidence", None) if not isinstance(data, dict) else data.get("evidence")
         out.escalated = bool(isinstance(ev, dict) and ev.get("escalated_at"))
         out.period_label = getattr(data, "period_label", None) if not isinstance(data, dict) else data.get("period_label")
+        try:
+            out.at_stake = value_at_stake.at_stake(getattr(data, "kind", None) if not isinstance(data, dict) else data.get("kind"), ev)
+        except Exception:                      # an extra figure must never be able to break the list of alerts
+            out.at_stake = None
         return out
 
 
@@ -138,6 +143,13 @@ def list_alerts(
     elif state:
         q = q.filter(Alert.state == state)
     return _label_periods(db, tenant_id, q.order_by(Alert.priority_rank.desc().nullslast(), Alert.created_at.desc()).limit(limit).all())
+
+
+@router.get("/value")
+def alert_value(tenant_id: str, days: int = Query(30, ge=1, le=366), db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+    """How much money is at stake in what is open now, and what the last `days` days looked like."""
+    authorize_tenant(authorization, tenant_id)
+    return {**value_at_stake.summarize(db, tenant_id, days), "currency": currency_of(db, tenant_id)}
 
 
 @router.get("/{alert_id}", response_model=AlertOut)

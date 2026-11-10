@@ -29,7 +29,7 @@ from app.core import coverage as coverage_mod
 from app.core.alert_engine import post_process_tenant
 from app.core.business_memory import measure_due_cases
 from app.core.detection import (
-    _headline, _noun, close_if_cleared, close_orphans, compare_headline, comparison_text, money_formatter, resolve_alert,
+    _headline, _noun, close_if_cleared, close_orphans, lock_alert_key, compare_headline, comparison_text, money_formatter, resolve_alert,
     ACTIVE_STATES, METRIC_FIELDS, _find_open_alert, _in_cooldown, _sum_metric, data_start, earlier_sum, oldest_scaled, partial_day_note, thin_note,
     detect_historical_deviation, detect_threshold_breach, explain_deviation,
 )
@@ -49,6 +49,7 @@ def default_direction(entity: str) -> str:
 def _upsert(db: Session, tenant_id: str, dedup_key: str, now: datetime, evidence: dict, fields: dict) -> Optional[Alert]:
     """Update the open alert for dedup_key, else create one unless in cooldown."""
     evidence = {**evidence, "dedup_key": dedup_key, "confirmed_at": now.isoformat()}     # the last time a check found this still true
+    lock_alert_key(db, tenant_id, dedup_key)                    # two checks at the same moment must not each create "the" alert
     existing = _find_open_alert(db, tenant_id, dedup_key)
     if existing:
         keep = {k: v for k, v in (existing.evidence or {}).items() if k in ("escalated_at",)}
@@ -59,6 +60,7 @@ def _upsert(db: Session, tenant_id: str, dedup_key: str, now: datetime, evidence
         db.commit(); db.refresh(existing)
         return existing
     if _in_cooldown(db, tenant_id, dedup_key, now):
+        db.commit()
         return None
     alert = Alert(tenant_id=tenant_id, state=AlertState.detected, evidence=evidence, **fields)
     db.add(alert); db.commit(); db.refresh(alert)
@@ -215,6 +217,9 @@ def detect_daily_anomaly(
     if seen < 1 or not history:
         return None                           # no same weekday on record to compare with: there is nothing to judge against
     med = statistics.median(history)
+    if med <= 0:                              # most of those weekdays were empty: a "usual" day of nothing is not something to measure against (and cannot be divided by)
+        close_if_cleared(db, tenant_id, f"daily_anomaly:{entity}:{field}", now)
+        return None
     mad = statistics.median([abs(v - med) for v in history])
     thin = seen < 4                           # few same weekdays: say so, and ask for a far bigger gap before raising it
     sigma = max(1.4826 * mad, (0.20 if thin else 0.10) * med)     # floor: never divide by ~0 on very regular data

@@ -18,7 +18,7 @@ event data along those dimensions rather than just reporting the total.
 """
 from datetime import datetime, timedelta
 from typing import Optional
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.models.core import BusinessEvent, Tenant
@@ -213,6 +213,15 @@ def close_if_cleared(db: Session, tenant_id: str, dedup_key: str, now: datetime)
     open_alert = _find_open_alert(db, tenant_id, dedup_key)
     if open_alert:
         resolve_alert(db, open_alert, now)
+
+
+def lock_alert_key(db: Session, tenant_id: str, dedup_key: str) -> None:
+    """Hold a lock (released at the next commit or rollback) on "the alert for this business and this key". Two checks
+    running at the same moment, say the scheduled run and a "Check now", would otherwise both find no open alert and each
+    create one, leaving the owner with the same alert twice. The second check waits, then sees the first one's alert and
+    updates it. Postgres only (the app's database); a no-op anywhere else."""
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"), {"k": f"alert:{tenant_id}:{dedup_key}"})
 
 
 def close_orphans(db: Session, tenant_id: str, prefix: str, live_ids: set, now: datetime) -> int:
@@ -546,6 +555,7 @@ def detect_historical_deviation(
         action = (f"Check what changed in {noun_lower}: which days, branches or products fell the most, and whether anything changed "
                   f"on your side (prices, stock, staff, opening hours).")
 
+    lock_alert_key(db, tenant_id, dedup_key)
     existing = _find_open_alert(db, tenant_id, dedup_key)
     if existing:
         # Same ongoing issue — update evidence and severity, don't spam a new alert (Section 25).
@@ -562,6 +572,7 @@ def detect_historical_deviation(
         return existing
 
     if _in_cooldown(db, tenant_id, dedup_key, now):
+        db.commit()   # end the transaction so the lock is let go
         return None   # a human closed this recently; stay quiet (Section 25 suppression)
 
     alert = Alert(
@@ -618,6 +629,7 @@ def detect_threshold_breach(
         "confirmed_at": now.isoformat(),
     }
 
+    lock_alert_key(db, tenant_id, dedup_key)
     existing = _find_open_alert(db, tenant_id, dedup_key)
     if existing:
         existing.evidence = _keep_lifecycle(existing, evidence)
@@ -626,6 +638,7 @@ def detect_threshold_breach(
         return existing
 
     if _in_cooldown(db, tenant_id, dedup_key, now):
+        db.commit()
         return None
 
     alert = Alert(

@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.core import coverage as coverage_mod
 from app.core.analytics import is_generic_buyer
-from app.core.detection import ACTIVE_STATES, FULL_COVERAGE, data_start, earlier_sum, partial_day_note, PARTIAL_MIN_COVERAGE, _size_of_change, _sum_metric, close_if_cleared, money_formatter, resolve_alert
+from app.core.detection import ACTIVE_STATES, FULL_COVERAGE, data_start, earlier_sum, partial_day_note, PARTIAL_MIN_COVERAGE, _find_open_alert, _size_of_change, _sum_metric, close_if_cleared, money_formatter, resolve_alert
 from app.core.detectors import _upsert
 from app.core.tenant_time import tenant_zone
 from app.models.alerts import Alert, AlertSeverity, AlertState
@@ -338,6 +338,85 @@ def detect_customer_concentration(db: Session, tenant_id: str, now: Optional[dat
     )
 
 
+# ---------------- 4b. regular customers who have gone quiet ----------------
+
+LAPSED_LOOKBACK_DAYS = 180        # how far back "regular" is learned from
+LAPSED_MIN_VISITS = 4             # distinct days a customer bought on; fewer is not yet a regular
+LAPSED_MIN_HISTORY_DAYS = 60      # records must reach back this far, or "usual" is a guess
+LAPSED_GAP_MULTIPLE = 3           # quiet for 3 times their usual gap between purchases ...
+LAPSED_MIN_QUIET_DAYS = 21        # ... and for at least three weeks
+LAPSED_MAX_QUIET_DAYS = 120       # quiet for longer than this is a customer already lost, not one who has gone quiet
+LAPSED_NEW = (3, 0.02)            # to raise it: at least 3 customers, worth at least 2% of a month's sales
+LAPSED_KEEP = (2, 0.01)           # to keep one already open (looser, so it does not flicker on and off)
+LAPSED_FEED_FRESH_DAYS = 3        # no sale on record in this long means the data stopped, not the customers
+
+
+def detect_lapsed_customers(db: Session, tenant_id: str, now: Optional[datetime] = None) -> Optional[Alert]:
+    """Named customers who used to buy regularly and have not bought for much longer than their own usual gap.
+    Each customer is judged against their own rhythm (someone who buys every 6 weeks is not quiet at 4), and the
+    alert is about the money they usually bring in a month. Skipped while the business's own data has stopped
+    arriving, because then every customer looks quiet and the silence alert is the honest one."""
+    now = now or utcnow()
+    key = "customers_lapsed"
+    first = data_start(db, tenant_id)
+    if first is None or (now - first).days < LAPSED_MIN_HISTORY_DAYS:
+        close_if_cleared(db, tenant_id, key, now)
+        return None
+    last_sale = db.query(func.max(E.timestamp)).filter(E.tenant_id == tenant_id, E.entity == "sale", E.validation_status == "validated", E.timestamp < now).scalar()
+    if last_sale is None or now - last_sale > timedelta(days=LAPSED_FEED_FRESH_DAYS):
+        return None
+    start = now - timedelta(days=LAPSED_LOOKBACK_DAYS)
+    day = func.date(E.timestamp)
+    rows = (db.query(E.customer_id, func.count(func.distinct(day)), func.min(E.timestamp), func.max(E.timestamp), func.sum(E.amount))
+            .filter(E.tenant_id == tenant_id, E.entity == "sale", E.validation_status == "validated", E.customer_id.isnot(None),
+                    E.timestamp >= start, E.timestamp < now)
+            .group_by(E.customer_id).having(func.count(func.distinct(day)) >= LAPSED_MIN_VISITS).all())
+    on_record = max(1.0, min(float(LAPSED_LOOKBACK_DAYS), (now - first).total_seconds() / 86400))
+    monthly_sales = _sum_metric(db, tenant_id, "sale", "amount", start, now) / on_record * 30
+    if monthly_sales <= 0:
+        return None
+    regulars, lapsed = 0, []
+    for cust, visits, first_buy, last_buy, spent in rows:
+        if is_generic_buyer(cust):
+            continue
+        active = (last_buy - first_buy).total_seconds() / 86400
+        gap = active / (visits - 1)
+        quiet = (now - last_buy).total_seconds() / 86400
+        if gap <= 0 or quiet > LAPSED_MAX_QUIET_DAYS:
+            continue
+        regulars += 1
+        if quiet > max(LAPSED_GAP_MULTIPLE * gap, LAPSED_MIN_QUIET_DAYS):
+            lapsed.append((cust, quiet, gap, float(spent) / max(active + gap, 30.0) * 30))
+    value = sum(x[3] for x in lapsed)
+    share = value / monthly_sales
+    need_n, need_share = LAPSED_KEEP if _find_open_alert(db, tenant_id, key) else LAPSED_NEW
+    if len(lapsed) < need_n or share < need_share:
+        close_if_cleared(db, tenant_id, key, now)
+        return None
+    lapsed.sort(key=lambda x: -x[3])
+    top = lapsed[:3]
+    names = ", ".join(x[0] for x in top[:-1]) + (" and " if len(top) > 1 else "") + top[-1][0]
+    typical = int(round(statistics.median(x[2] for x in lapsed)))
+    fmt = money_formatter(db, tenant_id)
+    n = len(lapsed)
+    lo, hi = int(min(x[1] for x in lapsed)), int(max(x[1] for x in lapsed))
+    quiet_text = f"{lo} days" if lo == hi else f"{lo} to {hi} days"
+    return _upsert(
+        db, tenant_id, key, now,
+        {"metric": "sale.amount", "dimension": "customer_activity", "lapsed_count": n, "regulars": regulars, "monthly_value": round(value, 2),
+         "share_of_sales_pct": round(share * 100, 1), "typical_gap_days": typical, "lookback_days": LAPSED_LOOKBACK_DAYS,
+         "top": [{"customer": c, "quiet_days": int(q), "usual_gap_days": int(round(g)), "monthly_value": round(m, 2)} for c, q, g, m in lapsed[:5]]},
+        dict(kind="customers", severity=AlertSeverity.high if share >= 0.10 else AlertSeverity.medium,
+             title=f"{n} regular customer{'s have' if n != 1 else ' has'} gone quiet",
+             what_happened=(f"{n} of your {regulars} regular customers have not bought for much longer than usual. They normally buy about every {typical} days "
+                            f"and have been quiet for {quiet_text}. Together they usually spend about "
+                            f"{fmt(value)} a month, {share * 100:.0f}% of your monthly sales. The biggest are {names}."),
+             magnitude=round(share, 4), period_start=start, period_end=now, where={"customers": n}, confidence=0.8,
+             data_coverage_pct=_coverage(db, tenant_id, "sale", now),
+             recommended_action=f"Call or message {names} first. Ask if anything went wrong and tell them what is new."),
+    )
+
+
 # ---------------- 5. one payment far outside what this business normally pays ----------------
 
 def detect_large_payments(db: Session, tenant_id: str, now: Optional[datetime] = None) -> list[Alert]:
@@ -389,12 +468,12 @@ def detect_large_payments(db: Session, tenant_id: str, now: Optional[datetime] =
 # ---------------- the set ----------------
 
 def run_dimension_detectors(db: Session, tenant_id: str, now: Optional[datetime] = None) -> tuple[list[Alert], int]:
-    """All five. One failing detector never stops the others. Returns (alerts touched, how many detectors failed)."""
+    """All six. One failing detector never stops the others. Returns (alerts touched, how many detectors failed)."""
     alerts: list[Alert] = []
     errors = 0
     for name, fn in (("large payments", detect_large_payments), ("category spikes", detect_category_spikes),   # payments first: they explain a spike
                      ("branch declines", detect_branch_declines), ("margin compression", detect_margin_compression),
-                     ("customer concentration", detect_customer_concentration)):
+                     ("customer concentration", detect_customer_concentration), ("lapsed customers", detect_lapsed_customers)):
         try:
             found = fn(db, tenant_id, now)
             alerts += found if isinstance(found, list) else [found] if found else []
