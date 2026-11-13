@@ -2,7 +2,7 @@
   "system": "pharmacy",
   "label": "Pharmacy ERP",
   "profile_version": 1,
-  "doc": "Pharmacy ERP (Electron + FastAPI + SQLite). Database: %LOCALAPPDATA%/PharmacyERP/pharmacy.db. Money is stored in whole cents; times are UTC. Sales are net of refunds, as the app's own reports; expenses are stock received.",
+  "doc": "Pharmacy ERP (Electron + FastAPI + SQLite). Database: %LOCALAPPDATA%/PharmacyERP/pharmacy.db. Money is stored in whole cents; times are UTC. Each sale is counted net of its refunds on the day of the sale, so the period total equals the app's own report; the app's daily report instead books a refund on the day it was processed, so single days can differ. Expenses are stock received.",
   "discovery": {
     "files": ["{localappdata}/PharmacyERP/pharmacy.db", "{home}/.pharmacy-erp/pharmacy.db"]
   },
@@ -13,7 +13,7 @@
   "streams": [
     {
       "key": "sales", "entity": "sale", "event_type": "sale.recorded", "table": "sales", "time": "instant",
-      "doc": "One record per sale: the total charged minus anything refunded against it.",
+      "doc": "One record per sale on the day of the sale: the total charged minus anything refunded against it (the app's daily report books that refund on the day it was processed).",
       "sql": "SELECT CAST(s.id AS TEXT) AS id, s.created_at AS instant, s.total_amount - COALESCE((SELECT SUM(r.total_amount) FROM refunds r WHERE r.sale_id = s.id), 0) AS amount, (SELECT SUM(si.quantity - si.qty_refunded) FROM sale_items si WHERE si.sale_id = s.id) AS quantity, COALESCE(NULLIF(TRIM(c.name), ''), NULLIF(TRIM(c.phone), '')) AS customer, (SELECT p.name FROM products p WHERE p.id = (SELECT CASE WHEN COUNT(DISTINCT si.product_id) = 1 THEN MIN(si.product_id) END FROM sale_items si WHERE si.sale_id = s.id)) AS product, s.discount_amount AS mm_discount FROM sales s LEFT JOIN customers c ON c.id = s.customer_id ORDER BY CAST(s.id AS TEXT)"
     },
     {

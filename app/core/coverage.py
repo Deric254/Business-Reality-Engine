@@ -124,7 +124,7 @@ def coverage_pct_for_entity(db: Session, tenant_id: str, entity: str, now: Optio
     connector_ids = (
         db.query(BusinessEvent.connector_id)
         .join(Connector, Connector.id == BusinessEvent.connector_id)
-        .filter(Connector.tenant_id == tenant_id, BusinessEvent.entity == entity)
+        .filter(Connector.tenant_id == tenant_id, BusinessEvent.tenant_id == tenant_id, BusinessEvent.entity == entity)
         .distinct()
         .all()
     )

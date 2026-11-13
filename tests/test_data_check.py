@@ -134,3 +134,16 @@ def test_a_negative_amount_is_counted_and_only_hinted_at(client, server):
     assert r["verdict"] == "ok"                                                                 # a hint, not a warning
     k = client.get(f"/api/questions/kpis?tenant_id={t}&period_days=30", headers=h).json()
     assert k["revenue"]["current"] == 1300                                                      # 1000 - 200 + 500
+
+
+def test_each_source_lists_its_totals_for_the_period_so_they_can_be_compared_with_the_app(client, server):
+    t, h = make_owner(client, "dc9")
+    cid = mk(client, t, h, name="Shop sheet", connector_type="url", config={"url": server + "/sheet.csv", "auth_type": "none", **CFG}).json()["id"]
+    _sheet((_day(2), 100, "Meru"), (_day(1), 250, "Meru"), (_day(60), 999, "Meru"))
+    client.post(f"/api/connectors/{cid}/sync-url?tenant_id={t}", headers=h)
+    r = _check(client, t, h)
+    src = r["sources"][0]
+    assert src["sales"] == 350 and src["expenses"] == 0 and src["refunds"] == 0           # the record from 60 days ago is outside the period
+    assert "currency" in r
+    note = next(f for f in r["findings"] if "business's own time" in f["text"])
+    assert "not subtracted again" in note["action"]

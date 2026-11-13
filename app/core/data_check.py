@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.core import schema, sources
 from app.core.tenant_time import tenant_zone
-from app.models.core import BusinessEvent as E, Connector
+from app.models.core import BusinessEvent as E, Connector, Tenant
 
 VIEW_CHOICES = (7, 30, 90, 180)            # the periods the Overview can show
 _PULL = ("url", "database", "sftp", "email", "shared_folder")
@@ -58,6 +58,8 @@ def run(db: Session, tenant_id: str, period_days: int = 30, now: Optional[dateti
         func.count().filter(counted, E.amount < 0, E.entity.in_(("sale", "expense"))),
     ).filter(E.tenant_id == tenant_id).group_by(E.connector_id)}
 
+    in_period = {(cid, entity): float(total or 0) for cid, entity, total in db.query(E.connector_id, E.entity, func.sum(E.amount)).filter(
+        E.tenant_id == tenant_id, counted, E.timestamp >= since, E.timestamp < now, E.entity.in_(("sale", "expense", "refund"))).group_by(E.connector_id, E.entity)}
     findings, out = [], []
     connectors = db.query(Connector).filter(Connector.tenant_id == tenant_id).order_by(Connector.created_at).all()
     for c in connectors:
@@ -65,7 +67,8 @@ def run(db: Session, tenant_id: str, period_days: int = 30, now: Optional[dateti
         out.append({"id": c.id, "name": c.name, "type": c.connector_type, "active": bool(c.is_active), "counted": n, "rejected": failed,
                     "matched": matched, "first_record": _day(first, tz) if first else None, "last_record": _day(last, tz) if last else None,
                     "in_view": in_view, "last_checked": c.last_sync_at.isoformat() if c.last_sync_at else None,
-                    "status": c.last_sync_status, "error": c.last_sync_error})
+                    "status": c.last_sync_status, "error": c.last_sync_error,
+                    "sales": in_period.get((c.id, "sale"), 0.0), "expenses": in_period.get((c.id, "expense"), 0.0), "refunds": in_period.get((c.id, "refund"), 0.0)})
         if not c.is_active:
             findings.append(_finding("warning", "It is paused, so it will not update.", c.name, "Resume it on the Data page."))
         if c.last_sync_status == "failed":
@@ -109,6 +112,10 @@ def run(db: Session, tenant_id: str, period_days: int = 30, now: Optional[dateti
         findings.append(_finding("info", "The AI assistant is not connected, so Ask answers only a fixed set of questions.", None,
                                  "Connect it in Settings, or set ANTHROPIC_API_KEY on the server."))
 
+    if total:
+        findings.append(_finding("info", f"Figures are counted per day in your business's own time ({tz.key}), for {_day(since, tz)} to {_day(now - timedelta(seconds=1), tz)}. "
+                                 "Each source's sales, expenses and refunds for that period are listed below, so you can set them beside the same dates in the system they come from.", None,
+                                 "Pharmacy ERP and smePro already take a refund off its sale, so their refunds figure is for information and is not subtracted again; Pharmacy ERP's own daily report books a refund on the day it was processed, so a single day can differ from here while the period total matches. A record still waiting to sync appears after the next check."))
     problems, warnings = any(f["level"] == "problem" for f in findings), any(f["level"] == "warning" for f in findings)
     headline = ("Something is stopping your data from showing." if problems else
                 "Your data is there, but not in the period shown." if total and not in_view_total else
@@ -116,4 +123,4 @@ def run(db: Session, tenant_id: str, period_days: int = 30, now: Optional[dateti
     return {"verdict": "problem" if problems else "attention" if warnings else "ok", "headline": headline, "findings": findings, "sources": out,
             "range": {"counted": total, "first": _day(oldest, tz) if oldest else None, "last": _day(newest, tz) if newest else None,
                       "in_view": in_view_total, "period_days": period_days, "suggest_days": suggest},
-            "ai_connected": ai, "schema": schema_state}
+            "ai_connected": ai, "schema": schema_state, "currency": (getattr(db.get(Tenant, tenant_id), "base_currency", None) or "")}

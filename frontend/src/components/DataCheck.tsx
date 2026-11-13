@@ -21,6 +21,7 @@ export function DataCheck({ tenantId, days, onShowDays }: { tenantId: string; da
 
   if (error) return <Card accent={COLOUR.problem}><p role="alert" className="text-sm text-critical">{error}</p></Card>;
   if (!result) return <Card><p className="text-sm text-ink-muted">Checking your data…</p></Card>;
+  const money = (n: number) => `${result.currency} ${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`.trim();
   const findings = [...result.findings].sort((a, b) => ORDER.indexOf(a.level) - ORDER.indexOf(b.level));
   const verdictColour = result.verdict === "problem" ? COLOUR.problem : result.verdict === "attention" ? COLOUR.warning : COLOUR.ok;
   return (
@@ -50,10 +51,11 @@ export function DataCheck({ tenantId, days, onShowDays }: { tenantId: string; da
       {result.sources.length > 0 && (
         <div className="overflow-x-auto">
           <table className="text-sm text-left w-full">
-            <thead className="text-ink-muted"><tr><th className="pr-4 py-1 font-medium">Source</th><th className="pr-4 font-medium">Counted</th><th className="pr-4 font-medium">Left out</th><th className="pr-4 font-medium">Records from</th><th className="font-medium">Last sync</th></tr></thead>
+            <thead className="text-ink-muted"><tr><th className="pr-4 py-1 font-medium">Source</th><th className="pr-4 font-medium">Counted</th><th className="pr-4 font-medium">Left out</th><th className="pr-4 font-medium">Sales</th><th className="pr-4 font-medium">Expenses</th><th className="pr-4 font-medium">Refunds</th><th className="pr-4 font-medium">Records from</th><th className="font-medium">Last sync</th></tr></thead>
             <tbody>{result.sources.map((s) => (
               <tr key={s.id} className="border-t border-border">
                 <td className="pr-4 py-1.5">{s.name}</td><td className="pr-4">{s.counted.toLocaleString()}</td><td className="pr-4">{s.rejected.toLocaleString()}</td>
+                <td className="pr-4 whitespace-nowrap">{money(s.sales)}</td><td className="pr-4 whitespace-nowrap">{money(s.expenses)}</td><td className="pr-4 whitespace-nowrap">{money(s.refunds)}</td>
                 <td className="pr-4 whitespace-nowrap">{s.first_record ? `${s.first_record} to ${s.last_record}` : "none"}</td>
                 <td>{s.status ?? "never"}</td>
               </tr>))}

@@ -96,7 +96,7 @@ def detect_model_changes(db: Session, tenant_id: str, now: Optional[datetime] = 
     scan(BusinessEvent.location, "location_added", "location_discontinued", "location")
     scan(BusinessEvent.resolved_product_id, "product_added", "product_discontinued", "product")
     for cid, name, f in (db.query(Connector.id, Connector.name, func.min(BusinessEvent.timestamp)).join(BusinessEvent, BusinessEvent.connector_id == Connector.id)
-                         .filter(Connector.tenant_id == tenant_id, BusinessEvent.validation_status == "validated").group_by(Connector.id, Connector.name).all()):
+                         .filter(Connector.tenant_id == tenant_id, BusinessEvent.tenant_id == tenant_id, BusinessEvent.validation_status == "validated").group_by(Connector.id, Connector.name).all()):
         if f >= now - timedelta(days=NEW_WITHIN_DAYS) and f >= first + timedelta(days=90):
             c = record_change(db, tenant_id, "source_added", cid, f, description=f"New data source began sending data: {name}", details={"name": name})
             if c: out.append(c)

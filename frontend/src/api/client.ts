@@ -207,11 +207,12 @@ export interface CheckFinding { level: "problem" | "warning" | "info" | "ok"; so
 export interface CheckSource {
   id: string; name: string; type: string; active: boolean; counted: number; rejected: number; matched: number;
   first_record: string | null; last_record: string | null; in_view: number; last_checked: string | null; status: string | null; error: string | null;
+  sales: number; expenses: number; refunds: number;
 }
 export interface DataCheckResult {
   verdict: "problem" | "attention" | "ok"; headline: string; findings: CheckFinding[]; sources: CheckSource[];
   range: { counted: number; first: string | null; last: string | null; in_view: number; period_days: number; suggest_days: number | null };
-  ai_connected: boolean; schema: { current: boolean; database: string | null; expected: string };
+  ai_connected: boolean; schema: { current: boolean; database: string | null; expected: string }; currency: string;
 }
 
 export interface CoverageRow {
