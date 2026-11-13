@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.core import coverage as coverage_mod
 from app.core.alert_engine import ACTIVE
 from app.core.detection import _by_dimension, _sum_metric, dimension_movers
-from app.core.forecasting import forecast_days, forecast_next_period
+from app.core.forecasting import forecast_days, forecast_next_period, forecast_threshold_crossing
 from app.models.alerts import Alert
 from app.models.core import BusinessEvent, ResolvedEntity
 
@@ -46,6 +46,8 @@ def parse_period(question: str, default_days: int = 30) -> tuple[int, str]:
 
 
 _RULES: list[tuple[str, re.Pattern]] = [
+    ("setup", re.compile(r"\bhow (do|can|should|would) (i|we)\b.*\b(connect|set ?up|link|install|sync|import|upload|get started)\b|\b(set ?up|getting started|get started|onboarding)\b")),
+    ("cash", re.compile(r"\b(how long|will)\b.*\b(my|our) (cash|money)\b.*\b(last|run out|enough)\b|\brun(ning)? out of (cash|money)\b|\bcash (runway|run ?way)\b")),
     ("forecast", re.compile(r"\b(will|forecast|predict|projection|expect|next (week|month|period)|going to be)\b")),
     ("top_customers", re.compile(r"\b(top|best|biggest|largest|main|key)\b.*\bcustomers?\b|\bcustomers?\b.*\b(top|best|biggest)\b|\bwho (buys|are my)\b.*\bcustomers?\b")),
     ("top_products", re.compile(r"\b(top|best|biggest|selling|popular)\b.*\b(products?|items?)\b|\b(products?|items?)\b.*\b(top|best|selling)\b|\bbest sellers?\b")),
@@ -222,7 +224,43 @@ def _data_health(db, tenant_id, q, days, label, now):
             "evidence": {"areas": items}}
 
 
+def _cash(db, tenant_id, q, days, label, now):
+    """How long a balance the owner states would last at the recent sales-minus-expenses trend. BRE is never told the real balance, so it asks for it in the question."""
+    m = re.search(r"(\d[\d,]*(?:\.\d+)?)\s*(k\b)?", q)
+    if not m:
+        return {"answer": "Tell me your current cash balance in the question, for example: how long will my cash last, I have 50000. I do not see your bank or till balance, so I need it from you.",
+                "evidence": {"needs": "current_balance"}}
+    balance = float(m.group(1).replace(",", "")) * (1000 if m.group(2) else 1)
+    f = forecast_threshold_crossing(db, tenant_id, balance, 0.0, now=now)
+    head = f"With {_money(balance)} in hand, and recent sales minus expenses running at about {_money(f.current_daily_run_rate)} a day"
+    if f.days_to_threshold:
+        tail = f", the money could run out within {f.days_to_threshold} days (around {f.projected_date})."
+    else:
+        tail = f". {f.message}"
+    return {"answer": head + tail + " This uses recorded sales and expenses only, so unpaid invoices and other cash movements are not in it.",
+            "evidence": {"balance": balance, "daily_run_rate": f.current_daily_run_rate, "trend_slope": f.trend_slope,
+                         "days_to_threshold": f.days_to_threshold, "projected_date": f.projected_date}}
+
+
+def _setup(db, tenant_id, q, days, label, now):
+    """Where this business is in getting set up, and the one next step. Read from its own connectors, so it never says what is already done."""
+    from app.core.data_check import _ai_connected
+    from app.models.core import Connector
+    sources = db.query(Connector).filter(Connector.tenant_id == tenant_id).order_by(Connector.created_at).all()
+    ai = _ai_connected(db, tenant_id)
+    if not sources:
+        step = "Open the Data page, choose what you use (Pharmacy ERP, smePro, Imara, or a Google Sheet or file) and follow the steps shown. Your figures appear after the first sync."
+    else:
+        waiting = [c.name for c in sources if c.last_sync_status != "success"]
+        step = (f"Still to finish: {', '.join(waiting)}. Open it on the Data page and press Sync now; if it reports a problem, the Overview's \"Why does my dashboard show this?\" says what to fix."
+                if waiting else "Your sources are all synced.")
+        step += "" if ai else " For free-form questions, connect the AI assistant in Settings."
+    return {"answer": f"{len(sources)} source{'s' if len(sources) != 1 else ''} connected. {step}",
+            "evidence": {"sources": [{"name": c.name, "status": c.last_sync_status} for c in sources], "ai_connected": ai}}
+
+
 HANDLERS: dict[str, Callable] = {
+    "setup": _setup, "cash": _cash,
     "sales": lambda db, t, q, d, l, n: _metric_answer(db, t, "sale", "sales", d, l, n),
     "expenses": lambda db, t, q, d, l, n: _metric_answer(db, t, "expense", "expenses", d, l, n),
     "top_customers": _ranking_answer("customers", "sale", "resolved_customer_id", "sales"),

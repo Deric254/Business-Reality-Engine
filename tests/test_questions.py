@@ -21,6 +21,8 @@ from tests.conftest import _make_tenant, bearer, register
     ("What will sales be next week?", "forecast"), ("forecast expenses", "forecast"),
     ("What needs my attention?", "attention"), ("any problems?", "attention"),
     ("is my data up to date", "data_health"), ("which connectors are stale", "data_health"),
+    ("how long will my cash last", "cash"), ("will my money run out", "cash"), ("What will sales be next week?", "forecast"),
+    ("how do I connect my pharmacy", "setup"), ("help me set up", "setup"), ("how do I start selling more", "sales"),
     ("what is the weather", None), ("hello", None),
 ])
 def test_classify(q, intent):
@@ -148,3 +150,29 @@ def test_api_validation_auth_and_shape(client, tenant_a, tenant_b):
     assert client.get(f"/api/questions/kpis?tenant_id={tenant_a}&period_days=-1", headers=h).status_code == 422
     assert client.post("/api/questions/ask", json={"tenant_id": tenant_b, "question": "sales"}, headers=h).status_code == 403
     assert client.post("/api/questions/ask", json={"tenant_id": tenant_a, "question": "sales"}).status_code == 401
+
+
+def test_setup_question_says_where_the_business_is_and_the_next_step():
+    db = SessionLocal()
+    try:
+        t = _make_tenant("setup")
+        none = answer_question(db, t, "how do I connect my system")
+        assert none["intent"] == "setup" and none["answered"] and none["evidence"]["sources"] == []
+        assert "Data page" in none["answer"]
+        seed(db, t)
+        some = answer_question(db, t, "how do I set up")
+        assert "1 source connected" in some["answer"] and "POS" in some["answer"] and "Sync now" in some["answer"]
+    finally:
+        db.close()
+
+
+def test_cash_question_needs_the_balance_then_projects_from_it():
+    db = SessionLocal()
+    try:
+        t = _make_tenant("cash"); seed(db, t)
+        ask = answer_question(db, t, "how long will my cash last")
+        assert ask["intent"] == "cash" and ask["evidence"] == {"needs": "current_balance"}
+        r = answer_question(db, t, "how long will my cash last, I have 5k")
+        assert r["evidence"]["balance"] == 5000.0 and "With " in r["answer"] and "unpaid invoices" in r["answer"]
+    finally:
+        db.close()

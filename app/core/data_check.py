@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.core import schema, sources
 from app.core.tenant_time import tenant_zone
+from app.models.agent import AgentStatus
 from app.models.core import BusinessEvent as E, Connector, Tenant
 
 VIEW_CHOICES = (7, 30, 90, 180)            # the periods the Overview can show
@@ -60,6 +61,7 @@ def run(db: Session, tenant_id: str, period_days: int = 30, now: Optional[dateti
 
     in_period = {(cid, entity): float(total or 0) for cid, entity, total in db.query(E.connector_id, E.entity, func.sum(E.amount)).filter(
         E.tenant_id == tenant_id, counted, E.timestamp >= since, E.timestamp < now, E.entity.in_(("sale", "expense", "refund"))).group_by(E.connector_id, E.entity)}
+    verify = {r[0]: r[1] or {} for r in db.query(AgentStatus.connector_id, AgentStatus.verify).filter(AgentStatus.tenant_id == tenant_id)}
     findings, out = [], []
     connectors = db.query(Connector).filter(Connector.tenant_id == tenant_id).order_by(Connector.created_at).all()
     for c in connectors:
@@ -68,7 +70,13 @@ def run(db: Session, tenant_id: str, period_days: int = 30, now: Optional[dateti
                     "matched": matched, "first_record": _day(first, tz) if first else None, "last_record": _day(last, tz) if last else None,
                     "in_view": in_view, "last_checked": c.last_sync_at.isoformat() if c.last_sync_at else None,
                     "status": c.last_sync_status, "error": c.last_sync_error,
-                    "sales": in_period.get((c.id, "sale"), 0.0), "expenses": in_period.get((c.id, "expense"), 0.0), "refunds": in_period.get((c.id, "refund"), 0.0)})
+                    "sales": in_period.get((c.id, "sale"), 0.0), "expenses": in_period.get((c.id, "expense"), 0.0), "refunds": in_period.get((c.id, "refund"), 0.0),
+                    "matches_app": verify[c.id].get("match") if verify.get(c.id) else None})
+        v = verify.get(c.id)
+        if v and v.get("match") is False:       # the agent compared its own count and total per kind of record with ours after the last copy
+            diff = "; ".join(f"{d['entity']}: {d['engine_count']:,} here, {d['system_count']:,} in the system" for d in v.get("differences") or [])
+            findings.append(_finding("problem" if v.get("unresolved") else "warning", f"What is held here does not yet equal the system's own records ({diff}).", c.name,
+                                     "It is repairing itself on the next check." if not v.get("unresolved") else "A full copy still differs. Press Sync now, and if it persists, contact support."))
         if not c.is_active:
             findings.append(_finding("warning", "It is paused, so it will not update.", c.name, "Resume it on the Data page."))
         if c.last_sync_status == "failed":

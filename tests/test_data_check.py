@@ -147,3 +147,26 @@ def test_each_source_lists_its_totals_for_the_period_so_they_can_be_compared_wit
     assert "currency" in r
     note = next(f for f in r["findings"] if "business's own time" in f["text"])
     assert "not subtracted again" in note["action"]
+
+
+def test_a_source_that_does_not_yet_equal_its_system_says_so_and_a_matching_one_does_not(client, server):
+    from app.core.db import SessionLocal
+    from app.models.agent import AgentStatus
+    t, h = make_owner(client, "dc10")
+    cid = mk(client, t, h, name="Shop sheet", connector_type="url", config={"url": server + "/sheet.csv", "auth_type": "none", **CFG}).json()["id"]
+    assert _check(client, t, h)["sources"][0]["matches_app"] is None                      # never compared, e.g. a sheet
+    db = SessionLocal()
+    try:
+        db.add(AgentStatus(connector_id=cid, tenant_id=t, state="connected", status={}, last_pass={}, agent={}, commands={}, verify={
+            "match": False, "differences": [{"entity": "sale", "engine_count": 3, "system_count": 5, "engine_sum": "10", "system_sum": "30"}]}))
+        db.commit()
+        r = _check(client, t, h)
+        assert r["sources"][0]["matches_app"] is False
+        assert any("sale: 3 here, 5 in the system" in x for x in _texts(r, "warning"))
+        db.get(AgentStatus, cid).verify = {"match": True, "differences": []}
+        db.commit()
+    finally:
+        db.close()
+    r = _check(client, t, h)
+    assert r["sources"][0]["matches_app"] is True
+    assert not any("does not yet equal" in x for x in _texts(r))

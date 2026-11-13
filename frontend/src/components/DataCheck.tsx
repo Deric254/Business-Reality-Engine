@@ -51,11 +51,12 @@ export function DataCheck({ tenantId, days, onShowDays }: { tenantId: string; da
       {result.sources.length > 0 && (
         <div className="overflow-x-auto">
           <table className="text-sm text-left w-full">
-            <thead className="text-ink-muted"><tr><th className="pr-4 py-1 font-medium">Source</th><th className="pr-4 font-medium">Counted</th><th className="pr-4 font-medium">Left out</th><th className="pr-4 font-medium">Sales</th><th className="pr-4 font-medium">Expenses</th><th className="pr-4 font-medium">Refunds</th><th className="pr-4 font-medium">Records from</th><th className="font-medium">Last sync</th></tr></thead>
+            <thead className="text-ink-muted"><tr><th className="pr-4 py-1 font-medium">Source</th><th className="pr-4 font-medium">Counted</th><th className="pr-4 font-medium">Left out</th><th className="pr-4 font-medium">Sales</th><th className="pr-4 font-medium">Expenses</th><th className="pr-4 font-medium">Refunds</th><th className="pr-4 font-medium">Equals the system</th><th className="pr-4 font-medium">Records from</th><th className="font-medium">Last sync</th></tr></thead>
             <tbody>{result.sources.map((s) => (
               <tr key={s.id} className="border-t border-border">
                 <td className="pr-4 py-1.5">{s.name}</td><td className="pr-4">{s.counted.toLocaleString()}</td><td className="pr-4">{s.rejected.toLocaleString()}</td>
                 <td className="pr-4 whitespace-nowrap">{money(s.sales)}</td><td className="pr-4 whitespace-nowrap">{money(s.expenses)}</td><td className="pr-4 whitespace-nowrap">{money(s.refunds)}</td>
+                <td className="pr-4">{s.matches_app === null ? "n/a" : s.matches_app ? "Yes" : "Not yet"}</td>
                 <td className="pr-4 whitespace-nowrap">{s.first_record ? `${s.first_record} to ${s.last_record}` : "none"}</td>
                 <td>{s.status ?? "never"}</td>
               </tr>))}
