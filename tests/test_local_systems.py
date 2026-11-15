@@ -274,7 +274,7 @@ def test_systems_are_connected_independently(client, tmp_path):
     a = Rig(client, tmp_path, "imara", imara_db)
     a.tick()
     rows = client.get(f"/api/agent/?tenant_id={a.tenant}", headers=a.h).json()
-    assert {r["system"]: r["connected"] for r in rows} == {"smepro": False, "imara": True, "pharmacy": False}
+    assert {r["system"]: r["connected"] for r in rows} == {"smepro": False, "imara": True, "pharmacy": False, "custom": False}
 
 
 def test_wrong_token_and_other_tenants_get_nothing(client, imara, tmp_path):
@@ -420,3 +420,10 @@ def test_smepro_without_its_key_says_so(client, tmp_path):
     (tmp_path / "erp.db.key").unlink()
     rig.tick()
     assert rig.summary()["state"] == "needs_key" and rig.events() == []
+
+
+def test_a_profile_that_states_only_a_default_currency_reads_without_a_query():
+    con = sqlite3.connect(":memory:")
+    assert S.read_currency(con, {"currency": {"default": "UGX"}}, None) == "UGX"
+    assert S.read_currency(con, {"currency": {"sql": "SELECT code FROM missing", "default": "TZS"}}, None) == "TZS"
+    assert S.read_currency(con, {"currency": {"default": "UGX"}}, {"currency": "usd"}) == "USD"

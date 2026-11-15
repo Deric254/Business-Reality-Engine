@@ -4,6 +4,7 @@ import { errText } from "../lib/errors";
 import { TONE_COLOR, describeSystem, type Tone } from "../lib/systemHelp";
 import { timeAgo } from "../lib/severity";
 import { btnCls, inputCls, primaryCls } from "./ui";
+import { SystemReview } from "./SystemReview";
 
 /** One connected system: its name, how it is doing in plain words, and everything else tucked under "Manage". */
 function Row({ link, tenantId, isOwner, reload, onOpen, setError, setNotice }: {
@@ -41,6 +42,7 @@ function Row({ link, tenantId, isOwner, reload, onOpen, setError, setNotice }: {
           </select>
         </label>
       )}
+      {link.system === "custom" && link.state === "needs_mapping" && isOwner && <SystemReview tenantId={tenantId} link={link} reload={reload} setError={setError} />}
       {link.state === "needs_confirmation" && isOwner && <button className={primaryCls} disabled={busy} onClick={() => act(() => systemApi.confirm(tenantId, id), "Confirmed. The data is being brought up to date.")}>Confirm the change</button>}
       {needsHelp && isOwner && link.state === "waiting" && <button className={btnCls} onClick={() => onOpen(link.system)}>Show me the steps</button>}
       {isOwner && (

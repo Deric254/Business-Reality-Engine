@@ -3,7 +3,7 @@ import { describeSystem, overallHealth } from "./systemHelp";
 
 const link = (state: string, connected = true, paused = false) => ({ label: "smePro", state, connected, paused });
 // every state the server can report (app/core/systems.py)
-const STATES = ["waiting", "connected", "offline", "not_found", "not_this_system", "needs_driver", "needs_key", "locked", "unreadable", "schema_changed", "needs_choice", "needs_confirmation", "refused"];
+const STATES = ["waiting", "connected", "offline", "not_found", "not_this_system", "needs_driver", "needs_key", "locked", "unreadable", "schema_changed", "needs_choice", "needs_mapping", "needs_confirmation", "refused"];
 
 describe("describeSystem", () => {
   it("has plain words and a next step for every state the server can report", () => {

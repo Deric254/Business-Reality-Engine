@@ -21,6 +21,7 @@ export function describeSystem(l: Pick<SystemLink, "label" | "state" | "connecte
     case "unreadable": return { tone: "bad", title: `Couldn't read ${name}'s data`, todo: "Press Check again. If it keeps happening, show your support person the details below." };
     case "schema_changed": return { tone: "bad", title: `${name} has been updated`, todo: "Your figures are safe and nothing was changed. The connection needs a small update; ask your support person." };
     case "needs_choice": return { tone: "wait", title: "Which business should we read?", todo: "This computer holds more than one business. Choose yours below." };
+    case "needs_mapping": return { tone: "wait", title: "We found your data. Please check it", todo: "Review what we understood about your business below, correct anything that is wrong, and confirm. Nothing is read until you do." };
     case "needs_confirmation": return { tone: "wait", title: "A big change is waiting for your OK", todo: "The data changed a lot at once. If that is expected, press Confirm." };
     case "refused": return { tone: "bad", title: "This connection was turned off", todo: "Press Get a new code, and paste it into the helper app." };
     default: return { tone: "wait", title: "Checking…", todo: "One moment." };

@@ -140,6 +140,26 @@ def test_a_stranger_on_the_port_is_reported_not_silently_ignored(tmp_path, monke
     s.close()
 
 
+def test_a_second_launch_still_opens_the_page_after_the_key_file_was_removed(ui, monkeypatch):
+    """Regression: a clean-up that removed ui.key made every later click exit silently. The running copy puts it back."""
+    call, srv, home, port = ui
+    (home / "ui.key").unlink()
+    opened = []
+    monkeypatch.setattr(A.webbrowser, "open", opened.append)
+    assert A.show_running(home, port, lambda *a: None) is True
+    assert (home / "ui.key").read_text() == srv.key and opened and opened[0].endswith(f"?k={srv.key}")
+
+
+def test_a_failed_launch_tells_the_person_not_only_the_log(tmp_path, monkeypatch):
+    import socket
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); s.listen(1)
+    told = []
+    monkeypatch.setattr(A, "tell_user", told.append)
+    assert A.show_running(tmp_path, s.getsockname()[1], lambda *a: None) is False
+    assert told and "Close RealityAgent.exe" in told[0]
+    s.close()
+
+
 def test_a_system_added_while_running_starts_by_itself(client, tmp_path):
     rig = Rig(client, tmp_path, "imara", imara_db)
     cfg = {"base_url": "http://localhost", "systems": [], "state_file": str(tmp_path / "loop.db"), "poll_seconds": 0.05, "heartbeat_seconds": 0, "force_pass_seconds": 0}

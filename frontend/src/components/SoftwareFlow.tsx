@@ -6,6 +6,7 @@ import { errText } from "../lib/errors";
 import { TONE_COLOR, describeSystem } from "../lib/systemHelp";
 import { useSystemLinks } from "../lib/useSystemLinks";
 import { CopyBox, Live, Step } from "./Steps";
+import { SystemReview } from "./SystemReview";
 import { Card, btnCls, inputCls, primaryCls } from "./ui";
 
 const found = (l: SystemLink) => Object.entries(l.last_pass?.rows ?? {}).map(([e, n]) => `${n.toLocaleString("en-US")} ${e}${n === 1 ? "" : "s"}`).join(", ");
@@ -41,7 +42,7 @@ export function SoftwareFlow({ tenantId, start, onClose, onChanged }: { tenantId
           <button className={btnCls} onClick={onClose}>Back</button>
         </div>
         {(err || problem) && <p role="alert" className="text-sm text-critical">{problem ?? err}</p>}
-        <div className="grid sm:grid-cols-3 gap-3">
+        <div className="grid sm:grid-cols-2 gap-3">
           {links.map((l) => (
             <label key={l.system} className={`text-left border rounded-xl p-4 bg-panel flex gap-3 items-start ${l.connected ? "opacity-70" : "cursor-pointer hover:border-info"} ${picked.includes(l.system) ? "border-info bg-info-soft/40" : "border-border"}`}>
               <input type="checkbox" className="mt-1" checked={picked.includes(l.system)} disabled={l.connected} onChange={() => toggle(l.system)} aria-label={l.label} />
@@ -120,6 +121,7 @@ export function SoftwareFlow({ tenantId, start, onClose, onChanged }: { tenantId
                       </select>
                     </label>
                   )}
+                  {l.system === "custom" && l.state === "needs_mapping" && <SystemReview tenantId={tenantId} link={l} reload={reload} setError={setProblem} />}
                   {l.state === "needs_confirmation" && <button className={primaryCls} disabled={busy} onClick={() => act(() => systemApi.confirm(tenantId, l.connector_id!))}>Confirm the change</button>}
                   {l.connected && l.state !== "waiting" && <button className={btnCls} disabled={busy || l.checking} onClick={() => act(() => systemApi.check(tenantId, l.connector_id!))}>{l.checking ? "Checking…" : `Check ${mine.length > 1 ? `${l.label} ` : ""}again`}</button>}
                 </div>

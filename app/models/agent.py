@@ -24,6 +24,7 @@ class AgentStatus(Base):
     check_requested_at = Column(DateTime, nullable=True)
     check_done_at = Column(DateTime, nullable=True)
     commands = Column(JSON, nullable=False, default=dict)          # owner's choices: path, scope_id, paused, resync
+    discovery = Column(JSON, nullable=False, default=dict)         # "your own system": databases the agent found (names only), the readings proposed, the owner's choice
     confirm_until = Column(DateTime, nullable=True)                # owner confirmed a large removal until then
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

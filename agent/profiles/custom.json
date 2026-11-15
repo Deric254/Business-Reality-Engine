@@ -1,0 +1,15 @@
+{
+  "system": "custom",
+  "label": "Your own system",
+  "profile_version": 0,
+  "doc": "A system nobody described to the agent. It looks for databases, describes them to the app, and reads the one the owner confirms.",
+  "discovery": {
+    "files": []
+  },
+  "signature": [],
+  "streams": [],
+  "money": {
+    "unit": "major",
+    "places": 2
+  }
+}

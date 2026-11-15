@@ -38,7 +38,9 @@ from datetime import date, datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 
-AGENT_VERSION = "2.1.0"
+from discover import describe, find_databases
+
+AGENT_VERSION = "2.2.0"
 CHUNK = 500                       # events per request
 SWEEP_END = "\U0010ffff"          # sorts after every id: "up to the end of this stream"
 SQLITE_MAGIC = b"SQLite format 3\x00"
@@ -50,11 +52,13 @@ THREE_DECIMAL = {"BHD", "IQD", "JOD", "KWD", "OMR", "TND"}
 CONNECTED, NOT_FOUND, NOT_THIS_SYSTEM = "connected", "not_found", "not_this_system"
 NEEDS_DRIVER, NEEDS_KEY, LOCKED, UNREADABLE = "needs_driver", "needs_key", "locked", "unreadable"
 SCHEMA_CHANGED, NEEDS_CHOICE, NEEDS_CONFIRM, REFUSED = "schema_changed", "needs_choice", "needs_confirmation", "refused"
+NEEDS_MAPPING = "needs_mapping"   # "your own system": databases were found and described; the owner has not confirmed a reading yet
+MAX_DESCRIBED = 25                # databases described to the engine per scan, newest first
 
 
 STATE_WORDS = {CONNECTED: "connected", NOT_FOUND: "not found", NOT_THIS_SYSTEM: "wrong file", NEEDS_DRIVER: "needs the reader installed", NEEDS_KEY: "needs its key file",
                LOCKED: "busy, will retry", UNREADABLE: "cannot be read", SCHEMA_CHANGED: "the system changed", NEEDS_CHOICE: "choose a business",
-               NEEDS_CONFIRM: "waiting for confirmation", REFUSED: "connection not accepted", "engine_unreachable": "cannot reach the app"}
+               NEEDS_CONFIRM: "waiting for confirmation", NEEDS_MAPPING: "waiting for you to confirm what it found", REFUSED: "connection not accepted", "engine_unreachable": "cannot reach the app"}
 
 
 class SystemProblem(Exception):
@@ -297,12 +301,13 @@ def read_currency(con, profile: dict, scope: dict | None) -> str:
         return str(scope["currency"]).upper()
     c = profile.get("currency")
     if c:
-        try:
-            row = con.execute(c["sql"]).fetchone()
-            if row and row[0]:
-                return str(row[0]).strip().upper()
-        except sqlite3.Error:
-            pass
+        if c.get("sql"):                                   # a profile may state only a default: a database that does not record its currency
+            try:
+                row = con.execute(c["sql"]).fetchone()
+                if row and row[0]:
+                    return str(row[0]).strip().upper()
+            except sqlite3.Error:
+                pass
         return c.get("default", "KES")
     return "KES"
 
@@ -560,6 +565,8 @@ class SystemRunner:
         self.force_full = False
         self.ack_check = None
         self.refused_until = 0.0
+        self.scanned_at: float | None = None
+        self.scan_asked = None
 
     # -- finding and opening ----------------------------------------------------------------------------------------
     def _override(self):
@@ -756,13 +763,75 @@ class SystemRunner:
         out = self.client.post("heartbeat", body, timeout=30, attempts=2)
         self.last_heartbeat = self.clock()
         self.commands = out.get("commands") or {}
+        self._adopt_profile()
         return out
+
+    def _awaiting_profile(self) -> bool:
+        return self.profile.get("system") == "custom" and not self.profile.get("streams")
+
+    def _adopt_profile(self) -> None:
+        """"Your own system": the reading the owner confirmed in the app arrives with the commands and replaces the empty one.
+        It passes the same checks as a profile file, so a damaged one is refused and the agent keeps what it had."""
+        p = self.commands.get("profile")
+        if self.profile.get("system") != "custom" or not isinstance(p, dict) or p == self.profile:
+            return
+        try:
+            validate_profile(p)
+            if p["system"] != "custom":
+                raise ValueError("not a custom profile")
+        except (ValueError, KeyError, TypeError) as e:
+            self.log(f"[{self.profile['label']}] the reading sent by the app was refused: {e}")
+            return
+        self.profile, self.force_full, self.last_token, self.last_pass_at = p, True, None, 0.0
+        self.status.update(state=NOT_FOUND, detail="Reading the confirmed system for the first time.")
+
+    def _scan(self) -> None:
+        """Looks for databases on this computer and describes them (names, types and counts only). The place to look can be set
+        in the app (a folder, or one file); otherwise every readable home folder is searched."""
+        override = self._override()
+        roots = [Path(os.path.expanduser(override))] if override else (self.cfg.get("scan_roots") or home_directories())
+        paths = [r for r in roots if Path(r).is_file()] or find_databases([r for r in roots if Path(r).is_dir()])
+        described = [describe(p) for p in paths[:MAX_DESCRIBED]]
+        self.client.post("discover", {"databases": described}, timeout=60)
+        usable = [d for d in described if not d["error"]]
+        if usable:
+            self.status.update(state=NEEDS_MAPPING, detail=f"Found {len(usable)} database{'' if len(usable) == 1 else 's'} that can be read. Open the app to review what it found and confirm.")
+        else:
+            self.status.update(state=NOT_FOUND, detail="No database was found in " + ("the place you set." if override else "this computer's user folders.") + " Set the folder or file in the app, or scan again.")
+
+    def _discovery_tick(self, now: float) -> None:
+        want = self.commands.get("discover")
+        if not self.last_heartbeat:
+            self.heartbeat()                                             # a profile already confirmed arrives with the first answer
+            if not self._awaiting_profile():
+                return
+            want = self.commands.get("discover")
+        if self.scanned_at is None or (want and want != self.scan_asked):
+            self.scan_asked, self.scanned_at = want, now
+            self._scan()
+            if self.commands.get("check_now"):
+                self.ack_check = self.commands["check_now"]
+            self._safe_heartbeat()
+        elif now - self.last_heartbeat >= float(self.cfg.get("heartbeat_seconds", 30)) or self.commands.get("check_now"):
+            if self.commands.get("check_now"):
+                self.ack_check = self.commands["check_now"]
+            self.heartbeat()
 
     # -- the loop body ------------------------------------------------------------------------------------------------
     def tick(self) -> None:
         """One look: decide whether a pass is needed, do it, and tell the engine. Never raises."""
         now = self.clock()
         if now < self.refused_until:
+            return
+        if self._awaiting_profile():
+            try:
+                self._discovery_tick(now)
+            except EngineError as e:
+                self._engine_problem(e)
+            except Exception as e:                                       # the loop must outlive any surprise
+                self.log(f"[{self.profile['label']}] unexpected {type(e).__name__}: {e}")
+                self.status.update(state=UNREADABLE, detail=f"Unexpected problem while looking for databases: {type(e).__name__}.")
+                self._safe_heartbeat()
             return
         poll = float(self.cfg.get("poll_seconds", 20))
         beat = float(self.cfg.get("heartbeat_seconds", 30))
@@ -889,6 +958,9 @@ def check_report(cfg: dict, profiles: dict, homes=None) -> list[dict]:
         p = profiles.get(entry["system"])
         if p is None:
             out.append({"system": entry["system"], "state": SCHEMA_CHANGED, "detail": "Unknown system."})
+            continue
+        if p["system"] == "custom" and not p["streams"]:
+            out.append({"system": p["label"], "state": NEEDS_MAPPING, "detail": "Finds the database by itself once connected; you confirm what it found in the app."})
             continue
         r = {"system": p["label"], "state": CONNECTED, "detail": ""}
         try:

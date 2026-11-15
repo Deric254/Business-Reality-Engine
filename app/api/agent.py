@@ -18,11 +18,13 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.connectors.webhook_connector import generate_webhook_token
-from app.core import audit, sources, systems
+from app.core import audit, discovery, sources, systems
 from app.core.auth_users import authorize_tenant
 from app.core.db import get_db
 from app.core.rate_limit import check_webhook_rate_limit
+from app.models.agent import AgentStatus
 from app.models.core import Connector
+from app.reasoning.llm_providers import get_provider
 
 router = APIRouter()
 MAX_BODY_BYTES = 8 * 1024 * 1024
@@ -125,6 +127,14 @@ async def sync(connector_id: str, request: Request, db: Session = Depends(get_db
     db.commit()
     out["commands"] = systems.commands_for(row, now)
     return out
+
+
+@router.post("/{connector_id}/discover")
+async def discover(connector_id: str, request: Request, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+    """The agent describes the databases it found on its computer: names, types and counts, never row values."""
+    c = _agent_connector(db, connector_id, authorization)
+    body = await _json(request)
+    return discovery.take_found(db, c, body.get("databases"), utcnow())
 
 
 # ---- screens' side ------------------------------------------------------------------------------------------------
@@ -275,3 +285,51 @@ def disconnect(connector_id: str, tenant_id: str, request: Request, db: Session 
     c = _owned(db, connector_id, tenant_id)
     audit.record(db, "connector.delete", request=request, tenant_id=tenant_id, actor_user_id=me.user_id, target=c.id, detail={"type": "system"})
     return sources.remove_source(db, c)
+
+
+# ---- screens' side: "your own system" ----------------------------------------------------------------------------
+
+@router.get("/{connector_id}/discovery")
+def discovery_view(connector_id: str, tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+    authorize_tenant(authorization, tenant_id)
+    c = _owned(db, connector_id, tenant_id)
+    return discovery.view(db.get(AgentStatus, c.id))
+
+
+@router.post("/{connector_id}/discovery/scan")
+def discovery_scan(connector_id: str, tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+    authorize_tenant(authorization, tenant_id, require_role="owner")
+    discovery.request_scan(db, _owned(db, connector_id, tenant_id), utcnow())
+    return {"ok": True}
+
+
+class ProposeIn(BaseModel):
+    path: str
+
+
+@router.post("/{connector_id}/discovery/propose")
+def discovery_propose(connector_id: str, tenant_id: str, payload: ProposeIn, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+    """Asks the AI (the business's own key, else the server's) to read the database's names; without one, the names alone are used."""
+    authorize_tenant(authorization, tenant_id, require_role="owner")
+    c = _owned(db, connector_id, tenant_id)
+    try:
+        provider = get_provider(db, tenant_id)
+    except Exception:
+        provider = None
+    return discovery.propose(db, c, payload.path, provider)
+
+
+class ConfirmIn(BaseModel):
+    path: str
+    tables: list[dict]
+    business: dict = {}
+    currency: Optional[str] = None
+
+
+@router.post("/{connector_id}/discovery/confirm")
+def discovery_confirm(connector_id: str, tenant_id: str, payload: ConfirmIn, request: Request, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+    me = authorize_tenant(authorization, tenant_id, require_role="owner")
+    c = _owned(db, connector_id, tenant_id)
+    out = discovery.confirm(db, c, payload.path, payload.tables, payload.business, payload.currency, utcnow())
+    audit.record(db, "connector.update", request=request, tenant_id=tenant_id, actor_user_id=me.user_id, target=c.id, detail={"type": "system", "system": "custom", "confirmed": payload.path})
+    return out

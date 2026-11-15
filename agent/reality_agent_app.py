@@ -157,6 +157,11 @@ def build_server(home: Path, runners: list, port: int = PORT, log=print, key: st
         try:
             return key_file.read_text(encoding="utf-8").strip() or key
         except OSError:
+            try:                                  # the file was removed (a clean-up, an antivirus): put it back so the next click finds this copy
+                key_file.write_text(key, encoding="utf-8")
+                os.chmod(key_file, 0o600)
+            except OSError:
+                pass
             return key
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -301,22 +306,40 @@ def run_agent(home: Path, stop: threading.Event, log, runners: list) -> None:
     S.run_loop(cfg, profiles_for(home), stop, log, reload=reload, runners=runners)
 
 
+def tell_user(message: str) -> None:
+    """The exe has no console, so a failure that only reaches the log looks like a click that does nothing."""
+    try:
+        if sys.platform.startswith("win"):
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, message, "Reality Agent", 0x40)
+        elif sys.stderr:
+            print(message, file=sys.stderr)
+    except Exception:
+        pass
+
+
 def show_running(home: Path, port: int, log) -> bool:
     """A copy is already running (usually started with the computer): open its page with the key it accepts.
     False, with a line in the log, if whatever holds the port is not this agent."""
-    try:
-        key = (home / "ui.key").read_text(encoding="utf-8").strip()
-    except OSError:
-        key = ""
-    try:
-        c = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
-        c.request("GET", f"/?k={key}", headers={"Host": f"127.0.0.1:{port}"})
-        ours = c.getresponse().status == 302
-        c.close()
-    except (OSError, http.client.HTTPException):
-        ours = False
+    ours = False
+    for _ in range(2):                                           # a running copy restores a missing key file when asked, so the second try reads it
+        try:
+            key = (home / "ui.key").read_text(encoding="utf-8").strip()
+        except OSError:
+            key = ""
+        try:
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+            c.request("GET", f"/?k={key}", headers={"Host": f"127.0.0.1:{port}"})
+            ours = c.getresponse().status == 302
+            c.close()
+        except (OSError, http.client.HTTPException):
+            break
+        if ours:
+            break
     if not ours:
-        log(f"port {port} is used by another program or by an older agent that must be closed (Task Manager, RealityAgent.exe)")
+        message = f"Reality Agent could not open its page: port {port} is used by another program or by an older agent. Close RealityAgent.exe in Task Manager, then open it again."
+        log(message)
+        tell_user(message)
         return False
     webbrowser.open(f"http://127.0.0.1:{port}/?k={key}")
     return True

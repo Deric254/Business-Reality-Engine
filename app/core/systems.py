@@ -28,6 +28,7 @@ SYSTEMS = {
     "smepro": {"label": "smePro", "what": "sales, refunds, purchases and bookkeeping expenses"},
     "imara": {"label": "Imara", "what": "receipts and payments"},
     "pharmacy": {"label": "Pharmacy ERP", "what": "sales, refunds and purchases"},
+    "custom": {"label": "Your own system", "what": "whatever your program records: the agent finds its database, describes it, and reads it once you confirm"},
 }
 ENTITIES = {"sale", "expense", "refund"}
 ALIVE_SECONDS = 150            # the agent beats every ~30 s: missing 5 in a row means it is not running
@@ -49,6 +50,7 @@ STATE_TEXT = {
     "needs_choice": "Choose which business to read",
     "needs_confirmation": "Large change waiting for your confirmation",
     "refused": "Connection no longer accepted",
+    "needs_mapping": "Databases found; waiting for you to review and confirm",
     "waiting": "Waiting for the agent to report",
     "offline": "Agent not reporting (computer off or agent stopped)",
 }

@@ -561,7 +561,19 @@ export const systemApi = {
   confirm: (t: string, id: string) => request<SystemLink>(`/api/agent/${id}/confirm?tenant_id=${t}`, { method: "POST" }),
   resync: (t: string, id: string) => request<SystemLink>(`/api/agent/${id}/resync?tenant_id=${t}`, { method: "POST" }),
   disconnect: (t: string, id: string) => request<{ removed_records: number }>(`/api/agent/${id}?tenant_id=${t}`, { method: "DELETE" }),
+  discovery: (t: string, id: string) => request<SystemDiscovery>(`/api/agent/${id}/discovery?tenant_id=${t}`),
+  scan: (t: string, id: string) => request<{ ok: boolean }>(`/api/agent/${id}/discovery/scan?tenant_id=${t}`, { method: "POST" }),
+  propose: (t: string, id: string, path: string) => request<SystemProposal>(`/api/agent/${id}/discovery/propose?tenant_id=${t}`, { method: "POST", ...json({ path }) }),
+  confirmReading: (t: string, id: string, body: { path: string; tables: ReadingTable[]; business: { kind: string; description: string }; currency: string | null }) =>
+    request<{ chosen: unknown; notes: string[] }>(`/api/agent/${id}/discovery/confirm?tenant_id=${t}`, { method: "POST", ...json(body) }),
 };
+
+export type FoundColumn = { name: string; type: string; pk: boolean };
+export type FoundTable = { name: string; rows: number | null; columns: FoundColumn[] };
+export type FoundDatabase = { path: string; size: number | null; modified: number | null; error: string | null; tables: FoundTable[] };
+export type ReadingTable = { table: string; role: "sale" | "expense" | "refund"; reason?: string } & Partial<Record<"id" | "date" | "amount" | "instant" | "customer" | "product" | "location" | "quantity" | "supplier", string | null>>;
+export type SystemProposal = { business: { kind: string; description: string }; currency: string | null; tables: ReadingTable[]; notes: string[]; used_ai: boolean };
+export type SystemDiscovery = { scanned_at: string | null; found: FoundDatabase[]; proposals: Record<string, SystemProposal>; chosen: { path: string } | null; scan_requested: boolean };
 
 export const connectorApi = {
   inspectUrl: (t: string, config: Record<string, unknown>) =>
