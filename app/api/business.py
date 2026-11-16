@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.core import data_check as data_check_mod, fx as fx_mod
+from app.core import data_check as data_check_mod, fx as fx_mod, insights as insights_mod
 from app.core.audit import record as audit_record
 from app.core.auth_users import authorize_tenant, decode_token, ensure_active
 from app.core.business_health import discover, health_summary, quality_report
@@ -33,6 +33,13 @@ def data_check(tenant_id: str, period_days: int = Query(30, ge=0, le=3650), db: 
     """Why the dashboard shows what it shows: per source, what was read, counted, left out and why."""
     authorize_tenant(authorization, tenant_id)
     return data_check_mod.run(db, tenant_id, period_days)
+
+
+@router.get("/insights")
+def insights(tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+    """Where money is stuck or leaking, from the business's own records: what, why, since when, what it costs, what to do."""
+    authorize_tenant(authorization, tenant_id)
+    return {"findings": insights_mod.findings(db, tenant_id)}
 
 
 @router.get("/health")

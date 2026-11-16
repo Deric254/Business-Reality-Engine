@@ -247,6 +247,10 @@ def test_a_removed_system_leaves_nothing_on_the_computer(client, tmp_path):
                 break
             time.sleep(0.2)
         state = S.StateDB(cfg["state_file"])
+        for _ in range(50):                                                  # it records what it sent just after the engine has answered
+            if state.con.execute("SELECT count(*) FROM items WHERE connector_id = ?", (rig.cid,)).fetchone()[0] > 0:
+                break
+            time.sleep(0.2)
         assert state.con.execute("SELECT count(*) FROM items WHERE connector_id = ?", (rig.cid,)).fetchone()[0] > 0      # it remembered what it sent
         box["cfg"] = {**cfg, "systems": []}                                  # the owner removed it from this computer
         for _ in range(100):
@@ -295,3 +299,46 @@ def test_download_link_is_found_by_itself_and_never_points_at_a_missing_file(mon
     monkeypatch.setenv("RENDER_GIT_REPO_SLUG", "bad repo/../x")
     ag._DL_CACHE.update(key=None, url=None, ready=False, until=0.0)
     assert ag.agent_download_url() is None                                    # a malformed repository is never fetched
+
+
+def test_a_database_connection_is_tested_saved_here_and_its_password_is_never_shown(ui):
+    from tests.test_dbconn import LIVE, spec
+    if not LIVE:
+        pytest.skip("no database server configured")
+    call, srv, home, port = ui
+    kind = sorted(LIVE)[0]
+    base = spec(kind, "reader", "pw1")
+    body = {"kind": kind, "name": "Main shop", **{k: base[k] for k in ("host", "port", "database", "user", "password")}}
+    status, out, _ = call("POST", "/api/db/save", body)
+    assert status == 200 and out["ok"] and out["writable"] is False
+    status, shown, _ = call("GET", "/api/status")
+    assert "Main shop" in shown["connections"] and "pw1" not in json.dumps(shown)
+    assert (home / "connections.json").stat().st_mode & 0o077 == 0
+    assert call("POST", "/api/db/remove", {"name": "Main shop"})[0] == 200
+    assert call("GET", "/api/status")[1]["connections"] == {}
+
+
+def test_a_connection_that_does_not_work_is_not_saved_and_says_why(ui):
+    call, srv, home, port = ui
+    status, out, _ = call("POST", "/api/db/save", {"kind": "postgres", "name": "x", "host": "127.0.0.1", "port": "1", "database": "d", "user": "u", "password": "p"})
+    assert status == 400 and "Could not reach" in out["error"] or "reader installed" in out["error"]
+    assert not (home / "connections.json").exists()
+    assert call("POST", "/api/db/save", {"kind": "oracle", "name": "x"})[0] == 400
+    assert call("POST", "/api/db/save", {"kind": "mysql", "name": "x"})[0] == 400                # no database name
+    assert call("POST", "/api/db/save", {"kind": "mysql", "name": "x", "database": "d"}, cookie=False)[0] == 403
+
+
+def test_servers_and_their_databases_can_be_found_and_listed_from_the_page(ui):
+    from tests.test_dbconn import LIVE, spec
+    if not LIVE:
+        pytest.skip("no database server configured")
+    call, srv, home, port = ui
+    kind = sorted(LIVE)[0]
+    status, out, _ = call("POST", "/api/db/servers", {})
+    assert status == 200 and any(s["kind"] == kind and s["port"] == LIVE[kind]["server"]["port"] for s in out["servers"])
+    base = spec(kind, "reader", "pw1")
+    status, out, _ = call("POST", "/api/db/databases", {"kind": kind, "host": base["host"], "port": base["port"], "user": "reader", "password": "pw1"})
+    assert status == 200 and "duka" in {d["name"] for d in out["databases"]}
+    status, out, _ = call("POST", "/api/db/databases", {"kind": kind, "host": base["host"], "port": base["port"], "user": "reader", "password": "wrong"})
+    assert status == 400 and "user name or password" in out["error"]
+    assert call("POST", "/api/db/servers", {}, cookie=False)[0] == 403

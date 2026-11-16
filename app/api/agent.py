@@ -21,7 +21,7 @@ from app.connectors.webhook_connector import generate_webhook_token
 from app.core import audit, discovery, sources, systems
 from app.core.auth_users import authorize_tenant
 from app.core.db import get_db
-from app.core.rate_limit import check_webhook_rate_limit
+from app.core.rate_limit import check_agent_rate_limit
 from app.models.agent import AgentStatus
 from app.models.core import Connector
 from app.reasoning.llm_providers import get_provider
@@ -78,7 +78,7 @@ def agent_download_url() -> Optional[str]:
 # ---- agent side ---------------------------------------------------------------------------------------------------
 
 def _agent_connector(db: Session, connector_id: str, authorization: Optional[str]) -> Connector:
-    check_webhook_rate_limit(connector_id)
+    check_agent_rate_limit(connector_id)
     token = authorization.removeprefix("Bearer ").strip() if authorization and authorization.startswith("Bearer ") else ""
     c = db.query(Connector).filter(Connector.id == connector_id).first()
     # Same answer for "no such connector" and "wrong token": nothing to learn by guessing.

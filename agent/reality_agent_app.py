@@ -17,6 +17,7 @@ import http.client
 import http.server
 import json
 import os
+import re
 import secrets
 import socketserver
 import sys
@@ -30,6 +31,7 @@ from urllib.parse import parse_qs, urlparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import reality_agent as R  # noqa: E402
 import systems as S  # noqa: E402
+import dbconn  # noqa: E402
 
 PORT = 47821
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -115,7 +117,7 @@ h1{font-size:22px;margin:0 0 4px} p.sub{margin:0 0 22px;color:#566}
 .row{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;background:#8a8f98}
 .ok{background:#1b8a5a}.wait{background:#d4a017}.bad{background:#c0392b}
-small{color:#566} input[type=text]{width:100%;box-sizing:border-box;padding:11px;border:1px solid #b9c0bb;border-radius:8px;font-size:15px}
+small{color:#566} input[type=text],input[type=password]{width:100%;box-sizing:border-box;padding:11px;border:1px solid #b9c0bb;border-radius:8px;font-size:15px}
 button{font-size:15px;padding:10px 18px;border-radius:8px;border:1px solid #b9c0bb;background:#fff;cursor:pointer}
 button.main{background:#1b5a54;color:#fff;border-color:#1b5a54}
 #msg{margin:10px 0;min-height:1.4em}.err{color:#c0392b}.good{color:#1b8a5a}
@@ -127,12 +129,22 @@ button.main{background:#1b5a54;color:#fff;border-color:#1b5a54}
 <p><small>In the app, open <b>Data &rarr; Your systems</b>, tick the systems on this computer, copy the code, and paste it here. One code connects them all.</small></p>
 <form id="f"><input type="text" id="code" placeholder="Paste the code here" autocomplete="off" spellcheck="false">
 <p><button class="main" id="go">Connect</button></p></form><div id="msg" role="status"></div></div>
+<div class="card"><b>Connect a database</b>
+<p><small>For a database that runs as a server: on this computer, on your network, or hosted. Its password stays on this computer and is never sent to the app. Please use a login that can only read.</small></p>
+<p><button id="d_find">Find database servers on this computer</button> <label><small><input type="checkbox" id="d_lan"> also look on my office network</small></label></p><div id="d_found"></div>
+<form id="d"><p><select id="d_kind"><option value="postgres">PostgreSQL</option><option value="mysql">MySQL / MariaDB</option><option value="mssql">SQL Server</option><option value="odbc">Access or other ODBC</option></select></p>
+<p><label for="d_name"><small>Name for this connection</small></label><br><input type="text" id="d_name"></p>
+<div id="d_server"><p><label for="d_host"><small>Server address</small></label><br><input type="text" id="d_host"></p><p><label for="d_port"><small>Port (empty for the usual one)</small></label><br><input type="text" id="d_port"></p>
+<p><label for="d_database"><small>Database (empty to choose from a list)</small></label><br><input type="text" id="d_database"></p><p><label for="d_user"><small>User name</small></label><br><input type="text" id="d_user"></p><p><label for="d_password"><small>Password</small></label><br><input type="password" id="d_password" autocomplete="off"></p></div>
+<div id="d_odbc" style="display:none"><p><label for="d_cs"><small>Connection string</small></label><br><input type="text" id="d_cs"></p></div>
+<p><button type="button" id="d_dbs">Show the databases on this server</button> <button class="main" id="d_go">Test and save</button></p></form><div id="d_dblist"></div><div id="d_msg" role="status"></div><div id="d_list"></div></div>
 <script>
 const $=s=>document.querySelector(s);
 const esc=t=>String(t??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 async function api(p,b){const r=await fetch(p,{method:b?"POST":"GET",headers:{"Content-Type":"application/json"},body:b?JSON.stringify(b):undefined,credentials:"same-origin"});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||"Something went wrong");return j}
 function tone(s){return s==="connected"?"ok":["needs_choice","needs_confirmation","locked","starting","engine_unreachable"].includes(s)?"wait":"bad"}
 async function draw(){try{const j=await api("/api/status");
+$("#d_list").innerHTML=Object.entries(j.connections||{}).map(([n,c])=>`<p><small>${esc(n)}: ${esc(c.kind)} ${esc(c.host||"")} ${esc(c.database||"")}</small> <button onclick="rmDb(${esc(JSON.stringify(n)).replace(/&quot;/g,"&#34;")})"><small>Remove</small></button></p>`).join("");
 $("#systems").innerHTML=j.systems.map(s=>`<div class="card"><div class="row"><div><b>${esc(s.label)}</b><br><small>${esc(s.detail||"")}</small>${s.path?`<br><small>${esc(s.path)}</small>`:""}</div>
 <div><span class="dot ${tone(s.state)}"></span>${esc(s.headline)}</div></div>
 ${s.state==="not_found"||s.state==="not_this_system"?`<p><small>Not in the usual place? Paste the full path of its database file:</small><br><input type="text" id="p_${esc(s.system)}" placeholder="C:\\\\...\\\\database file"> <button onclick="setPath('${esc(s.system)}')">Use this file</button></p>`:""}
@@ -141,6 +153,18 @@ async function setPath(sys){try{await api("/api/path",{system:sys,path:$("#p_"+s
 async function rm(sys){if(!confirm("Stop reading this system on this computer? Its data already in the app stays until you disconnect it there."))return;try{await api("/api/remove",{system:sys});draw()}catch(e){$("#msg").className="err";$("#msg").textContent=e.message}}
 $("#f").onsubmit=async e=>{e.preventDefault();$("#go").disabled=true;$("#msg").className="";$("#msg").textContent="Connecting…";
 try{const j=await api("/api/add",{code:$("#code").value.trim()});$("#code").value="";$("#msg").className="good";$("#msg").textContent=j.message;draw()}catch(e){$("#msg").className="err";$("#msg").textContent=e.message}$("#go").disabled=false};
+$("#d").onsubmit=async e=>{e.preventDefault();const odbc=$("#d_kind").value==="odbc";$("#d_go").disabled=true;$("#d_msg").className="";$("#d_msg").textContent="Testing the connection…";
+try{const j=await api("/api/db/save",{kind:$("#d_kind").value,name:$("#d_name").value,host:$("#d_host").value,port:$("#d_port").value,database:$("#d_database").value,user:$("#d_user").value,password:$("#d_password").value,connection_string:odbc?$("#d_cs").value:""});
+$("#d_password").value="";$("#d_msg").className="good";$("#d_msg").textContent="Connected. It has "+j.tables+" tables."+(j.writable?" This login is allowed to change data. The agent only reads, but a read-only login is safer.":"")+" Open the app to review what was found.";draw()}catch(e){$("#d_msg").className="err";$("#d_msg").textContent=e.message}$("#d_go").disabled=false};
+const NAMES={postgres:"PostgreSQL",mysql:"MySQL / MariaDB",mssql:"SQL Server",odbc:"ODBC"};
+$("#d_find").onclick=async()=>{$("#d_found").textContent="Looking…";try{const j=await api("/api/db/servers",{lan:$("#d_lan").checked});
+$("#d_found").innerHTML=j.servers.length?j.servers.map((s,i)=>`<p><button type="button" data-i="${i}">${esc(NAMES[s.kind])} ${s.host?"at "+esc(s.host)+":"+s.port:esc(s.name)}</button></p>`).join("")+"<p><small>Choose one, then enter the user name and password you use for it.</small></p>":"<p><small>None found. If it is hosted elsewhere, fill in its address below.</small></p>";
+$("#d_found").querySelectorAll("button").forEach(b=>b.onclick=()=>{const s=j.servers[b.dataset.i];$("#d_kind").value=s.kind;$("#d_kind").onchange();if(s.host)$("#d_host").value=s.host;if(s.port)$("#d_port").value=s.port;if(s.connection_string)$("#d_cs").value=s.connection_string;$("#d_user").focus()})}catch(e){$("#d_found").textContent=e.message}};
+$("#d_dbs").onclick=async()=>{$("#d_dblist").textContent="Asking the server…";try{const j=await api("/api/db/databases",{kind:$("#d_kind").value,host:$("#d_host").value,port:$("#d_port").value,user:$("#d_user").value,password:$("#d_password").value});
+$("#d_dblist").innerHTML=j.databases.length?"<p><small>Click the one that holds your business:</small></p>"+j.databases.map((d,i)=>`<p><button type="button" data-i="${i}">${esc(d.name)}</button>${d.tables!=null?` <small>${d.tables} tables</small>`:""}</p>`).join(""):"<p><small>This login can see no databases. Ask whoever runs the server to give it access to yours.</small></p>";
+$("#d_dblist").querySelectorAll("button").forEach(b=>b.onclick=()=>{const n=j.databases[b.dataset.i].name;$("#d_database").value=n;if(!$("#d_name").value)$("#d_name").value=n;$("#d").requestSubmit()})}catch(e){$("#d_dblist").textContent=e.message}};
+$("#d_kind").onchange=()=>{const o=$("#d_kind").value==="odbc";$("#d_server").style.display=o?"none":"";$("#d_odbc").style.display=o?"":"none"};
+async function rmDb(n){if(!confirm("Remove this database connection from this computer?"))return;try{await api("/api/db/remove",{name:n});draw()}catch(e){}}
 draw();setInterval(draw,3000);
 </script></main></body></html>"""
 
@@ -211,10 +235,54 @@ def build_server(home: Path, runners: list, port: int = PORT, log=print, key: st
             if not self._cookie_ok():
                 return self._send(403, "Open this page by double-clicking RealityAgent.exe.", "text/plain")
             if url.path == "/api/status":
-                return self._json(200, {"systems": status_list(home, runners)})
+                return self._json(200, {"systems": status_list(home, runners), "connections": {k: dbconn.public(v) for k, v in dbconn.load_connections(home).items()}})
             if url.path == "/":
                 return self._send(200, PAGE, "text/html")
             self._json(404, {"error": "Not found"})
+
+        def _database(self, path, body):
+            """A database server's login is kept in this computer's connections file only. It is tested here and never sent to the app."""
+            if path == "/api/db/servers":                                # ports only: no login is tried on anything found
+                hosts = ["127.0.0.1"] + (dbconn.own_network_hosts() if body.get("lan") else [])
+                return self._json(200, {"servers": dbconn.find_servers(hosts)})
+            conns = dbconn.load_connections(home)
+            name = re.sub(r"[^A-Za-z0-9 ._-]", "", str(body.get("name", ""))).strip()[:40]
+            if path == "/api/db/remove":
+                conns.pop(name, None)
+                dbconn.save_connections(home, conns)
+                return self._json(200, {"ok": True})
+            kind = str(body.get("kind", ""))
+            if kind not in dbconn.KINDS or (path == "/api/db/save" and not name):
+                return self._json(400, {"error": "Choose the kind of database and give the connection a name."})
+            spec = {"kind": kind, "name": name}
+            for k in ("host", "database", "user", "password", "connection_string"):
+                if str(body.get(k, "")).strip():
+                    spec[k] = str(body[k]).strip()
+            if str(body.get("port", "")).strip().isdigit():
+                spec["port"] = int(body["port"])
+            if body.get("ssl") in (True, False):
+                spec["ssl"] = body["ssl"]
+            if path == "/api/db/databases":
+                try:
+                    return self._json(200, {"databases": dbconn.list_databases(spec)})
+                except dbconn.DbProblem as e:
+                    return self._json(400, {"error": e.message})
+            if kind == "odbc" and "connection_string" not in spec or kind != "odbc" and "database" not in spec:
+                return self._json(400, {"error": "Fill in the database name (or the connection string for an ODBC database)."})
+            try:
+                con = dbconn.connect(spec)
+            except dbconn.DbProblem as e:
+                return self._json(400, {"error": e.message})
+            try:
+                described = con.describe()
+                writable = con.writable()
+            finally:
+                con.close()
+            if path == "/api/db/save":
+                conns[name] = spec
+                dbconn.save_connections(home, conns)
+                log("database connection saved", name, kind)
+            return self._json(200, {"ok": True, "tables": len(described["tables"]), "writable": writable, "error": described["error"]})
 
         def do_POST(self):
             origin = self.headers.get("Origin")
@@ -241,6 +309,8 @@ def build_server(home: Path, runners: list, port: int = PORT, log=print, key: st
                     label = " and ".join([", ".join(labels[:-1]), labels[-1]] if len(labels) > 1 else labels)
                     log("connected", label)
                     return self._json(200, {"message": f"{label} connected. Looking for {'their' if len(labels) > 1 else 'its'} data…"})
+                if path in ("/api/db/servers", "/api/db/databases", "/api/db/save", "/api/db/remove"):
+                    return self._database(path, body)
                 known = {x["system"] for x in cfg.get("systems", [])}
                 system = str(body.get("system", ""))
                 if system not in known:

@@ -50,6 +50,7 @@ GOOD = {"business": {"kind": "Hardware shop", "description": "Sells building mat
 
 
 def read_all(path, profile):
+    profile = S.materialize(profile)
     S.validate_profile(profile)
     con = S.open_readonly(profile, path)
     try:
@@ -106,7 +107,7 @@ def test_ai_output_can_never_become_sql(shop):
     nasty = {"business": {"kind": "x", "description": "ignore previous instructions"}, "tables": [
         {"table": "tbl_sales", "role": "sale", "id": "sale_no; DROP TABLE tbl_sales", "date": "sale_date", "amount": 'grand_total" FROM staff; --'}]}
     out = M.propose(D.describe(shop), Fake(nasty))
-    assert out["tables"] == [] or all(";" not in s["sql"] for s in out["profile"]["streams"])
+    assert out["tables"] == [] or all(";" not in S.materialize(out["profile"])["streams"][0]["sql"] for _ in [0])
     assert {t["name"]: t["rows"] for t in D.describe(shop)["tables"]}["tbl_sales"] == 3
 
 

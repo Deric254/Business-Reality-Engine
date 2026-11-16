@@ -39,3 +39,12 @@ Runs on a computer inside the business, reads local data, pushes it **out** over
 Sources: `csv_folder`, `sqlite`, `odbc` (needs `pip install pyodbc`), `command` (your own export script that prints one JSON object per line; this is how legacy programs, authorized screen automation or manual exports are covered).
 
 Safety: state only advances after the server confirmed delivery; resending is harmless (events with an id are de-duplicated); plain `http` is refused except localhost; the `command` source never uses a shell.
+
+
+## Your own system: any database, any business
+
+Connect "Your own system" in the app. The agent finds database files on this computer (SQLite) and describes them to the app by names only. For a database that runs as a server (PostgreSQL, MySQL/MariaDB, SQL Server, or Access and other ODBC databases, on this computer, on the network, or hosted), open the agent's page, use "Connect a database", and enter its details. The login is kept in `connections.json` beside the agent's other files, readable only by you, and is never sent to the app. Use a login that can only read. The agent opens its session read-only where the database allows it, and says so when the login could change data.
+
+Drivers (all bundled in the Windows build): `pg8000`, `pymysql`, `python-tds` and `pyodbc` (Access needs Microsoft's own Access driver installed). Run from source: `pip install pg8000 pymysql python-tds pyodbc`.
+
+Tested against real PostgreSQL and MariaDB servers (set `DBCONN_TEST_PG` / `DBCONN_TEST_MYSQL`, see `tests/test_dbconn.py`). SQL Server and ODBC/Access are built to the same interface but have not been run against a live server.

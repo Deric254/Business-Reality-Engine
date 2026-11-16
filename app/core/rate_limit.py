@@ -115,6 +115,11 @@ general_limiter = _build_limiter(int(os.environ.get("RATE_LIMIT_GENERAL_PER_MIN"
 webhook_limiter = _build_limiter(int(os.environ.get("RATE_LIMIT_WEBHOOK_PER_MIN", "100")), 60, "ratelimit:webhook")
 
 
+# The local agent: one connector's own sync traffic. A first sync of a large business is hundreds of requests, and the webhook
+# quota (100/minute) would make it take many minutes. The agent paces itself under this one (agent/systems.py PACE).
+agent_limiter = _build_limiter(int(os.environ.get("RATE_LIMIT_AGENT_PER_MIN", "240")), 60, "ratelimit:agent")
+
+
 auth_limiter = _build_limiter(int(os.environ.get("RATE_LIMIT_AUTH_PER_MIN", "10")), 60, "ratelimit:auth")
 
 
@@ -153,3 +158,9 @@ def check_webhook_rate_limit(connector_id: str):
             status_code=429, detail="Rate limit exceeded",
             headers={"Retry-After": str(retry_after)},
         )
+
+
+def check_agent_rate_limit(connector_id: str):
+    allowed, retry_after = agent_limiter.check(connector_id)
+    if not allowed:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded", headers={"Retry-After": str(retry_after)})

@@ -455,6 +455,7 @@ export const businessApi = {
   analytics: (t: string, days = 90) => request<Analytics>(`/api/business/analytics?tenant_id=${t}&days=${days}`),
   analyticsPdf: (t: string, days = 90) => requestBlob(`/api/business/analytics.pdf?tenant_id=${t}&days=${days}`),
   dataCheck: (t: string, days = 30) => request<DataCheckResult>(`/api/business/data-check?tenant_id=${t}&period_days=${days}`),
+  insights: (t: string) => request<{ findings: Insight[] }>(`/api/business/insights?tenant_id=${t}`),
   health: (t: string, days = 30) => request<Health>(`/api/business/health?tenant_id=${t}&days=${days}`),
   quality: (t: string, days = 30) => request<Quality>(`/api/business/quality?tenant_id=${t}&days=${days}`),
   discovery: (t: string) => request<Discovery>(`/api/business/discovery?tenant_id=${t}`),
@@ -569,11 +570,12 @@ export const systemApi = {
 };
 
 export type FoundColumn = { name: string; type: string; pk: boolean };
-export type FoundTable = { name: string; rows: number | null; columns: FoundColumn[] };
-export type FoundDatabase = { path: string; size: number | null; modified: number | null; error: string | null; tables: FoundTable[] };
-export type ReadingTable = { table: string; role: "sale" | "expense" | "refund"; reason?: string } & Partial<Record<"id" | "date" | "amount" | "instant" | "customer" | "product" | "location" | "quantity" | "supplier", string | null>>;
+export type FoundTable = { name: string; schema?: string | null; rows: number | null; columns: FoundColumn[] };
+export type FoundDatabase = { path: string; source?: { kind: string; name: string } | null; size: number | null; modified: number | null; error: string | null; tables: FoundTable[] };
+export type ReadingField = "id" | "date" | "amount" | "instant" | "customer" | "product" | "location" | "quantity" | "supplier" | "label";
+export type ReadingTable = { table: string; role: string; reason?: string; schema?: string | null } & Partial<Record<ReadingField, string | null>>;
 export type SystemProposal = { business: { kind: string; description: string }; currency: string | null; tables: ReadingTable[]; notes: string[]; used_ai: boolean };
-export type SystemDiscovery = { scanned_at: string | null; found: FoundDatabase[]; proposals: Record<string, SystemProposal>; chosen: { path: string } | null; scan_requested: boolean };
+export type SystemDiscovery = { roles: Record<string, { label: string; required: ReadingField[]; amount_label: string }>; scanned_at: string | null; found: FoundDatabase[]; proposals: Record<string, SystemProposal>; chosen: { path: string } | null; scan_requested: boolean };
 
 export const connectorApi = {
   inspectUrl: (t: string, config: Record<string, unknown>) =>
@@ -729,4 +731,9 @@ export const goalsApi = {
   remove: (t: string, id: string) => requestVoid(`/api/goals/${id}?tenant_id=${t}`, "DELETE"),
   explain: (t: string, id: string) => request<GoalExplanation>(`/api/goals/${id}/explain?tenant_id=${t}`, { method: "POST" }),
   changes: (t: string, days = 30) => request<Changes>(`/api/goals/changes?tenant_id=${t}&days=${days}`),
+};
+
+export type Insight = {
+  kind: string; title: string; severity: "high" | "medium"; what: string; why: string; since: string;
+  cost: { amount: number; basis: string } | null; evidence: { label: string; value: string }[]; fix: string[]; rows: Record<string, string | number | boolean | null>[];
 };

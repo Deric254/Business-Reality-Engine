@@ -30,7 +30,7 @@ SYSTEMS = {
     "pharmacy": {"label": "Pharmacy ERP", "what": "sales, refunds and purchases"},
     "custom": {"label": "Your own system", "what": "whatever your program records: the agent finds its database, describes it, and reads it once you confirm"},
 }
-ENTITIES = {"sale", "expense", "refund"}
+ENTITIES = {"sale", "expense", "refund", "stock", "receivable", "payable", "customer", "product"}
 ALIVE_SECONDS = 150            # the agent beats every ~30 s: missing 5 in a row means it is not running
 ALERT_AFTER = timedelta(minutes=10)
 MAX_EVENTS = 1000

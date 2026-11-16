@@ -13,6 +13,7 @@ from app.core.systems import status_row
 from app.models.agent import AgentStatus
 from app.models.core import Connector
 
+KINDS = ("postgres", "mysql", "mssql", "odbc")        # the database servers the agent can read (agent/dbconn.py)
 MAX_DATABASES, MAX_TABLES, MAX_COLUMNS, MAX_NAME = 25, 200, 80, 120
 
 
@@ -33,8 +34,9 @@ def clean_found(databases) -> list[dict]:
             cols = [{"name": _name(c["name"]), "type": _name(c.get("type", ""))[:30], "pk": bool(c.get("pk"))}
                     for c in (t.get("columns") or [])[:MAX_COLUMNS] if isinstance(c, dict) and c.get("name")]
             rows = t.get("rows")
-            tables.append({"name": _name(t["name"]), "rows": rows if isinstance(rows, int) and rows >= 0 else None, "columns": cols})
-        out.append({"path": str(d["path"])[:500], "size": d.get("size") if isinstance(d.get("size"), int) else None,
+            tables.append({"name": _name(t["name"]), "schema": _name(t["schema"]) if t.get("schema") else None, "table": _name(t.get("table") or t["name"]), "rows": rows if isinstance(rows, int) and rows >= 0 else None, "columns": cols})
+        src = d.get("source") if isinstance(d.get("source"), dict) else None
+        out.append({"path": str(d["path"])[:500], "source": {"kind": str(src.get("kind"))[:20], "name": _name(src.get("name") or "")} if src and src.get("kind") in KINDS else None, "size": d.get("size") if isinstance(d.get("size"), int) else None,
                     "modified": d.get("modified") if isinstance(d.get("modified"), int) else None,
                     "error": str(d["error"])[:200] if d.get("error") else None, "tables": tables})
     return out
@@ -62,7 +64,7 @@ def _database(row: AgentStatus, path: str) -> dict:
 
 def view(row: AgentStatus | None) -> dict:
     d = (row.discovery if row else None) or {}
-    return {"scanned_at": d.get("scanned_at"), "found": d.get("found", []), "proposals": d.get("proposals", {}), "chosen": d.get("chosen"),
+    return {"roles": {k: {"label": v["label"], "required": list(v["required"]), "amount_label": v.get("amount_label", "Amount")} for k, v in schema_mapper.ROLE_INFO.items()}, "scanned_at": d.get("scanned_at"), "found": d.get("found", []), "proposals": d.get("proposals", {}), "chosen": d.get("chosen"),
             "scan_requested": bool(row and (row.commands or {}).get("discover"))}
 
 

@@ -38,9 +38,12 @@ from datetime import date, datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 
+import dbconn
+from dbconn import Conn, DbError, DbProblem
 from discover import describe, find_databases
 
 AGENT_VERSION = "2.2.0"
+PACE = 0.3                        # seconds between requests: at most 200 a minute, under the engine's 240 per connector
 CHUNK = 500                       # events per request
 SWEEP_END = "\U0010ffff"          # sorts after every id: "up to the end of this stream"
 SQLITE_MAGIC = b"SQLite format 3\x00"
@@ -53,6 +56,7 @@ CONNECTED, NOT_FOUND, NOT_THIS_SYSTEM = "connected", "not_found", "not_this_syst
 NEEDS_DRIVER, NEEDS_KEY, LOCKED, UNREADABLE = "needs_driver", "needs_key", "locked", "unreadable"
 SCHEMA_CHANGED, NEEDS_CHOICE, NEEDS_CONFIRM, REFUSED = "schema_changed", "needs_choice", "needs_confirmation", "refused"
 NEEDS_MAPPING = "needs_mapping"   # "your own system": databases were found and described; the owner has not confirmed a reading yet
+DB_ERRORS = (sqlite3.Error, DbError)   # a failed statement, whichever database it came from
 MAX_DESCRIBED = 25                # databases described to the engine per scan, newest first
 
 
@@ -100,13 +104,48 @@ def validate_profile(p: dict) -> None:
         for k in ("key", "entity", "event_type", "table", "sql", "time"):
             if k not in s:
                 raise ValueError(f"stream missing '{k}'")
-        if s["time"] not in ("instant", "date", "date_or_instant"):
+        if s["time"] not in ("instant", "date", "date_or_instant", "today"):
             raise ValueError(f"stream {s['key']}: unknown time rule {s['time']}")
         if s["key"] in seen:
             raise ValueError(f"duplicate stream key {s['key']}")
         seen.add(s["key"])
         if not re.match(r"^\s*(select|with)\b", s["sql"], re.I):
             raise ValueError(f"stream {s['key']}: only SELECT is allowed")
+        if _more_than_one_statement(s["sql"]):
+            raise ValueError(f"stream {s['key']}: only one statement is allowed")
+
+
+def _more_than_one_statement(sql: str) -> bool:
+    """A semicolon outside quotes ends a statement; anything after it would be a second one (server drivers run them all)."""
+    quote = None
+    for i, ch in enumerate(sql):
+        if quote:
+            quote = None if (ch == quote or (quote == "[" and ch == "]")) else quote
+        elif ch in "'\"`[":
+            quote = ch
+        elif ch == ";":
+            return bool(sql[i + 1:].strip())
+    return False
+
+
+def materialize(profile: dict, spec: dict | None = None) -> dict:
+    """A profile whose streams name tables and columns (`map`) becomes one with the statements written out, in the dialect of the
+    database that will run them. Every name is quoted, so a name can never become part of the statement."""
+    source = profile.get("source") or {}
+    dialect = dbconn.dialect_for(spec) if spec else dbconn.DIALECTS.get(source.get("kind", "sqlite"), dbconn.SQLITE)
+    streams = []
+    for s in profile["streams"]:
+        m = s.get("map")
+        if not m or "sql" in s:
+            streams.append(s)
+            continue
+        q = dialect.quote
+        ident = dialect.text(q(m["id"])) if m.get("id") else "CAST(rowid AS TEXT)"
+        cols = [f"{ident} AS {q('id')}"] + [f"{q(m[k])} AS {q(k)}" for k in ("date", "instant", "amount", "customer", "product", "location", "quantity", "supplier") if m.get(k)]
+        if m.get("label"):
+            cols.append(f"{q(m['label'])} AS {q('m_label')}")
+        streams.append({**s, "sql": f"SELECT {', '.join(cols)} FROM {dialect.table(m.get('schema'), m['table'])}"})
+    return {**profile, "streams": streams}
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -255,6 +294,8 @@ def open_readonly(profile: dict, path: Path):
 
 
 def _tables(con) -> set[str]:
+    if isinstance(con, Conn):
+        return con.table_names()
     return {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
 
 
@@ -279,7 +320,7 @@ def read_version(con, profile: dict):
         return None, None
     try:
         row = con.execute(v["sql"]).fetchone()
-    except sqlite3.Error:
+    except DB_ERRORS:
         return None, None
     current = row[0] if row else None
     notice = None
@@ -306,7 +347,7 @@ def read_currency(con, profile: dict, scope: dict | None) -> str:
                 row = con.execute(c["sql"]).fetchone()
                 if row and row[0]:
                     return str(row[0]).strip().upper()
-            except sqlite3.Error:
+            except DB_ERRORS:
                 pass
         return c.get("default", "KES")
     return "KES"
@@ -326,8 +367,8 @@ def active_streams(con, profile: dict, params: dict) -> list[dict]:
             raise SystemProblem(SCHEMA_CHANGED, f"{profile['label']} no longer has the table '{s['table']}' that its {s['entity']} records are read from.",
                                 stream=s["key"])
         try:
-            con.execute("EXPLAIN " + s["sql"], params).fetchall()
-        except sqlite3.Error as e:
+            con.compile_check(s["sql"], params) if isinstance(con, Conn) else con.execute("EXPLAIN " + s["sql"], params).fetchall()
+        except DB_ERRORS as e:
             raise SystemProblem(SCHEMA_CHANGED, f"{profile['label']}'s data layout has changed ({e}). The connection needs updating before it can be trusted.",
                                 stream=s["key"])
         out.append(s)
@@ -383,7 +424,10 @@ def make_timestamp(rule: str, day_value, instant_value) -> str | None:
     the day the owner recorded is the day the engine reports.
       instant          the stored UTC moment.
       date             the recorded day (falls back to the moment if there is no day).
+      today            a list with no date of its own (stock, customers): as of the day it was read.
       date_or_instant  the moment when it falls on the recorded day (so the hour is kept), otherwise the recorded day."""
+    if rule == "today":
+        return datetime.now(timezone.utc).date().isoformat() + "T00:00:00"
     inst, day = parse_utc(instant_value), parse_day(day_value)
     if rule == "instant" or (rule == "date" and day is None) or (rule == "date_or_instant" and day is None):
         return inst.strftime("%Y-%m-%dT%H:%M:%SZ") if inst else None
@@ -418,7 +462,7 @@ def build_event(stream: dict, row: dict, money: dict, currency: str):
     if ts is None:
         return None, "no_date"
     amount = to_money(row.get("amount"), money["unit"], money["places"], currency)
-    if amount is None:
+    if amount is None and not (stream.get("amount_optional") and (_num(row.get("quantity")) is not None or stream["entity"] != "stock")):
         return None, "no_amount"
     meta = {}
     for k, v in row.items():
@@ -430,7 +474,7 @@ def build_event(stream: dict, row: dict, money: dict, currency: str):
                 meta[k[3:]] = float(m)
     return {
         "entity": stream["entity"], "entity_id": f"{stream['key']}:{rid}", "event_type": stream["event_type"], "timestamp": ts,
-        "amount": float(amount), "quantity": _num(row.get("quantity")), "currency": currency,
+        "amount": None if amount is None else float(amount), "quantity": _num(row.get("quantity")), "currency": currency,
         "location": _text(row.get("location")), "customer_id": _text(row.get("customer")),
         "product_id": _text(row.get("product")), "supplier_id": _text(row.get("supplier")), "metadata_json": meta,
     }, None
@@ -524,7 +568,9 @@ class EngineClient:
                 "Content-Type": "application/json", "Authorization": f"Bearer {self.token}", "User-Agent": f"reality-agent/{AGENT_VERSION}"})
             try:
                 with urllib.request.urlopen(req, timeout=timeout) as r:
-                    return json.loads(r.read() or b"{}")
+                    out = json.loads(r.read() or b"{}")
+                self.sleep(PACE)                                    # a big first sync stays under the engine's per-minute limit instead of running into it
+                return out
             except urllib.error.HTTPError as e:
                 try:
                     detail = json.loads(e.read() or b"{}").get("detail", "")
@@ -565,6 +611,9 @@ class SystemRunner:
         self.force_full = False
         self.ack_check = None
         self.refused_until = 0.0
+        self.adopted = None
+        self.conn_stamp = None
+        self.writable: bool | None = None
         self.scanned_at: float | None = None
         self.scan_asked = None
 
@@ -572,8 +621,45 @@ class SystemRunner:
     def _override(self):
         return self.entry.get("path") or self.commands.get("path") or None
 
+    def _writable_notice(self) -> str | None:
+        return ("The login this agent uses is allowed to change data. The agent only reads, but a login that can only read is safer: ask whoever runs the database "
+                "to create one.") if self.writable else None
+
+    def _source(self):
+        return self.profile.get("source")
+
+    def _connections_stamp(self):
+        try:
+            return (Path(self.cfg.get("state_file", "agent_state.db")).resolve().parent / "connections.json").stat().st_mtime_ns
+        except OSError:
+            return None
+
+    def _connections(self) -> dict:
+        return dbconn.load_connections(Path(self.cfg.get("state_file", "agent_state.db")).resolve().parent)
+
+    def _open_server(self):
+        """(connection, label, location) for a database server. The login lives in this computer's connections file, never in the app."""
+        name = self._source()["name"]
+        spec = self._connections().get(name)
+        if spec is None:
+            raise SystemProblem(NOT_FOUND, f"The connection '{name}' is not set up on this computer any more. Add it again on the agent's page.")
+        try:
+            con = dbconn.connect(spec)
+            check_signature(con, self.profile)
+        except DbProblem as e:
+            raise SystemProblem({"login": NEEDS_KEY, "driver": NEEDS_DRIVER, "unreachable": NOT_FOUND, "missing": NOT_FOUND}.get(e.kind, UNREADABLE), e.message)
+        except DbError as e:
+            raise SystemProblem(UNREADABLE, f"The database could not be read ({e}).")
+        label = f"{spec['kind']}://{spec.get('host') or 'local'}/{spec.get('database') or name}"
+        if self.writable is None:
+            self.writable = con.writable() is True
+        self.status.update(searched=[label], candidates=[label], path_source="saved connection", path=label)
+        return con, label, {"path": label}
+
     def _open(self):
         """(connection, path, location). Raises SystemProblem with the reason."""
+        if self._source():
+            return self._open_server()
         loc = locate(self.profile, self._override(), self.homes)
         self.status.update(searched=loc["searched"], candidates=loc["candidates"], path_source=loc["source"])
         if loc["path"] is None:
@@ -630,7 +716,7 @@ class SystemRunner:
                 for eid, h, ev, skipped in read_stream(con, s, params, money, currency):
                     seen.add(eid)
                     count += 1
-                    total += Decimal(str(ev["amount"]))
+                    total += Decimal(str(ev["amount"] or 0))
                     ordered.append((eid, h, ev)) if full else None
                     if not full and known.get(eid) != h:
                         upserts.append((eid, h, ev))
@@ -650,16 +736,19 @@ class SystemRunner:
         started = self.clock()
         con, path, loc = self._open()
         try:
-            token_before = change_token(path)
+            token_before = None if self._source() else change_token(path)
             version, notice = read_version(con, self.profile)
-            con.execute("BEGIN")                                  # one snapshot for everything below
+            con.begin() if isinstance(con, Conn) else con.execute("BEGIN")          # one snapshot for everything below
             try:
                 data = self.read_all(con, full)
             finally:
                 try:
-                    con.execute("ROLLBACK")
-                except sqlite3.Error:
+                    con.end() if isinstance(con, Conn) else con.execute("ROLLBACK")
+                except DB_ERRORS:
                     pass
+        except DbError as e:
+            con.close()
+            raise SystemProblem(UNREADABLE, f"Reading failed ({e}).")
         except sqlite3.OperationalError as e:
             con.close()
             if "locked" in str(e).lower() or "busy" in str(e).lower():
@@ -669,10 +758,12 @@ class SystemRunner:
             con.close()
             raise
         con.close()
-        self.status.update(path=str(path), schema_version=None if version is None else str(version), notice=notice,
+        self.status.update(path=str(path), schema_version=None if version is None else str(version), notice=notice or self._writable_notice(),
                            scope_id=(data["scope"] or {}).get("id"), scope_name=(data["scope"] or {}).get("name"))
         try:
-            st = path.stat()
+            st = Path(path).stat() if not self._source() else None
+            if st is None:
+                raise OSError
             self.status["db"] = {"size": st.st_size, "modified": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat()}
         except OSError:
             pass
@@ -712,6 +803,7 @@ class SystemRunner:
             s, prefix = blk["stream"], blk["stream"]["key"] + ":"
             items = blk["upserts"]
             if full:
+                items.sort(key=lambda t: t[0])                           # the order the engine sweeps in, whatever collation the database sorts by
                 after = prefix
                 chunks = [items[i:i + CHUNK] for i in range(0, len(items), CHUNK)] or [[]]
                 for n, ch in enumerate(chunks):
@@ -772,26 +864,48 @@ class SystemRunner:
     def _adopt_profile(self) -> None:
         """"Your own system": the reading the owner confirmed in the app arrives with the commands and replaces the empty one.
         It passes the same checks as a profile file, so a damaged one is refused and the agent keeps what it had."""
-        p = self.commands.get("profile")
-        if self.profile.get("system") != "custom" or not isinstance(p, dict) or p == self.profile:
+        raw = self.commands.get("profile")
+        if self.profile.get("system") != "custom" or not isinstance(raw, dict) or raw == self.adopted:
             return
         try:
+            name = (raw.get("source") or {}).get("name")
+            p = materialize(raw, self._connections().get(name) if name else None)
             validate_profile(p)
             if p["system"] != "custom":
                 raise ValueError("not a custom profile")
         except (ValueError, KeyError, TypeError) as e:
             self.log(f"[{self.profile['label']}] the reading sent by the app was refused: {e}")
+            self.adopted = raw                                            # said once, not at every heartbeat
             return
+        self.adopted = raw
         self.profile, self.force_full, self.last_token, self.last_pass_at = p, True, None, 0.0
         self.status.update(state=NOT_FOUND, detail="Reading the confirmed system for the first time.")
+
+    def _describe_connections(self) -> list[dict]:
+        """The database servers set up on this computer: described by names only, or reported with the reason they could not be opened."""
+        out = []
+        for name, spec in self._connections().items():
+            spec = {**spec, "name": name}
+            try:
+                con = dbconn.connect(spec)
+            except DbProblem as e:
+                out.append({"path": f"{spec['kind']}://{spec.get('host') or 'local'}/{spec.get('database') or name}", "size": None, "modified": None, "tables": [], "error": e.message,
+                            "source": {"kind": spec["kind"], "name": name}})
+                continue
+            try:
+                out.append(con.describe())
+            finally:
+                con.close()
+        return out
 
     def _scan(self) -> None:
         """Looks for databases on this computer and describes them (names, types and counts only). The place to look can be set
         in the app (a folder, or one file); otherwise every readable home folder is searched."""
         override = self._override()
+        found = self._describe_connections()
         roots = [Path(os.path.expanduser(override))] if override else (self.cfg.get("scan_roots") or home_directories())
         paths = [r for r in roots if Path(r).is_file()] or find_databases([r for r in roots if Path(r).is_dir()])
-        described = [describe(p) for p in paths[:MAX_DESCRIBED]]
+        described = found + [describe(p) for p in paths[:MAX_DESCRIBED]]
         self.client.post("discover", {"databases": described}, timeout=60)
         usable = [d for d in described if not d["error"]]
         if usable:
@@ -806,7 +920,9 @@ class SystemRunner:
             if not self._awaiting_profile():
                 return
             want = self.commands.get("discover")
-        if self.scanned_at is None or (want and want != self.scan_asked):
+        moved = self._connections_stamp()
+        if self.scanned_at is None or (want and want != self.scan_asked) or moved != self.conn_stamp:           # a database added on the agent's page is looked at at once
+            self.conn_stamp = moved
             self.scan_asked, self.scanned_at = want, now
             self._scan()
             if self.commands.get("check_now"):
@@ -839,9 +955,12 @@ class SystemRunner:
         want_check = self.commands.get("check_now")
         full = bool(self.force_full or self.commands.get("resync"))
         try:
-            loc = locate(self.profile, self._override(), self.homes)
-            current = change_token(loc["path"]) if loc["path"] else None
-            changed = current != self.last_token
+            if self._source():
+                poll, changed = max(poll, float(self.cfg.get("server_poll_seconds", 120))), True          # a server has no file to watch: ask on a calmer clock
+            else:
+                loc = locate(self.profile, self._override(), self.homes)
+                current = change_token(loc["path"]) if loc["path"] else None
+                changed = current != self.last_token
             # Never read more than about a fifth of the time: a big database on a slow computer must not be kept busy.
             gap = max(poll, 5 * self.last_pass_seconds)
             waiting_on_person = self.status.get("state") in (SCHEMA_CHANGED, NEEDS_CHOICE, NEEDS_KEY, NEEDS_DRIVER, NEEDS_CONFIRM, NOT_THIS_SYSTEM)
@@ -905,6 +1024,9 @@ class SystemRunner:
             self._safe_heartbeat()
         elif e.status == 409:
             self.refused_until = self.clock() + 60
+        elif e.status == 429:
+            self.log(f"[{self.profile['label']}] the engine asked the agent to slow down; it carries on by itself")
+            self.status.update(state=LOCKED, detail="The app is busy for a moment. This carries on by itself; nothing is lost.")
         else:
             self.log(f"[{self.profile['label']}] engine not reachable or busy: {e}")
             if e.status >= 500:

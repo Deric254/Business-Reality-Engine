@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { systemApi, type FoundDatabase, type ReadingTable, type SystemDiscovery, type SystemLink, type SystemProposal } from "../api/client";
+import { systemApi, type FoundDatabase, type ReadingField, type ReadingTable, type SystemDiscovery, type SystemLink, type SystemProposal } from "../api/client";
 import { errText } from "../lib/errors";
 import { btnCls, inputCls, primaryCls } from "./ui";
 
-const ROLES: Record<ReadingTable["role"], string> = { sale: "Money received (sales)", expense: "Money paid out (expenses)", refund: "Money given back (refunds)" };
-const MAIN = [["id", "Unique number"], ["date", "Date"], ["amount", "Amount"]] as const;
-const MORE = [["instant", "Exact time"], ["customer", "Customer"], ["product", "Product"], ["location", "Branch"], ["quantity", "Quantity"], ["supplier", "Supplier"]] as const;
+const FIELD_LABEL: Record<ReadingField, string> = { id: "Unique number", date: "Date", amount: "Amount", instant: "Exact time", customer: "Customer", product: "Product", location: "Branch", quantity: "Quantity", supplier: "Supplier", label: "Name to show" };
+const MONEY_ROLES = ["sale", "expense", "refund"];
+const ALL_FIELDS = Object.keys(FIELD_LABEL) as ReadingField[];
 
-const shortName = (p: string) => p.split(/[\\/]/).slice(-2).join("/");
+const shortName = (p: string) => (p.includes("://") ? p : p.split(/[\\/]/).slice(-2).join("/"));
 
 /** "Your own system": the databases the helper app found on the computer, what we understood about each, and a place to correct
  *  that reading before anything is read. Only names are shown here; no row of the person's data has left their computer. */
@@ -28,7 +28,9 @@ export function SystemReview({ tenantId, link, reload, setError }: { tenantId: s
   }
   const choose = (p: string) => run(async () => { setPath(p); setDraft(await systemApi.propose(tenantId, id, p)); });
   const setRow = (i: number, patch: Partial<ReadingTable>) => setDraft((d) => d && { ...d, tables: d.tables.map((t, j) => (j === i ? { ...t, ...patch } : t)) });
-  const complete = !!draft && draft.tables.length > 0 && draft.tables.every((t) => t.date && t.amount);
+  const roles = disc?.roles ?? {};
+  const mainFields = (role: string): ReadingField[] => [...new Set<ReadingField>(["id", ...(roles[role]?.required ?? []), ...(MONEY_ROLES.includes(role) ? (["date", "amount"] as ReadingField[]) : [])])];
+  const complete = !!draft && draft.tables.length > 0 && draft.tables.every((t) => (roles[t.role]?.required ?? []).every((f) => t[f]));
   const confirm = () => run(async () => {
     await systemApi.confirmReading(tenantId, id, { path: path!, tables: draft!.tables, business: draft!.business, currency: draft!.currency });
     setDraft(null); reload();
@@ -68,11 +70,11 @@ export function SystemReview({ tenantId, link, reload, setError }: { tenantId: s
               <div key={t.table} className="space-y-2 border-t border-field pt-2">
                 <div className="flex flex-wrap items-center gap-2"><strong>{t.table}</strong>
                   <select className={inputCls + " max-w-xs"} aria-label={`What ${t.table} holds`} value={t.role} onChange={(e) => setRow(i, { role: e.target.value as ReadingTable["role"] })}>
-                    {Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+                    {Object.entries(roles).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select>
                   <button className={btnCls} onClick={() => setDraft({ ...draft, tables: draft.tables.filter((_, j) => j !== i) })}>Don't use</button></div>
                 {t.reason && <p className="text-xs text-ink-muted">{t.reason}</p>}
-                <div className="grid sm:grid-cols-3 gap-2">{MAIN.map(([k, l]) => pick(k, l))}</div>
-                <details><summary className="text-xs text-ink-muted cursor-pointer">More details</summary><div className="grid sm:grid-cols-3 gap-2 mt-2">{MORE.map(([k, l]) => pick(k, l))}</div></details>
+                <div className="grid sm:grid-cols-3 gap-2">{mainFields(t.role).map((k) => pick(k, k === "amount" ? roles[t.role]?.amount_label ?? FIELD_LABEL.amount : FIELD_LABEL[k]))}</div>
+                <details><summary className="text-xs text-ink-muted cursor-pointer">More details</summary><div className="grid sm:grid-cols-3 gap-2 mt-2">{ALL_FIELDS.filter((k) => !mainFields(t.role).includes(k)).map((k) => pick(k, k === "amount" ? roles[t.role]?.amount_label ?? FIELD_LABEL.amount : FIELD_LABEL[k]))}</div></details>
               </div>
             );
           })}
@@ -82,7 +84,7 @@ export function SystemReview({ tenantId, link, reload, setError }: { tenantId: s
           )}
           {draft.notes.length > 0 && <ul className="text-xs text-ink-muted list-disc pl-4">{draft.notes.map((n) => <li key={n}>{n}</li>)}</ul>}
           {draft.tables.length === 0 && <p className="text-xs text-ink-muted">Nothing here looked like sales, expenses or refunds. Add the table that records your money, or look at another database.</p>}
-          <button className={primaryCls} disabled={busy || !complete} onClick={confirm}>{complete ? "This is right. Start reading" : "Each table needs a date and an amount"}</button>
+          <button className={primaryCls} disabled={busy || !complete} onClick={confirm}>{complete ? "This is right. Start reading" : "Each table needs its key columns filled in"}</button>
         </div>
       )}
     </div>

@@ -26,11 +26,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pyinstaller sqlcipher3-wheels
+      - run: pip install pyinstaller sqlcipher3-wheels pg8000 pymysql python-tds pyodbc certifi
       - name: Build
         run: >
           pyinstaller --onefile --noconsole --name RealityAgent --paths agent
           --add-data "agent/profiles;profiles" --hidden-import sqlcipher3
+          --collect-submodules pg8000 --collect-submodules pytds --hidden-import pymysql --hidden-import pyodbc --hidden-import certifi
           agent/reality_agent_app.py
       - name: Smoke test (starts, serves its page only to this computer, refuses without the key)
         shell: pwsh

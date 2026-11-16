@@ -9,6 +9,7 @@ import { SystemReview } from "./SystemReview";
 
 const PATH = "C:\\Users\\Ann\\duka\\duka.db";
 const col = (name: string) => ({ name, type: "TEXT", pk: false });
+const ROLES = { sale: { label: "Money received (sales)", required: ["date", "amount"], amount_label: "Amount" }, expense: { label: "Money paid out (expenses)", required: ["date", "amount"], amount_label: "Amount" }, refund: { label: "Money given back (refunds)", required: ["date", "amount"], amount_label: "Amount" }, stock: { label: "Stock on hand", amount_label: "Value of one unit", required: ["product", "quantity"] } };
 const FOUND = { path: PATH, size: 100000, modified: 1, error: null, tables: [
   { name: "tbl_sales", rows: 120, columns: [col("sale_no"), col("sale_date"), col("grand_total")] },
   { name: "supplier_bills", rows: 30, columns: [col("bill_id"), col("paid_on"), col("amount")] },
@@ -20,7 +21,7 @@ const show = () => render(<SystemReview tenantId="t1" link={link} reload={vi.fn(
 
 beforeEach(() => {
   vi.resetAllMocks();
-  api.discovery.mockResolvedValue({ scanned_at: "x", found: [FOUND], proposals: {}, chosen: null, scan_requested: false });
+  api.discovery.mockResolvedValue({ roles: ROLES, scanned_at: "x", found: [FOUND], proposals: {}, chosen: null, scan_requested: false });
   api.propose.mockResolvedValue(PROPOSAL);
   api.confirmReading.mockResolvedValue({ chosen: {}, notes: [] });
 });
@@ -43,7 +44,7 @@ describe("Reviewing what was found", () => {
     await screen.findByDisplayValue("Hardware shop");
     await userEvent.selectOptions(screen.getByLabelText("What tbl_sales holds"), "refund");
     await userEvent.selectOptions(screen.getByLabelText("Add another table"), "supplier_bills");
-    expect(screen.getByRole("button", { name: "Each table needs a date and an amount" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Each table needs its key columns filled in" })).toBeDisabled();
     const bills = screen.getByText("supplier_bills").closest("div")!.parentElement!;
     await userEvent.selectOptions(within(bills).getByLabelText("Date"), "paid_on");
     await userEvent.selectOptions(within(bills).getByLabelText("Amount"), "amount");
@@ -56,10 +57,23 @@ describe("Reviewing what was found", () => {
   });
 
   it("says plainly when nothing was found and offers to look again", async () => {
-    api.discovery.mockResolvedValue({ scanned_at: null, found: [], proposals: {}, chosen: null, scan_requested: false });
+    api.discovery.mockResolvedValue({ roles: ROLES, scanned_at: null, found: [], proposals: {}, chosen: null, scan_requested: false });
     show();
     expect(await screen.findByText("No readable database found yet.")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Look again" }));
     expect(api.scan).toHaveBeenCalledWith("t1", "c1");
+  });
+
+  it("asks for the columns each kind of table needs: stock needs a product and a quantity, not a date and an amount", async () => {
+    show();
+    await userEvent.click(await screen.findByRole("radio"));
+    await screen.findByDisplayValue("Hardware shop");
+    await userEvent.selectOptions(screen.getByLabelText("What tbl_sales holds"), "stock");
+    expect(screen.getByRole("button", { name: "Each table needs its key columns filled in" })).toBeDisabled();
+    expect(screen.getByLabelText("Quantity")).toBeInTheDocument();
+    expect(screen.getByLabelText("Value of one unit")).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("Product"), "sale_no");
+    await userEvent.selectOptions(screen.getByLabelText("Quantity"), "grand_total");
+    expect(screen.getByRole("button", { name: "This is right. Start reading" })).toBeEnabled();
   });
 });

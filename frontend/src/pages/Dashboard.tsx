@@ -4,6 +4,7 @@ import { api, businessApi, connectorApi, goalsApi, settingsApi, tenantApi, type 
 import { Shell } from "../components/Shell";
 import { AskBox } from "../components/AskBox";
 import { DataCheck } from "../components/DataCheck";
+import { Insights } from "../components/Insights";
 import { AlertRow } from "../components/AlertRow";
 import { TrendChart } from "../components/TrendChart";
 import { ChangesCard, GoalSummary } from "../components/Targets";
@@ -161,6 +162,8 @@ function OverviewBody({ tenant }: { tenant: Tenant }) {
       {noData && <GetStarted />}
 
       {(nothingInView || showCheck) && !noData && <DataCheck tenantId={tenant.id} days={days} onShowDays={setDays} />}
+
+      {!noData && <Insights tenantId={tenant.id} currency={cur} />}
 
       {kpis && !noData && (
         <Card className="!p-5 sm:!p-7 space-y-6">

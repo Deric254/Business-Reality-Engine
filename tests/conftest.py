@@ -67,7 +67,7 @@ def _reset_in_memory_limiters():
     """Limiters are process-global; reset so one test's calls never throttle another's.
     (Throttling itself is covered by tests/test_rate_limits.py.)"""
     from app.core import rate_limit as rl
-    for lim in (rl.general_limiter, rl.webhook_limiter, rl.auth_limiter):
+    for lim in (rl.general_limiter, rl.webhook_limiter, rl.agent_limiter, rl.auth_limiter):
         if hasattr(lim, "_state"):
             lim._state.clear()
     from app.core import kv
