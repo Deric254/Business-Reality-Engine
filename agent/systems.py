@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import itertools
 import json
 import os
 import re
@@ -503,6 +504,7 @@ def read_stream(con, stream: dict, params: dict, money: dict, currency: str):
 
 class StateDB:
     def __init__(self, path: str):
+        self.path = str(path)
         self.con = sqlite3.connect(path, timeout=30)
         self.con.execute("PRAGMA journal_mode = WAL")
         self.con.execute("CREATE TABLE IF NOT EXISTS items (connector_id TEXT NOT NULL, stream TEXT NOT NULL, entity_id TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (connector_id, stream, entity_id)) WITHOUT ROWID")
@@ -511,6 +513,15 @@ class StateDB:
 
     def hashes(self, cid: str, stream: str) -> dict[str, str]:
         return dict(self.con.execute("SELECT entity_id, hash FROM items WHERE connector_id = ? AND stream = ?", (cid, stream)))
+
+    def hash_of(self, cid: str, stream: str, entity_id: str):
+        r = self.con.execute("SELECT hash FROM items WHERE connector_id = ? AND stream = ? AND entity_id = ?", (cid, stream, entity_id)).fetchone()
+        return r[0] if r else None
+
+    def ids(self, cid: str, stream: str):
+        """Every id delivered for a stream, one at a time (a table of millions is never held in memory)."""
+        for (i,) in self.con.execute("SELECT entity_id FROM items WHERE connector_id = ? AND stream = ?", (cid, stream)):
+            yield i
 
     def put(self, cid: str, stream: str, items: list[tuple[str, str]]) -> None:
         self.con.executemany("INSERT OR REPLACE INTO items (connector_id, stream, entity_id, hash) VALUES (?, ?, ?, ?)", [(cid, stream, i, h) for i, h in items])
@@ -540,6 +551,54 @@ class StateDB:
 
     def close(self):
         self.con.close()
+
+
+class Spool:
+    """Where one pass keeps the rows it has read until they are sent, so memory does not grow with the size of the table:
+    a file next to the agent's own memory, emptied and removed when the pass ends. Rows are held in id order, the order the engine sweeps in."""
+    FLUSH = 2000
+
+    def __init__(self, path: str):
+        self.path = path
+        self._remove()
+        self.con = sqlite3.connect(path)
+        self.con.execute("PRAGMA journal_mode = OFF")
+        self.con.execute("PRAGMA synchronous = OFF")
+        self.con.execute("CREATE TABLE rows (stream TEXT NOT NULL, entity_id TEXT NOT NULL, hash TEXT NOT NULL, event TEXT, PRIMARY KEY (stream, entity_id)) WITHOUT ROWID")
+        self.buf: list[tuple] = []
+
+    def add(self, stream: str, entity_id: str, hash_: str, event: dict | None) -> None:
+        """`event` is None for a row that is known to be unchanged: only that it exists is kept."""
+        self.buf.append((stream, entity_id, hash_, None if event is None else json.dumps(event, separators=(",", ":"))))
+        if len(self.buf) >= self.FLUSH:
+            self.flush()
+
+    def flush(self) -> None:
+        if self.buf:
+            self.con.executemany("INSERT OR REPLACE INTO rows (stream, entity_id, hash, event) VALUES (?, ?, ?, ?)", self.buf)
+            self.buf = []
+
+    def has(self, stream: str, entity_id: str) -> bool:
+        return self.con.execute("SELECT 1 FROM rows WHERE stream = ? AND entity_id = ?", (stream, entity_id)).fetchone() is not None
+
+    def items(self, stream: str, changed_only: bool):
+        """(entity_id, hash, event) in id order; only the rows that have to be sent when `changed_only`."""
+        self.flush()
+        for eid, h, ev in self.con.execute("SELECT entity_id, hash, event FROM rows WHERE stream = ?" + (" AND event IS NOT NULL" if changed_only else "") + " ORDER BY entity_id", (stream,)):
+            yield eid, h, json.loads(ev)
+
+    def close(self) -> None:
+        try:
+            self.con.close()
+        finally:
+            self._remove()
+
+    def _remove(self) -> None:
+        for suffix in ("", "-journal", "-wal", "-shm"):
+            try:
+                os.remove(self.path + suffix)
+            except OSError:
+                pass
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -616,6 +675,7 @@ class SystemRunner:
         self.writable: bool | None = None
         self.scanned_at: float | None = None
         self.scan_asked = None
+        self.spool: Spool | None = None
 
     # -- finding and opening ----------------------------------------------------------------------------------------
     def _override(self):
@@ -707,27 +767,25 @@ class SystemRunner:
         currency = read_currency(con, self.profile, scope)
         money = self.profile["money"]
         out = {"scope": scope, "currency": currency, "streams": [], "manifest": {}, "skipped": {}, "rows": {}}
+        spool = self.spool
         for s in streams:
-            known = {} if full else self.state.hashes(self.cid, s["key"])
-            seen, upserts, ordered = set(), [], []
+            key = s["key"]
             skipped: dict[str, int] = {}
             count, total = 0, Decimal(0)
             if not s.get("absent"):
                 for eid, h, ev, skipped in read_stream(con, s, params, money, currency):
-                    seen.add(eid)
                     count += 1
                     total += Decimal(str(ev["amount"] or 0))
-                    ordered.append((eid, h, ev)) if full else None
-                    if not full and known.get(eid) != h:
-                        upserts.append((eid, h, ev))
-            gone = [i for i in known if i not in seen]
+                    spool.add(key, eid, h, ev if full or self.state.hash_of(self.cid, key, eid) != h else None)    # only what has to be sent is kept whole
+            spool.flush()
+            gone = [] if full else [i for i in self.state.ids(self.cid, key) if not spool.has(key, i)]
             m = out["manifest"].setdefault(s["entity"], {"count": 0, "sum": Decimal(0)})
             m["count"] += count
             m["sum"] += total
             out["rows"][s["entity"]] = out["rows"].get(s["entity"], 0) + count
             for why, n in skipped.items():
                 out["skipped"][f"{s['key']}:{why}"] = n
-            out["streams"].append({"stream": s, "upserts": ordered if full else upserts, "gone": gone, "seen": seen, "count": count})
+            out["streams"].append({"stream": s, "gone": gone, "count": count})
         out["manifest"] = {e: {"count": m["count"], "sum": str(m["sum"])} for e, m in out["manifest"].items()}
         return out
 
@@ -735,6 +793,17 @@ class SystemRunner:
         """One verified pass. Raises SystemProblem when the system cannot be read, EngineError when the engine refuses."""
         started = self.clock()
         con, path, loc = self._open()
+        try:
+            self.spool = Spool(f"{self.state.path}.pass-{self.cid}")
+        except (OSError, sqlite3.Error) as e:
+            con.close()
+            raise SystemProblem(UNREADABLE, f"The agent could not make its working file next to its own memory ({e}).")
+        try:
+            return self._run_pass(full, started, con, path)
+        finally:
+            self.spool.close()
+
+    def _run_pass(self, full: bool, started: float, con, path) -> dict:
         try:
             token_before = None if self._source() else change_token(path)
             version, notice = read_version(con, self.profile)
@@ -801,22 +870,27 @@ class SystemRunner:
 
         for blk in data["streams"]:
             s, prefix = blk["stream"], blk["stream"]["key"] + ":"
-            items = blk["upserts"]
+            rows = self.spool.items(s["key"], changed_only=not full)
             if full:
-                items.sort(key=lambda t: t[0])                           # the order the engine sweeps in, whatever collation the database sorts by
                 after = prefix
-                chunks = [items[i:i + CHUNK] for i in range(0, len(items), CHUNK)] or [[]]
-                for n, ch in enumerate(chunks):
-                    upto = prefix + SWEEP_END if n == len(chunks) - 1 else ch[-1][0]
-                    out = post({"events": [e for _, _, e in ch], "sweep": {"entity": s["entity"], "after": after, "upto": upto}})
-                    self.state.put(self.cid, s["key"], [(i, h) for i, h, _ in ch])
-                    sent += len(ch)
+                chunk = list(itertools.islice(rows, CHUNK))
+                while True:
+                    nxt = list(itertools.islice(rows, CHUNK))                # one chunk ahead, to know which is the last
+                    upto = prefix + SWEEP_END if not nxt else chunk[-1][0]
+                    out = post({"events": [e for _, _, e in chunk], "sweep": {"entity": s["entity"], "after": after, "upto": upto}})
+                    self.state.put(self.cid, s["key"], [(i, h) for i, h, _ in chunk])
+                    sent += len(chunk)
                     removed += out.get("removed", 0)
                     after = upto
+                    if not nxt:
+                        break
+                    chunk = nxt
                 self.state.drop(self.cid, s["key"], blk["gone"])
             else:
-                for i in range(0, len(items), CHUNK):
-                    ch = items[i:i + CHUNK]
+                while True:
+                    ch = list(itertools.islice(rows, CHUNK))
+                    if not ch:
+                        break
                     post({"events": [e for _, _, e in ch]})
                     self.state.put(self.cid, s["key"], [(i2, h) for i2, h, _ in ch])
                     sent += len(ch)

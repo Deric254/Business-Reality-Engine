@@ -105,14 +105,23 @@ _ESCALATED = """(a.evidence->>'escalated_at') IS NOT NULL
       AND (a.evidence->>'escalated_at')::timestamp >= (now() AT TIME ZONE 'UTC') - make_interval(days => :days)"""
 
 
+# Worsening: a money problem found by insights.py that has since grown to at least twice what it first cost (it stamps evidence.worsened_at once).
+_WORSENED = _ESCALATED.replace("escalated_at", "worsened_at")
+
+# What each kind of message says first and in one line: nothing for a plain alert.
+PREFIX = {"escalation": "NOT YET REVIEWED ", "worsened": "GOT WORSE "}
+NOTE = {"escalation": "Nobody has responded to this alert yet, and it has been waiting too long.", "worsened": "This has grown since it was first reported; the figures below are the latest."}
+EVENT = {"escalation": "alert.escalated", "worsened": "alert.worsened"}
+
+
 def enqueue_deliveries(db: Session) -> int:
-    """Create pending deliveries for recent alerts (kind 'alert') and for escalated alerts
-    (kind 'escalation') that match an enabled channel's severity floor. Idempotent: the
-    (alert, channel, kind) triple is unique, so each alert notifies once and escalates once.
+    """Create pending deliveries for recent alerts (kind 'alert'), for escalated alerts (kind 'escalation') and for problems that
+    have grown to twice their first cost (kind 'worsened') that match an enabled channel's severity floor. Idempotent: the
+    (alert, channel, kind) triple is unique, so each alert notifies once, escalates once and is reported as worse once.
     All timestamps are naive UTC; `now() AT TIME ZONE 'UTC'` keeps that true even when the
     database server's own time zone is not UTC."""
     total = 0
-    for kind, when in (("alert", _NEW_ALERT), ("escalation", _ESCALATED)):
+    for kind, when in (("alert", _NEW_ALERT), ("escalation", _ESCALATED), ("worsened", _WORSENED)):
         res = db.execute(text(_ENQUEUE_SQL.format(when=when)), {"kind": kind, "days": BACKFILL_WINDOW_DAYS})
         total += res.rowcount or 0
     db.commit()
@@ -128,7 +137,7 @@ def _alert_url(alert: Alert) -> str:
 
 def alert_payload(alert: Alert, kind: str = "alert") -> dict:
     return {
-        "event": "alert.escalated" if kind == "escalation" else "alert.created",
+        "event": EVENT.get(kind, "alert.created"),
         "alert": {
             "id": alert.id,
             "severity": alert.severity.value if hasattr(alert.severity, "value") else str(alert.severity),
@@ -149,13 +158,13 @@ def _one_line(value: str) -> str:
 def build_email(alert: Alert, to_addr: str, kind: str = "alert") -> EmailMessage:
     p = alert_payload(alert, kind)["alert"]
     msg = EmailMessage()
-    prefix = "NOT YET REVIEWED " if kind == "escalation" else ""
+    prefix = PREFIX.get(kind, "")
     msg["Subject"] = _one_line(f"[{prefix}{p['severity'].upper()}] {p['title']}")
     msg["From"] = os.environ.get("SMTP_FROM", "alerts@localhost")
     msg["To"] = to_addr
     lines = [p["title"], ""]
-    if kind == "escalation":
-        lines += ["Nobody has responded to this alert yet, and it has been waiting too long.", ""]
+    if kind in NOTE:
+        lines += [NOTE[kind], ""]
     lines += [p["what_happened"] or ""]
     if p["recommended_action"]:
         lines += ["", f"Next step: {p['recommended_action']}"]
@@ -240,7 +249,7 @@ def _post_json(url: str, body: dict, what: str) -> None:
 def render_alert(alert: Alert, kind: str = "alert") -> tuple[str, str]:
     """(headline, body) as plain text, shared by chat and SMS channels."""
     p = alert_payload(alert, kind)["alert"]
-    prefix = "NOT YET REVIEWED " if kind == "escalation" else ""
+    prefix = PREFIX.get(kind, "")
     head = _one_line(f"[{prefix}{p['severity'].upper()}] {p['title']}")
     body = _one_line(p["what_happened"] or "")
     if p["recommended_action"]:

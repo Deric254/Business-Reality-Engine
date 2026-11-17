@@ -456,6 +456,8 @@ export const businessApi = {
   analyticsPdf: (t: string, days = 90) => requestBlob(`/api/business/analytics.pdf?tenant_id=${t}&days=${days}`),
   dataCheck: (t: string, days = 30) => request<DataCheckResult>(`/api/business/data-check?tenant_id=${t}&period_days=${days}`),
   insights: (t: string) => request<{ findings: Insight[]; strengths: Insight[] }>(`/api/business/insights?tenant_id=${t}`),
+  insightsHistory: (t: string) => request<{ episodes: InsightEpisode[] }>(`/api/business/insights/history?tenant_id=${t}`),
+  insightsReferences: (t: string) => request<{ references: Record<string, InsightReference[]> }>(`/api/business/insights/references?tenant_id=${t}`),
   health: (t: string, days = 30) => request<Health>(`/api/business/health?tenant_id=${t}&days=${days}`),
   quality: (t: string, days = 30) => request<Quality>(`/api/business/quality?tenant_id=${t}&days=${days}`),
   discovery: (t: string) => request<Discovery>(`/api/business/discovery?tenant_id=${t}`),
@@ -731,6 +733,13 @@ export const goalsApi = {
   remove: (t: string, id: string) => requestVoid(`/api/goals/${id}?tenant_id=${t}`, "DELETE"),
   explain: (t: string, id: string) => request<GoalExplanation>(`/api/goals/${id}/explain?tenant_id=${t}`, { method: "POST" }),
   changes: (t: string, days = 30) => request<Changes>(`/api/goals/changes?tenant_id=${t}&days=${days}`),
+};
+
+export type InsightReference = { title: string; url: string; source: string; snippet: string; fetched: string };
+
+export type InsightEpisode = {
+  id: string; kind: string; title: string; status: "open" | "cleared" | "dismissed" | "false_positive"; began: string | null; first_seen: string; ended: string | null; days: number;
+  cost_first: number; cost_peak: number; cost_last: number; marked: string | null; came_back: boolean; summary: string;
 };
 
 export type Insight = {

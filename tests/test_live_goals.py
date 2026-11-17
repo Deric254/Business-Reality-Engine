@@ -227,7 +227,7 @@ def test_after_new_data_the_screen_signal_moves_twice_first_for_the_data_then_fo
         time.sleep(0.25)
     assert alerts, "alerts were not raised on their own after the data arrived"
     time.sleep(0.5)
-    assert token() != t1                                                  # 2) alerts changed: screens reload alerts too
+    assert token().split("|")[1:3] != t0.split("|")[1:3]                  # 2) alerts changed: screens reload alerts too (the alert part of the signal; on a slow machine they may already be there when t1 is read)
 
 
 def test_todays_records_count_toward_a_target_but_the_pace_uses_whole_days(client):

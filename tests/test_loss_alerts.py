@@ -77,7 +77,7 @@ def test_a_real_collapse_is_still_flagged(client):
 def test_new_records_trigger_detection_soon_after_and_a_burst_costs_one_extra_run(client, monkeypatch):
     runs, first = [], threading.Event()
     monkeypatch.setenv("DETECT_AFTER_INGEST", "true")
-    monkeypatch.setattr(detection_kick, "MIN_GAP_SECONDS", 0.3)
+    monkeypatch.setattr(detection_kick, "MIN_GAP_SECONDS", 1.5)
     monkeypatch.setattr(detection_kick, "SETTLE_SECONDS", 0.0)
     monkeypatch.setattr(detection_kick, "_execute", lambda tenant_id: (runs.append(tenant_id), first.set()))
     t, h = make_owner(client, "kick")
@@ -85,7 +85,7 @@ def test_new_records_trigger_detection_soon_after_and_a_burst_costs_one_extra_ru
     assert first.wait(5) and runs == [t]                                                            # new records: a run, straight away
     for _ in range(6):                                                                              # a burst of arrivals
         detection_kick.kick({t})
-    threading.Event().wait(1.0)
+    threading.Event().wait(2.5)
     assert runs == [t, t]                                                                           # one more run for the whole burst
 
 

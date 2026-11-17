@@ -70,7 +70,7 @@ class NotificationDelivery(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
     tenant_id = Column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False)
     alert_id = Column(UUID(as_uuid=False), ForeignKey("alerts.id", ondelete="CASCADE"), nullable=False)
-    kind = Column(String, nullable=False, default="alert", server_default="alert")   # alert | escalation
+    kind = Column(String, nullable=False, default="alert", server_default="alert")   # alert | escalation | worsened
     channel_id = Column(UUID(as_uuid=False), ForeignKey("notification_channels.id", ondelete="CASCADE"), nullable=False)
     status = Column(String, nullable=False, default="pending")    # pending | held (awaiting digest) | sent | dead
     attempts = Column(Integer, nullable=False, default=0)

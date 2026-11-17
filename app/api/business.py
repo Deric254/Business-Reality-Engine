@@ -42,6 +42,22 @@ def insights(tenant_id: str, db: Session = Depends(get_db), authorization: Optio
     return {"findings": insights_mod.findings(db, tenant_id), "strengths": insights_mod.strengths(db, tenant_id)}
 
 
+@router.get("/insights/references")
+def insights_references(tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+    """Outside reading for the problems and strengths this business has now: pages other people wrote about the same kind of thing, with their source and the day
+    they were fetched. The search is a fixed sentence per kind; nothing about this business is sent. Empty when web search is not set up."""
+    authorize_tenant(authorization, tenant_id)
+    kinds = [f["kind"] for f in insights_mod.findings(db, tenant_id) + insights_mod.strengths(db, tenant_id)]
+    return {"references": insights_mod.references(kinds)}
+
+
+@router.get("/insights/history")
+def insights_history(tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
+    """Each time one of those problems was raised: when it began, how it ended, what it cost, and whether it came back."""
+    authorize_tenant(authorization, tenant_id)
+    return {"episodes": insights_mod.history(db, tenant_id)}
+
+
 @router.get("/health")
 def health(tenant_id: str, days: int = Query(30, ge=0, le=3650), db: Session = Depends(get_db),
            authorization: Optional[str] = Header(default=None)):

@@ -180,3 +180,139 @@ def test_the_alert_goes_only_where_the_owner_asked(client, tmp_path, monkeypatch
     finally:
         db.close()
     assert client.post("/api/notifications/channels", json={**body, "filter_kinds": ["nonsense"]}, headers=r.h).status_code == 400
+
+
+def test_history_tells_what_happened_to_each_problem(client, tmp_path, monkeypatch):
+    r = connected(client, tmp_path, monkeypatch)
+    db = SessionLocal()
+    try:
+        run_tenant_cycle(db, r.tenant, [])
+        first = {e["kind"]: e for e in insights.history(db, r.tenant)}
+        assert set(first) == {"dead_stock", "stock_out_risk", "overdue_credit"} and all(e["status"] == "open" and not e["came_back"] for e in first.values())
+        assert first["overdue_credit"]["cost_first"] == first["overdue_credit"]["cost_last"] == 5500.0
+        assert first["overdue_credit"]["began"] and first["overdue_credit"]["summary"].startswith("Still open after 0 days, costing")
+
+        credit = db.query(Alert).filter(Alert.tenant_id == r.tenant, Alert.kind == "insight", Alert.title.like("%credit%") | Alert.title.like("%owe%") | Alert.title.like("%unpaid%")).first()
+        assert credit is not None, [a.title for a in db.query(Alert).filter(Alert.tenant_id == r.tenant).all()]
+        credit.state = AlertState.action_taken                                                                     # the owner chased the customers
+        db.commit()
+        rows = db.query(BusinessEvent).filter(BusinessEvent.tenant_id == r.tenant, BusinessEvent.entity == "receivable").all()
+        saved = [{c.name: getattr(e, c.name) for c in BusinessEvent.__table__.columns} for e in rows]
+        db.query(BusinessEvent).filter(BusinessEvent.tenant_id == r.tenant, BusinessEvent.entity == "receivable").delete()
+        db.commit()
+        run_tenant_cycle(db, r.tenant, [])
+        now = {e["kind"]: e for e in insights.history(db, r.tenant)}
+        assert now["overdue_credit"]["status"] == "cleared" and now["overdue_credit"]["marked"] == "action_taken" and now["overdue_credit"]["ended"]
+        assert "it was costing" in now["overdue_credit"]["summary"] and "action taken" in now["overdue_credit"]["summary"]
+        assert now["dead_stock"]["status"] == "open"                                                               # what did not clear is not called fixed
+
+        for d in saved:
+            db.add(BusinessEvent(**d))
+        db.commit()
+        run_tenant_cycle(db, r.tenant, [])
+        again = [e for e in insights.history(db, r.tenant) if e["kind"] == "overdue_credit"]
+        assert [e["status"] for e in again] == ["open", "cleared"]                                                  # newest first
+        assert again[0]["came_back"] is True and "came back" in again[0]["summary"] and again[1]["came_back"] is False
+    finally:
+        db.close()
+    api = client.get(f"/api/business/insights/history?tenant_id={r.tenant}", headers=r.h)
+    assert api.status_code == 200 and len(api.json()["episodes"]) == 4
+    assert client.get(f"/api/business/insights/history?tenant_id={r.tenant}").status_code in (401, 403)
+
+
+def test_history_is_empty_before_anything_was_raised(client, tmp_path, monkeypatch):
+    r = connected(client, tmp_path, monkeypatch)
+    assert client.get(f"/api/business/insights/history?tenant_id={r.tenant}", headers=r.h).json() == {"episodes": []}
+
+
+def test_history_keeps_the_first_and_the_highest_cost_while_it_changes(client, tmp_path, monkeypatch):
+    r = connected(client, tmp_path, monkeypatch)
+    db = SessionLocal()
+    try:
+        run_tenant_cycle(db, r.tenant, [])
+        rows = db.query(BusinessEvent).filter(BusinessEvent.tenant_id == r.tenant, BusinessEvent.entity == "receivable").all()
+        extra = [{c.name: getattr(e, c.name) for c in BusinessEvent.__table__.columns} for e in rows]
+        def credit():
+            return next(e for e in insights.history(db, r.tenant) if e["kind"] == "overdue_credit")
+        assert credit()["cost_first"] == 5500.0
+        added = []
+        for d in extra:
+            d.pop("id")
+            e = BusinessEvent(**{**d, "entity_id": f"{d['entity_id']}-copy"})
+            db.add(e); added.append(e)
+        db.commit()
+        run_tenant_cycle(db, r.tenant, [])
+        grown = credit()
+        assert grown["cost_first"] == 5500.0 and grown["cost_last"] > 5500.0 and grown["cost_peak"] == grown["cost_last"]
+        for e in added:
+            db.delete(e)
+        db.commit()
+        run_tenant_cycle(db, r.tenant, [])
+        shrunk = credit()
+        assert shrunk["cost_last"] == 5500.0 and shrunk["cost_peak"] == grown["cost_peak"] and shrunk["status"] == "open"     # the high point is not forgotten
+    finally:
+        db.close()
+
+
+def test_a_problem_that_doubles_is_reported_again_once(client, tmp_path, monkeypatch):
+    from app.core.notifications import build_email, enqueue_deliveries
+    from app.models.config import NotificationDelivery
+    r = connected(client, tmp_path, monkeypatch)
+    body = {"tenant_id": r.tenant, "channel_type": "email", "target": "boss@example.com", "min_severity": "medium"}
+    assert client.post("/api/notifications/channels", json=body, headers=r.h).status_code == 200
+    db = SessionLocal()
+    try:
+        def sent(kind):
+            return (db.query(NotificationDelivery).join(Alert, Alert.id == NotificationDelivery.alert_id)
+                    .filter(NotificationDelivery.tenant_id == r.tenant, NotificationDelivery.kind == kind, Alert.kind == "insight").count())     # other detectors' alerts are not what is under test
+        run_tenant_cycle(db, r.tenant, [])
+        enqueue_deliveries(db)
+        assert sent("alert") == 3 and sent("worsened") == 0
+        rows = db.query(BusinessEvent).filter(BusinessEvent.tenant_id == r.tenant, BusinessEvent.entity == "receivable").all()
+        copies = [{c.name: getattr(e, c.name) for c in BusinessEvent.__table__.columns} for e in rows]
+        for d in copies:
+            d.pop("id")
+            db.add(BusinessEvent(**{**d, "entity_id": f"{d['entity_id']}-copy"}))
+        db.commit()
+        run_tenant_cycle(db, r.tenant, [])
+        enqueue_deliveries(db)
+        enqueue_deliveries(db)
+        assert sent("worsened") == 1 and sent("alert") == 3                                                       # one problem, one more message, however often it runs
+        delivery = db.query(NotificationDelivery).filter(NotificationDelivery.tenant_id == r.tenant, NotificationDelivery.kind == "worsened").one()
+        alert = db.get(Alert, delivery.alert_id)
+        mail = build_email(alert, "boss@example.com", "worsened")
+        assert mail["Subject"].startswith("[GOT WORSE ") and "grown since it was first reported" in mail.get_content() and "11,000" in mail.get_content()
+        assert build_email(alert, "boss@example.com")["Subject"].startswith("[MEDIUM]") or build_email(alert, "boss@example.com")["Subject"].startswith("[HIGH]")
+        run_tenant_cycle(db, r.tenant, [])
+        enqueue_deliveries(db)
+        assert sent("worsened") == 1                                                                              # staying bad is not news
+    finally:
+        db.close()
+
+
+def test_outside_reading_is_a_fixed_generic_search_with_its_source_and_day(client, tmp_path, monkeypatch):
+    from app.reasoning import web_search
+    r = connected(client, tmp_path, monkeypatch)
+    asked = []
+    monkeypatch.setattr(insights, "_cache", {})
+    monkeypatch.setattr(web_search, "is_configured", lambda: True)
+    monkeypatch.setattr(web_search, "search", lambda q: (asked.append(q), [{"title": "Clearing slow stock", "url": "https://www.example.org/a", "snippet": "Mark it down early."}] * 5)[1])
+    got = client.get(f"/api/business/insights/references?tenant_id={r.tenant}", headers=r.h).json()["references"]
+    assert set(got) == {"dead_stock", "stock_out_risk", "overdue_credit"}
+    page = got["dead_stock"][0]
+    assert len(got["dead_stock"]) == 3 and page["source"] == "example.org" and page["fetched"] == utcnow().date().isoformat() and page["url"] == "https://www.example.org/a"
+    assert sorted(asked) == sorted(insights.REFERENCE_QUERIES[k] for k in got)                       # only the fixed sentences were searched
+    assert not any(w in q.lower() for q in asked for w in ("c1", "stalled item", "fast mover", "5500", "kes"))      # nothing of this business is in them
+    client.get(f"/api/business/insights/references?tenant_id={r.tenant}", headers=r.h)
+    assert len(asked) == 3                                                                          # asked once a day, not at every visit
+
+
+def test_outside_reading_is_off_when_web_search_is_not_set_up(client, tmp_path, monkeypatch):
+    from app.reasoning import web_search
+    r = connected(client, tmp_path, monkeypatch)
+    monkeypatch.setattr(insights, "_cache", {})
+    monkeypatch.setattr(web_search, "is_configured", lambda: False)
+    boom = []
+    monkeypatch.setattr(web_search, "search", lambda q: boom.append(q) or [])
+    assert client.get(f"/api/business/insights/references?tenant_id={r.tenant}", headers=r.h).json() == {"references": {}} and boom == []
+    assert client.get(f"/api/business/insights/references?tenant_id={r.tenant}").status_code in (401, 403)

@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 import time
+from pathlib import Path
 
 
 import app.api.agent as agent_api
@@ -161,3 +162,29 @@ def test_a_busy_engine_is_reported_as_busy_not_as_a_broken_agent(client, tmp_pat
     r.runner.scanned_at = None
     r.runner.tick()
     assert r.runner.status["state"] == "locked" and "updating" not in r.runner.status["detail"]
+
+
+def test_memory_does_not_grow_with_the_size_of_the_table(client, tmp_path, monkeypatch):
+    import tracemalloc
+    rows = 50000
+
+    def build(con):
+        con.execute("CREATE TABLE sales (id INTEGER PRIMARY KEY, sale_date TEXT, total REAL, note TEXT)")
+        con.executemany("INSERT INTO sales (sale_date, total, note) VALUES (?,?,?)", ((f"2026-03-{i % 28 + 1:02d}", i % 500, "a note to make each row heavier " * 3) for i in range(rows)))
+    r = Rig(client, tmp_path, "custom", lambda t: make(t, build))
+    monkeypatch.setattr(rate_limit.agent_limiter, "limit", 10**9)
+    monkeypatch.setattr(agent_api, "get_provider", lambda db, t: None)
+    r.runner.tick()
+    path = next(d["path"] for d in client.get(url(r, "discovery"), headers=r.h).json()["found"])
+    prop = client.post(url(r, "discovery/propose"), json={"path": path}, headers=r.h).json()
+    assert client.post(url(r, "discovery/confirm"), json={"path": path, "tables": prop["tables"]}, headers=r.h).status_code == 200
+    r.runner.heartbeat()
+    tracemalloc.start()
+    try:
+        r.runner.run_pass(full=True)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert not list(Path(r.runner.state.path).parent.glob("*.pass-*"))                  # the working file is removed when the pass ends
+    assert len(r.events()) == rows
+    assert peak < 20e6, f"peak {peak / 1e6:.0f} MB for {rows} rows"                  # held in memory it was several hundred MB; now it is a few chunks

@@ -13,16 +13,19 @@ Each finding: {kind, title, severity, what, why, since, cost: {amount, basis}, e
 What is going well is found the same way (strengths(): sales_growth, growing_products), with severity "good", `gain` in place of `cost`, and `fix`
 saying how to keep it going. Problems also become alerts (detect_insights): one per kind, raised when the data first supports it, refreshed
 while it holds, closed by itself when it no longer does, and sent only through the channels the owner opted into. Strengths are shown, not sent."""
+import time
 from datetime import datetime, timedelta
 from typing import Optional
+from urllib.parse import urlparse
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.clock import utcnow
+from app.reasoning import web_search
 from app.core import coverage as coverage_mod
-from app.core.detection import close_if_cleared, data_start, money_formatter
-from app.models.alerts import AlertSeverity
+from app.core.detection import _find_open_alert, close_if_cleared, data_start, money_formatter
+from app.models.alerts import Alert, AlertSeverity, AlertState
 from app.models.core import BusinessEvent as E
 
 DEAD_AFTER_DAYS = 60            # a product with no sale for this long, on a business whose sales go back at least as far
@@ -245,23 +248,119 @@ def strengths(db: Session, tenant_id: str, now: Optional[datetime] = None) -> li
     return sorted(out, key=lambda f: -((f["gain"] or {}).get("amount") or 0))
 
 
+WORSE_FACTOR = 2.0              # a problem that has grown to this many times its first cost is reported again, once
+
+
+ACTED_ON = {AlertState.investigating, AlertState.action_planned, AlertState.action_taken, AlertState.monitoring}   # what the owner had marked before it cleared
+
+
 def detect_insights(db: Session, tenant_id: str, now: Optional[datetime] = None) -> list:
     """Keep one alert per problem kind in step with the records: raised when found, refreshed while true, closed when it is not.
-    Notifying goes through the owner's own channels like every other alert (nothing is sent to anyone who has not opted in)."""
+    Notifying goes through the owner's own channels like every other alert (nothing is sent to anyone who has not opted in).
+    The alert also keeps what history needs: the cost when first seen, the highest, and what the owner had marked when it cleared.
+    When the cost reaches WORSE_FACTOR times the first, it is stamped once (worsened_at) and the owner's channels hear about it once more."""
     from app.core.detectors import _upsert
     now = now or utcnow()
     out = []
     for finder in FINDERS:
         key = f"insight:{finder.__name__}"
         f = finder(db, tenant_id, now)
+        open_alert = _find_open_alert(db, tenant_id, key)
         if not f:
+            if open_alert:
+                open_alert.evidence = {**(open_alert.evidence or {}), "marked_when_cleared": open_alert.state.value}
+                db.commit()
             close_if_cleared(db, tenant_id, key, now)
             continue
-        a = _upsert(db, tenant_id, key, now, {"insight": f["kind"], "cost": f["cost"], "evidence": f["evidence"], "rows": f["rows"], "since": f["since"]},
+        amount = (f["cost"] or {}).get("amount") or 0.0
+        before = (open_alert.evidence or {}) if open_alert else {}
+        first = before.get("first_cost", amount)
+        peak = max(before.get("peak_cost", amount), amount)
+        worse = before.get("worsened_at") or (now.isoformat() if first > 0 and amount >= first * WORSE_FACTOR else None)
+        stamp = {"worsened_at": worse} if worse else {}
+        a = _upsert(db, tenant_id, key, now, {"insight": f["kind"], "cost": f["cost"], "first_cost": first, "peak_cost": peak, "evidence": f["evidence"], "rows": f["rows"], "since": f["since"], **stamp},
                     dict(kind="insight", severity=AlertSeverity.high if f["severity"] == "high" else AlertSeverity.medium, title=f["title"],
                          what_happened=f"{f['what']} {f['why']}", period_start=datetime.fromisoformat(f["since"]), period_end=now, confidence=0.9,
                          data_coverage_pct=coverage_mod.coverage_pct_for_entity(db, tenant_id, "sale", now=now),
                          recommended_action=" ".join(f"{i}. {s}" for i, s in enumerate(f["fix"], 1))))
         if a:
             out.append(a)
+    return out
+
+
+def history(db: Session, tenant_id: str, limit: int = 50) -> list[dict]:
+    """Every time one of these problems was raised, newest first: when it began in the records, when it was first seen, when and how it ended,
+    what it cost first, at most and last, and whether it came back. It starts from the day this was first switched on for the business;
+    what happened before then is not on record, and the screen says so. Whether a fix worked is shown as what happened (cleared, or still open),
+    with what the owner had marked; the records cannot prove the fix was the cause."""
+    fmt = money_formatter(db, tenant_id)
+    rows = db.query(Alert).filter(Alert.tenant_id == tenant_id, Alert.kind == "insight").order_by(Alert.created_at.desc()).all()
+    seen: set = set()
+    repeat: dict[str, bool] = {}
+    for a in reversed(rows):                                                                    # oldest first, to tell a repeat from a first time
+        kind = (a.evidence or {}).get("insight")
+        repeat[a.id] = kind in seen
+        seen.add(kind)
+    out = []
+    for a in rows[:limit]:
+        ev = a.evidence or {}
+        last = (ev.get("cost") or {}).get("amount") or 0.0
+        first, peak = ev.get("first_cost", last), ev.get("peak_cost", last)
+        end = a.resolved_at
+        if a.state == AlertState.resolved:
+            status = "cleared"
+        elif a.state in (AlertState.dismissed, AlertState.false_positive):
+            status = a.state.value
+        else:
+            status = "open"
+        marked = ev.get("marked_when_cleared") if status == "cleared" else a.state.value if status == "open" else None
+        acted = marked in {s.value for s in ACTED_ON}
+        days = ((end or utcnow()) - a.created_at).days
+        if status == "cleared":
+            line = f"Cleared after {days} days; it was costing {fmt(last)} when it cleared" + (f" (first seen at {fmt(first)})" if round(first) != round(last) else "") + (". You had marked it as " + marked.replace("_", " ") + "." if acted else ". Nothing had been marked on it.")
+        elif status == "open":
+            line = f"Still open after {days} days, costing {fmt(last)}" + (f" (first seen at {fmt(first)}, at most {fmt(peak)})" if round(first) != round(last) or round(peak) != round(last) else "") + (". Marked as " + marked.replace("_", " ") + "." if acted else ".")
+        else:
+            line = f"Set aside by you after {days} days; the records may still show it."
+        out.append({"id": a.id, "kind": ev.get("insight"), "title": a.title, "status": status, "began": ev.get("since"), "first_seen": a.created_at.date().isoformat(),
+                    "ended": end.date().isoformat() if end else None, "days": days, "cost_first": first, "cost_peak": peak, "cost_last": last,
+                    "marked": marked, "came_back": bool(repeat[a.id]), "summary": line + (" It had cleared before and came back." if repeat[a.id] else "")})
+    return out
+
+
+# ---------- outside reading ----------
+# What the web says about the same kind of problem, so the owner can read how others handled it. The search text is fixed here per kind:
+# nothing about the business, its figures or its customers ever leaves the server. Results are shown with their source and the day they were fetched, as
+# general reading and never as a statement about this business.
+REFERENCE_QUERIES = {
+    "dead_stock": "how a small retail business clears slow-moving dead stock case study",
+    "stock_out_risk": "preventing stockouts reorder point small business case study",
+    "overdue_credit": "collecting overdue customer credit small business best practice case study",
+    "sales_growth": "how small businesses sustain sales growth after a rise case study",
+    "growing_products": "managing stock for fast growing products small business case study",
+}
+REFERENCE_TTL = 24 * 3600       # what was found is reused for a day: the same fixed question is not asked again for every visit
+EMPTY_TTL = 600                 # an empty answer (search off or failing) is retried soon
+_cache: dict[str, tuple[float, list[dict]]] = {}
+
+
+def references(kinds: list[str]) -> dict[str, list[dict]]:
+    """{kind: [{title, url, source, snippet, fetched}]} for the kinds that have a fixed question; empty when web search is not set up."""
+    if not web_search.is_configured():
+        return {}
+    out: dict[str, list[dict]] = {}
+    now = time.time()
+    for kind in kinds:
+        query = REFERENCE_QUERIES.get(kind)
+        if not query:
+            continue
+        hit = _cache.get(kind)
+        if hit and now - hit[0] < (REFERENCE_TTL if hit[1] else EMPTY_TTL):
+            pages = hit[1]
+        else:
+            day = utcnow().date().isoformat()
+            pages = [{**p, "source": (urlparse(p["url"]).hostname or "").removeprefix("www."), "fetched": day} for p in web_search.search(query)[:3]]
+            _cache[kind] = (now, pages)
+        if pages:
+            out[kind] = pages
     return out
