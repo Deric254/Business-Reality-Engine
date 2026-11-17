@@ -27,11 +27,13 @@ beforeEach(() => {
 });
 
 describe("Reviewing what was found", () => {
-  it("shows the databases by name and counts, and the AI's reading with its reason, only after one is chosen", async () => {
+  it("shows the databases by name and counts, and the AI's reading with its reason, only after one of several is chosen", async () => {
+    api.discovery.mockResolvedValue({ roles: ROLES, scanned_at: "x", found: [FOUND, { ...FOUND, path: "D:\\old\\old.db" }], proposals: {}, chosen: null, scan_requested: false });
     show();
     expect(await screen.findByText("duka/duka.db")).toBeInTheDocument();
     expect(screen.queryByText("Hardware shop")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("radio"));
+    expect(api.propose).not.toHaveBeenCalled();                       // with a choice to make, nothing is chosen for the owner
+    await userEvent.click(screen.getAllByRole("radio")[0]);
     expect(api.propose).toHaveBeenCalledWith("t1", "c1", PATH);
     expect(await screen.findByDisplayValue("Hardware shop")).toBeInTheDocument();
     expect(screen.getByText("One sale per row.")).toBeInTheDocument();
@@ -40,7 +42,6 @@ describe("Reviewing what was found", () => {
 
   it("lets the owner correct a column and a table, then confirms exactly what is on the screen", async () => {
     show();
-    await userEvent.click(await screen.findByRole("radio"));
     await screen.findByDisplayValue("Hardware shop");
     await userEvent.selectOptions(screen.getByLabelText("What tbl_sales holds"), "refund");
     await userEvent.selectOptions(screen.getByLabelText("Add another table"), "supplier_bills");
@@ -56,6 +57,23 @@ describe("Reviewing what was found", () => {
     expect(body.tables.map((t: { table: string; role: string }) => [t.table, t.role])).toEqual([["tbl_sales", "refund"], ["supplier_bills", "expense"]]);
   });
 
+  it("has the reading ready when exactly one database is found, and asks only for the confirming click", async () => {
+    show();
+    expect(await screen.findByDisplayValue("Hardware shop")).toBeInTheDocument();
+    expect(api.propose).toHaveBeenCalledTimes(1);
+    expect(api.propose).toHaveBeenCalledWith("t1", "c1", PATH);
+    expect(api.confirmReading).not.toHaveBeenCalled();               // reading starts only when the owner says the reading is right
+    await new Promise((r) => setTimeout(r, 50));
+    expect(api.propose).toHaveBeenCalledTimes(1);                    // and the refresh every few seconds does not propose again
+  });
+
+  it("does not propose again once a database has been confirmed", async () => {
+    api.discovery.mockResolvedValue({ roles: ROLES, scanned_at: "x", found: [FOUND], proposals: {}, chosen: { path: PATH }, scan_requested: false });
+    show();
+    await screen.findByText("duka/duka.db");
+    expect(api.propose).not.toHaveBeenCalled();
+  });
+
   it("says plainly when nothing was found and offers to look again", async () => {
     api.discovery.mockResolvedValue({ roles: ROLES, scanned_at: null, found: [], proposals: {}, chosen: null, scan_requested: false });
     show();
@@ -66,7 +84,6 @@ describe("Reviewing what was found", () => {
 
   it("asks for the columns each kind of table needs: stock needs a product and a quantity, not a date and an amount", async () => {
     show();
-    await userEvent.click(await screen.findByRole("radio"));
     await screen.findByDisplayValue("Hardware shop");
     await userEvent.selectOptions(screen.getByLabelText("What tbl_sales holds"), "stock");
     expect(screen.getByRole("button", { name: "Each table needs its key columns filled in" })).toBeDisabled();

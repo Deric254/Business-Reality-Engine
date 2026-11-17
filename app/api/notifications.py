@@ -24,7 +24,7 @@ MAX_CHANNELS_PER_TENANT = 20
 
 Severity = Literal["critical", "high", "medium", "informational", "opportunity"]
 ChannelType = Literal["email", "webhook", "slack", "teams", "sms", "whatsapp"]
-KINDS = {"deviation", "opportunity", "trend", "daily", "silence", "threshold", "forecast", "risk", "unknown", "quality"}
+KINDS = {"deviation", "opportunity", "trend", "daily", "silence", "threshold", "forecast", "risk", "unknown", "quality", "insight"}
 
 
 class ChannelCreate(BaseModel):

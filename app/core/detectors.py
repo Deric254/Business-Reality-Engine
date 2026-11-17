@@ -393,6 +393,13 @@ def run_tenant_cycle(db: Session, tenant_id: str, metrics: list[dict], now: Opti
     except Exception as e:
         db.rollback(); errors += 1
         logger.error(f"Profit risk detector failed for tenant={tenant_id}: {e}")
+    try:
+        if not replay:                          # money stuck or leaking, from the stock and credit records (see insights.py)
+            from app.core.insights import detect_insights
+            alerts += detect_insights(db, tenant_id, now)
+    except Exception as e:
+        db.rollback(); errors += 1
+        logger.error(f"Insight detector failed for tenant={tenant_id}: {e}")
     try:                                        # where and why: branches, cost categories, margins, customers, large payments
         from app.core.detectors_dimension import run_dimension_detectors
         found, failed = run_dimension_detectors(db, tenant_id, now=window)

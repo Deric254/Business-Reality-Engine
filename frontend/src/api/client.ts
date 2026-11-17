@@ -455,7 +455,7 @@ export const businessApi = {
   analytics: (t: string, days = 90) => request<Analytics>(`/api/business/analytics?tenant_id=${t}&days=${days}`),
   analyticsPdf: (t: string, days = 90) => requestBlob(`/api/business/analytics.pdf?tenant_id=${t}&days=${days}`),
   dataCheck: (t: string, days = 30) => request<DataCheckResult>(`/api/business/data-check?tenant_id=${t}&period_days=${days}`),
-  insights: (t: string) => request<{ findings: Insight[] }>(`/api/business/insights?tenant_id=${t}`),
+  insights: (t: string) => request<{ findings: Insight[]; strengths: Insight[] }>(`/api/business/insights?tenant_id=${t}`),
   health: (t: string, days = 30) => request<Health>(`/api/business/health?tenant_id=${t}&days=${days}`),
   quality: (t: string, days = 30) => request<Quality>(`/api/business/quality?tenant_id=${t}&days=${days}`),
   discovery: (t: string) => request<Discovery>(`/api/business/discovery?tenant_id=${t}`),
@@ -734,6 +734,6 @@ export const goalsApi = {
 };
 
 export type Insight = {
-  kind: string; title: string; severity: "high" | "medium"; what: string; why: string; since: string;
-  cost: { amount: number; basis: string } | null; evidence: { label: string; value: string }[]; fix: string[]; rows: Record<string, string | number | boolean | null>[];
+  kind: string; title: string; severity: "high" | "medium" | "good"; what: string; why: string; since: string;
+  cost?: { amount: number; basis: string } | null; gain?: { amount: number; basis: string }; evidence: { label: string; value: string }[]; fix: string[]; rows: Record<string, string | number | boolean | null>[];
 };

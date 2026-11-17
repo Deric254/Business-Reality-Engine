@@ -24,6 +24,17 @@ describe("What your records show", () => {
     expect(screen.getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Stop reordering these products.", "Put them on offer."]);
   });
 
+  it("shows what is going well after the problems, with its gain and how to keep it going", async () => {
+    const good = { ...FINDING, kind: "sales_growth", title: "Sales are growing", severity: "good", what: "Sales are up 33% on the 30 days before.", why: "Most of the rise came from Riser item.", cost: undefined,
+      gain: { amount: 6000, basis: "more than the 30 days before" }, fix: ["Keep the rising products in stock."], rows: [] };
+    api.insights.mockResolvedValue({ findings: [FINDING], strengths: [good] });
+    render(<Insights tenantId="t1" currency="KES" />);
+    const titles = (await screen.findAllByRole("heading", { level: 3 })).map((h) => h.textContent);
+    expect(titles).toEqual(["Stock that has stopped selling", "Sales are growing"]);
+    expect(screen.getByText(/\+KES 6,000/)).toBeInTheDocument();
+    expect(screen.getByText("How to keep it going")).toBeInTheDocument();
+  });
+
   it("takes no space when there is nothing to say or the request fails", async () => {
     api.insights.mockResolvedValue({ findings: [] });
     const { container, rerender } = render(<Insights tenantId="t1" currency="KES" />);

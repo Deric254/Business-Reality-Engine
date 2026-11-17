@@ -19,7 +19,7 @@ const TARGET_LABEL: Record<string, string> = {
 const KINDS: [string, string][] = [
   ["deviation", "Sales or spending changed"], ["opportunity", "Good news"], ["trend", "Slow trends"], ["daily", "Unusual days"],
   ["silence", "A data source went quiet"], ["threshold", "A limit you set was crossed"], ["forecast", "Behind where the trend was heading"],
-  ["risk", "Profit risk"], ["unknown", "Not enough history yet"], ["quality", "Data problems"],
+  ["risk", "Profit risk"], ["unknown", "Not enough history yet"], ["quality", "Data problems"], ["insight", "Money stuck or leaking (stock, credit)"],
 ];
 const DIGEST_OK = ["email", "slack", "teams"];
 

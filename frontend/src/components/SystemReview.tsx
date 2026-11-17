@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { systemApi, type FoundDatabase, type ReadingField, type ReadingTable, type SystemDiscovery, type SystemLink, type SystemProposal } from "../api/client";
 import { errText } from "../lib/errors";
 import { btnCls, inputCls, primaryCls } from "./ui";
@@ -27,6 +27,13 @@ export function SystemReview({ tenantId, link, reload, setError }: { tenantId: s
     try { await fn(); } catch (e) { setError(errText(e)); } finally { setBusy(false); }
   }
   const choose = (p: string) => run(async () => { setPath(p); setDraft(await systemApi.propose(tenantId, id, p)); });
+  const offered = useRef(false);
+  useEffect(() => {                                    // exactly one readable database and nothing chosen yet: have the reading ready, so the owner only has to check it and confirm
+    if (offered.current || !disc || disc.chosen || usable.length !== 1) return;
+    offered.current = true;
+    void choose(usable[0].path);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [disc]);
   const setRow = (i: number, patch: Partial<ReadingTable>) => setDraft((d) => d && { ...d, tables: d.tables.map((t, j) => (j === i ? { ...t, ...patch } : t)) });
   const roles = disc?.roles ?? {};
   const mainFields = (role: string): ReadingField[] => [...new Set<ReadingField>(["id", ...(roles[role]?.required ?? []), ...(MONEY_ROLES.includes(role) ? (["date", "amount"] as ReadingField[]) : [])])];

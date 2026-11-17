@@ -78,7 +78,7 @@ def _entity_of(alert: Alert) -> Optional[str]:
 
 
 _KIND_BY_PREFIX = {"historical_deviation": "deviation", "opportunity": "opportunity", "trend": "trend", "daily_anomaly": "daily",
-                   "data_silence": "silence", "threshold": "threshold", "forecast_miss": "forecast", "risk": "risk", "unknown": "unknown"}
+                   "data_silence": "silence", "threshold": "threshold", "forecast_miss": "forecast", "risk": "risk", "unknown": "unknown", "insight": "insight"}
 
 
 def kind_of(alert: Alert) -> Optional[str]:

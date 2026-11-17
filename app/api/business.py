@@ -37,9 +37,9 @@ def data_check(tenant_id: str, period_days: int = Query(30, ge=0, le=3650), db: 
 
 @router.get("/insights")
 def insights(tenant_id: str, db: Session = Depends(get_db), authorization: Optional[str] = Header(default=None)):
-    """Where money is stuck or leaking, from the business's own records: what, why, since when, what it costs, what to do."""
+    """Where money is stuck or leaking, and what is going well, from the business's own records: what, why, since when, what it is worth, what to do."""
     authorize_tenant(authorization, tenant_id)
-    return {"findings": insights_mod.findings(db, tenant_id)}
+    return {"findings": insights_mod.findings(db, tenant_id), "strengths": insights_mod.strengths(db, tenant_id)}
 
 
 @router.get("/health")
