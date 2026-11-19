@@ -1,7 +1,7 @@
 {
   "system": "smepro",
   "label": "smePro",
-  "profile_version": 1,
+  "profile_version": 2,
   "doc": "smePro (Tauri + SQLCipher). Database: <Tauri app data dir>/com.smepro.app/erp.db, encrypted with the raw key in erp.db.key beside it. Verified against smePro schema version 43.",
   "discovery": {
     "files": ["{appdata}/com.smepro.app/erp.db"]
@@ -35,6 +35,21 @@
       "key": "bookkeeping", "entity": "expense", "event_type": "expense.recorded", "table": "module_accounting", "time": "date", "optional": true,
       "doc": "Expenses typed into Bookkeeping by a person (rent, wages, transport...). Entries smePro posts by itself (purchases, refunds, debt settlements, repack rounding) are left out because they repeat records counted elsewhere.",
       "sql": "SELECT CAST(id AS TEXT) AS id, transaction_date AS date, created_at AS instant, amount, NULLIF(TRIM(category), '') AS product, description AS m_description, payment_method AS m_payment_method FROM module_accounting WHERE business_id = :business_id AND deleted_at IS NULL AND LOWER(TRIM(entry_type)) = 'expense' AND NOT ((LOWER(TRIM(category)) = 'purchasing' AND description LIKE 'Purchase received — %') OR (LOWER(TRIM(category)) = 'refunds' AND description LIKE 'Refund — %') OR (LOWER(TRIM(category)) = 'debt & credit' AND (description LIKE 'Debt settled — %' OR description LIKE 'Credit settled — %')) OR (LOWER(TRIM(category)) = 'stock revaluation' AND description LIKE 'Repack rounding %')) ORDER BY CAST(id AS TEXT)"
+    },
+    {
+      "key": "stock", "entity": "stock", "event_type": "stock.snapshot", "table": "module_inventory", "time": "today", "optional": true,
+      "doc": "Stock on hand per item, as of the day it is read. The amount is the average cost of one unit on hand (rounded to the cent); the exact stock value at cost, which is what smePro's own Stock Health shows (live batches at their own cost, any quantity outside batches at the item's unit cost), is carried as value. The nearest expiry among batches still in stock is carried along.",
+      "sql": "WITH bt AS (SELECT inventory_record_id AS rid, SUM(quantity_remaining) AS q, SUM(quantity_remaining * unit_cost) AS v, MIN(CASE WHEN quantity_remaining > 0 AND expiry_date IS NOT NULL THEN expiry_date END) AS next_expiry FROM inventory_batches WHERE business_id = :business_id AND deleted_at IS NULL GROUP BY inventory_record_id) SELECT CAST(i.id AS TEXT) AS id, i.quantity AS quantity, CASE WHEN i.quantity > 0 THEN (COALESCE(bt.v, 0) + MAX(i.quantity - COALESCE(bt.q, 0), 0) * COALESCE(i.unit_cost, 0)) * 1.0 / i.quantity ELSE COALESCE(i.unit_cost, 0) END AS amount, NULLIF(TRIM(i.name), '') AS product, NULLIF(TRIM(i.name), '') AS m_label, i.sku AS m_sku, i.reorder_level AS m_reorder_level, CASE WHEN i.quantity > 0 THEN COALESCE(bt.v, 0) + MAX(i.quantity - COALESCE(bt.q, 0), 0) * COALESCE(i.unit_cost, 0) ELSE 0 END AS mm_value, bt.next_expiry AS m_next_expiry FROM module_inventory i LEFT JOIN bt ON bt.rid = i.id WHERE i.business_id = :business_id AND i.deleted_at IS NULL AND NULLIF(TRIM(i.name), '') IS NOT NULL ORDER BY CAST(i.id AS TEXT)"
+    },
+    {
+      "key": "receivable", "entity": "receivable", "event_type": "receivable.outstanding", "table": "module_debt_credit", "time": "instant", "optional": true,
+      "doc": "Money customers still owe: Debt & Credit entries owed to the business and not yet settled. Dated when the debt was recorded, so its age is how long it has been owed; the agreed due date, when there is one, is carried along.",
+      "sql": "SELECT CAST(id AS TEXT) AS id, created_at AS instant, amount, NULLIF(TRIM(party_name), '') AS customer, due_date AS m_due_date, entry_number AS m_entry_number FROM module_debt_credit WHERE business_id = :business_id AND deleted_at IS NULL AND settled = 0 AND direction = 'owed_to_business' ORDER BY CAST(id AS TEXT)"
+    },
+    {
+      "key": "payable", "entity": "payable", "event_type": "payable.outstanding", "table": "module_debt_credit", "time": "instant", "optional": true,
+      "doc": "Money the business still owes: Debt & Credit entries in any other direction (smePro itself treats every direction other than owed_to_business as owed by the business) and not yet settled.",
+      "sql": "SELECT CAST(id AS TEXT) AS id, created_at AS instant, amount, NULLIF(TRIM(party_name), '') AS supplier, due_date AS m_due_date, entry_number AS m_entry_number FROM module_debt_credit WHERE business_id = :business_id AND deleted_at IS NULL AND settled = 0 AND direction != 'owed_to_business' ORDER BY CAST(id AS TEXT)"
     }
   ]
 }

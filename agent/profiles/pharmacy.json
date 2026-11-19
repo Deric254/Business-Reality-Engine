@@ -1,7 +1,7 @@
 {
   "system": "pharmacy",
   "label": "Pharmacy ERP",
-  "profile_version": 1,
+  "profile_version": 2,
   "doc": "Pharmacy ERP (Electron + FastAPI + SQLite). Database: %LOCALAPPDATA%/PharmacyERP/pharmacy.db. Money is stored in whole cents; times are UTC. Each sale is counted net of its refunds on the day of the sale, so the period total equals the app's own report; the app's daily report instead books a refund on the day it was processed, so single days can differ. Expenses are stock received.",
   "discovery": {
     "files": ["{localappdata}/PharmacyERP/pharmacy.db", "{home}/.pharmacy-erp/pharmacy.db"]
@@ -25,6 +25,16 @@
       "key": "purchases", "entity": "expense", "event_type": "expense.purchase", "table": "purchase_orders", "time": "instant", "optional": true,
       "doc": "Stock received from suppliers (quantity x actual unit cost). Purchases that were reversed are left out.",
       "sql": "SELECT CAST(po.id AS TEXT) AS id, COALESCE(po.received_at, po.created_at) AS instant, (SELECT SUM(COALESCE(poi.quantity_received, poi.quantity_ordered) * COALESCE(poi.unit_cost_actual, poi.unit_cost_expected)) FROM purchase_order_items poi WHERE poi.purchase_order_id = po.id) AS amount, (SELECT SUM(COALESCE(poi.quantity_received, poi.quantity_ordered)) FROM purchase_order_items poi WHERE poi.purchase_order_id = po.id) AS quantity, NULLIF(TRIM(sup.name), '') AS supplier, (SELECT p.name FROM products p WHERE p.id = (SELECT CASE WHEN COUNT(DISTINCT poi.product_id) = 1 THEN MIN(poi.product_id) END FROM purchase_order_items poi WHERE poi.purchase_order_id = po.id)) AS product FROM purchase_orders po LEFT JOIN suppliers sup ON sup.id = po.supplier_id WHERE po.status = 'RECEIVED' AND EXISTS (SELECT 1 FROM purchase_order_items x WHERE x.purchase_order_id = po.id) ORDER BY CAST(po.id AS TEXT)"
+    },
+    {
+      "key": "stock", "entity": "stock", "event_type": "stock.snapshot", "table": "medicine_batches", "time": "today", "optional": true, "amount_optional": true,
+      "doc": "Stock on hand per product, as of the day it is read, counted the way the app's own Stock Valuation counts it: batches that have not expired, for products that are not deleted. The amount is the average cost of one unit on hand (rounded to the cent) and is left empty when nothing is on hand; the exact stock value at cost, which is what the app shows, is carried as value. The nearest expiry, and the units and cost of batches that have already expired but are still in stock, are carried along.",
+      "sql": "SELECT CAST(p.id AS TEXT) AS id, COALESCE(SUM(CASE WHEN b.expiry_date > DATE('now') THEN b.qty_remaining END), 0) AS quantity, CASE WHEN COALESCE(SUM(CASE WHEN b.expiry_date > DATE('now') THEN b.qty_remaining END), 0) > 0 THEN SUM(CASE WHEN b.expiry_date > DATE('now') THEN b.qty_remaining * b.cost_price END) * 1.0 / SUM(CASE WHEN b.expiry_date > DATE('now') THEN b.qty_remaining END) END AS amount, NULLIF(TRIM(p.name), '') AS product, COALESCE(SUM(CASE WHEN b.expiry_date > DATE('now') THEN b.qty_remaining * b.cost_price END), 0) AS mm_value, NULLIF(TRIM(p.name), '') AS m_label, p.reorder_point AS m_reorder_point, MIN(CASE WHEN b.expiry_date > DATE('now') AND b.qty_remaining > 0 THEN b.expiry_date END) AS m_next_expiry, COALESCE(SUM(CASE WHEN b.expiry_date <= DATE('now') THEN b.qty_remaining END), 0) AS m_expired_units, COALESCE(SUM(CASE WHEN b.expiry_date <= DATE('now') THEN b.qty_remaining * b.cost_price END), 0) AS mm_expired_value FROM products p LEFT JOIN medicine_batches b ON b.product_id = p.id AND b.qty_remaining > 0 WHERE p.deleted_at IS NULL AND NULLIF(TRIM(p.name), '') IS NOT NULL GROUP BY p.id ORDER BY CAST(p.id AS TEXT)"
+    },
+    {
+      "key": "payable", "entity": "payable", "event_type": "payable.outstanding", "table": "supplier_transactions", "time": "today", "optional": true,
+      "doc": "Money the pharmacy still owes each supplier, as of the day it is read: the sum of that supplier's ledger (goods received add to it, payments and their reversals adjust it), the same balance the app shows. Suppliers owed nothing are left out.",
+      "sql": "SELECT CAST(s.id AS TEXT) AS id, SUM(st.amount) AS amount, NULLIF(TRIM(s.name), '') AS supplier FROM suppliers s JOIN supplier_transactions st ON st.supplier_id = s.id GROUP BY s.id HAVING SUM(st.amount) > 0 ORDER BY CAST(s.id AS TEXT)"
     }
   ]
 }

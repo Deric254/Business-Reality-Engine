@@ -109,6 +109,56 @@ def pharmacy_db(tmp):
     return p
 
 
+def pharmacy_stock_db(tmp):
+    """The pharmacy layout above plus batches and the supplier ledger, as the app keeps them (the fixture's tables match the ones its own
+    migrations build). Panadol has two live batches and one expired; Amoxil has only an expired one; one product is deleted."""
+    p = pharmacy_db(tmp)
+    con = sqlite3.connect(p)
+    for pid, name, deleted in ((2, "Amoxil", None), (3, "Old deleted product", "2026-01-01 00:00:00"), (4, "Never stocked", None)):
+        con.execute("INSERT INTO products (id, name, deleted_at) VALUES (?, ?, ?)", (pid, name, deleted))
+    def batch(i, pid, qty, cost, expiry):
+        con.execute("INSERT INTO medicine_batches (id, product_id, batch_number, expiry_date, qty_received, qty_remaining, cost_price, selling_price) VALUES (?, ?, ?, ?, ?, ?, ?, 2500)", (i, pid, f"B{i}", expiry, qty, qty, cost))
+    batch(1, 1, 10, 1000, "2099-01-01")
+    batch(2, 1, 5, 1200, "2099-06-01")
+    batch(3, 1, 3, 900, "2020-01-01")        # expired, still on the shelf: not stock value, but exposure
+    batch(4, 2, 4, 500, "2020-01-01")
+    batch(5, 3, 9, 100, "2099-01-01")        # a deleted product's batch
+    batch(6, 1, 0, 1000, "2099-03-01")       # used up
+    for sid, name in ((1, "Supplier One"), (2, "Supplier Two"), (3, "Supplier Three")):
+        con.execute("INSERT INTO suppliers (id, name) VALUES (?, ?)", (sid, name))
+    for tid, sid, amount in ((1, 1, 50000), (2, 1, -20000), (3, 2, 8000), (4, 2, -8000), (5, 3, -1000)):
+        con.execute("INSERT INTO supplier_transactions (id, supplier_id, amount, created_at) VALUES (?, ?, ?, '2026-10-01 08:00:00')", (tid, sid, amount))
+    con.commit()
+    con.close()
+    return p
+
+
+def test_pharmacy_stock_and_supplier_balances_match_what_the_app_shows(client, tmp_path):
+    rig = Rig(client, tmp_path, "pharmacy", pharmacy_stock_db)
+    rig.tick(2)
+    assert rig.summary()["state"] == "connected"
+    stock = {e.entity_id: e for e in rig.events("stock")}
+    assert set(stock) == {"stock:1", "stock:2", "stock:4"}                     # the deleted product is not read
+    assert float(stock["stock:1"].quantity) == 15                              # expired and used-up batches are not on hand
+    assert float(stock["stock:1"].amount) == 10.67                             # average cost per unit, to the cent
+    assert stock["stock:1"].metadata_json["value"] == 160.0                    # exact: the app's Stock Valuation for Panadol (10 x 10.00 + 5 x 12.00)
+    assert stock["stock:2"].metadata_json["value"] == 0.0 and stock["stock:4"].metadata_json["value"] == 0.0
+    assert stock["stock:1"].metadata_json["next_expiry"] == "2099-01-01"
+    assert float(stock["stock:1"].metadata_json["expired_units"]) == 3 and float(stock["stock:1"].metadata_json["expired_value"]) == pytest.approx(27.0)
+    assert float(stock["stock:2"].quantity) == 0 and stock["stock:2"].amount is None   # only expired stock: nothing on hand, and no invented unit value
+    assert float(stock["stock:2"].metadata_json["expired_units"]) == 4
+    assert float(stock["stock:4"].quantity) == 0
+    assert rig.amounts("payable") == {"payable:1": 300.0}                      # settled, and overpaid, suppliers are not owed
+
+    from app.core import insights
+    db = SessionLocal()
+    try:
+        latest = {s["name"]: s for s in insights._latest_stock(db, rig.tenant)}
+        assert latest["Panadol"]["qty"] == 15
+    finally:
+        db.close()
+
+
 @pytest.fixture()
 def imara(client, tmp_path):
     return Rig(client, tmp_path, "imara", imara_db)
@@ -420,6 +470,63 @@ def test_smepro_without_its_key_says_so(client, tmp_path):
     (tmp_path / "erp.db.key").unlink()
     rig.tick()
     assert rig.summary()["state"] == "needs_key" and rig.events() == []
+
+
+def smepro_stock_db(tmp):
+    """The smePro layout above plus stock and Debt & Credit, shaped like smePro's own rows (checked against a database built by smePro's own
+    migrations): Legacy has 4 on hand but only 3 in a live batch, so its value mixes batch cost and the item's own unit cost."""
+    p = smepro_db(tmp)
+    con = sqlcipher3.connect(str(p))
+    con.execute(f"PRAGMA key = \"x'{KEY}'\"")
+    def item(i, b, sku, name, qty, cost):
+        con.execute("INSERT INTO module_inventory (id, business_id, sku, name, quantity, unit_cost, unit_price, reorder_level, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 900, 5, '2026-10-01', '2026-10-01')", (i, b, sku, name, qty, cost))
+    item("i1", "b1", "W1", "Widget", 10, 500)
+    item("i2", "b1", "G1", "Gadget", 0, 300)
+    item("i3", "b1", "L1", "Legacy", 4, 600)
+    item("i9", "b2", "X1", "Other shop item", 7, 100)
+    con.execute("INSERT INTO inventory_batches (id, business_id, inventory_record_id, quantity_received, quantity_remaining, unit_cost, unit_price, expiry_date, received_at) VALUES ('bt1', 'b1', 'i3', 5, 3, 700, 900, '2026-12-01', '2026-10-01')")
+    con.execute("INSERT INTO inventory_batches (id, business_id, inventory_record_id, quantity_received, quantity_remaining, unit_cost, unit_price, expiry_date, received_at) VALUES ('bt2', 'b1', 'i3', 2, 0, 650, 900, '2026-11-01', '2026-09-01')")   # used up: its expiry must not count
+    def debt(i, b, party, direction, amount, settled, due):
+        con.execute("INSERT INTO module_debt_credit (id, business_id, entry_number, party_name, direction, amount, due_date, settled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '2026-09-01T08:00:00Z', '2026-09-01T08:00:00Z')", (i, b, "N-" + i, party, direction, amount, due, settled))
+    debt("d1", "b1", "Customer A", "owed_to_business", 5000, 0, "2026-09-15")
+    debt("d2", "b1", "Customer B", "owed_to_business", 2000, 1, None)       # settled: no longer owed
+    debt("d3", "b1", "Supplier S", "i_owe", 7000, 0, "2026-11-30")
+    debt("d9", "b2", "Other shop debtor", "owed_to_business", 999, 0, None)
+    con.commit(); con.close()
+    return p
+
+
+def test_smepro_stock_and_credit_feed_the_insights_the_engine_already_has(client, tmp_path):
+    from app.core import insights
+    rig = Rig(client, tmp_path, "smepro", smepro_stock_db)
+    rig.tick()
+    r = client.post(f"/api/agent/{rig.cid}/settings?tenant_id={rig.tenant}", json={"scope_id": "b1"}, headers=rig.h)
+    assert r.status_code == 200
+    rig.runner.heartbeat()
+    rig.tick(2)
+    assert rig.summary()["state"] == "connected"
+
+    stock = {e.entity_id: e for e in rig.events("stock")}
+    assert set(stock) == {"stock:i1", "stock:i2", "stock:i3"}                   # the other business's item is not read
+    assert {k: float(v.amount) for k, v in stock.items()} == {"stock:i1": 5.0, "stock:i2": 3.0, "stock:i3": 6.75}
+    assert {k: float(v.quantity) for k, v in stock.items()} == {"stock:i1": 10, "stock:i2": 0, "stock:i3": 4}
+    # the exact value is smePro's own stock value: Widget 50.00 + Gadget 0 + Legacy (3 x 7.00 + 1 x 6.00) 27.00
+    assert {k: v.metadata_json["value"] for k, v in stock.items()} == {"stock:i1": 50.0, "stock:i2": 0.0, "stock:i3": 27.0}
+    assert stock["stock:i3"].metadata_json["next_expiry"] == "2026-12-01"          # the used-up batch's earlier expiry is ignored
+    assert stock["stock:i2"].metadata_json["label"] == "Gadget"
+
+    assert rig.amounts("receivable") == {"receivable:d1": 50.0}                  # settled and other-business debts are not owed here
+    assert rig.amounts("payable") == {"payable:d3": 70.0}
+    assert next(iter(rig.events("receivable"))).metadata_json["due_date"] == "2026-09-15"
+
+    db = SessionLocal()
+    try:
+        latest = {s["name"]: s for s in insights._latest_stock(db, rig.tenant)}
+        assert set(latest) == {"Widget", "Gadget", "Legacy"} and latest["Legacy"]["qty"] == 4
+        found = insights.overdue_credit(db, rig.tenant, dt.datetime.utcnow())     # existing insight, now fed by smePro
+        assert found and found["kind"] == "overdue_credit" and found["cost"]["amount"] == 50.0
+    finally:
+        db.close()
 
 
 def test_a_profile_that_states_only_a_default_currency_reads_without_a_query():
