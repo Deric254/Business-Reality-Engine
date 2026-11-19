@@ -28,6 +28,8 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from app.core.autoprovision import provision_owner_if_empty
+    provision_owner_if_empty()
     if settings.SCHEDULER_ENABLED:
         start_scheduler(settings.DETECTION_INTERVAL_MINUTES)
     else:
